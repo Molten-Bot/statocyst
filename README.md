@@ -82,3 +82,22 @@ Scripts:
 skills/openclaw-bind-agent/scripts/bind_agent.sh
 skills/openclaw-exchange-messages/scripts/exchange_roundtrip.sh
 ```
+
+## LLM-Agnostic Setup (Recommended)
+
+For real-world environments where model behavior varies, initialize agents without any LLM prompt:
+
+```bash
+./multi-agent/bootstrap_agents.sh
+```
+
+What it does:
+- Recreates `statocyst` for a clean in-memory registry.
+- Registers `crab` and `shrimp` directly via API.
+- Applies mutual inbound allow rules.
+- Writes tokens to:
+  - `multi-agent-crab-1:/tmp/crab.token`
+  - `multi-agent-shrimp-1:/tmp/shrimp.token`
+- Runs a round-trip message smoke test.
+
+After this succeeds, LLM prompts are optional rather than required for bring-up.

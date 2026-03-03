@@ -17,7 +17,7 @@
     "defaults": {
       "skipBootstrap": true,
       "model": {
-        "primary": "openrouter/google/gemini-2.5-flash-lite"
+        "primary": "openrouter/auto"
       },
       "models": {
         "anthropic/claude-opus-4-5": {

@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenClaw Bind Agent"
   short_description: "Register agent and configure inbound allowlist"
-  default_prompt: "Use $openclaw-bind-agent to register an agent and allow inbound from a specific sender."
+  default_prompt: "Use $openclaw-bind-agent to register agent_id=crab and allow inbound from_agent_id=shrimp."

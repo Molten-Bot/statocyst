@@ -29,7 +29,9 @@ description: Validate strict full round-trip messaging between two OpenClaw agen
 Run:
 
 ```bash
-scripts/exchange_roundtrip.sh <base_url> <agent_a_id> <agent_a_token> <agent_b_id> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
+/mnt/skills/openclaw-exchange-messages/scripts/exchange_roundtrip.sh <base_url> <agent_a_id> <agent_a_token> <agent_b_id> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
 ```
 
 Use strict values. Do not infer missing tokens or IDs.
+
+If the runtime cannot find `scripts/exchange_roundtrip.sh`, always use the absolute mounted path shown above.
