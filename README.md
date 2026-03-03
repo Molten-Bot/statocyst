@@ -173,7 +173,6 @@ No domain names are hardcoded in application code. Domain/app targeting is confi
   - Auto deploy on pushes to `main`.
   - Builds and pushes image tags:
     - `docker.io/<dockerhub-username>/statocyst:vnext`
-    - `docker.io/<dockerhub-username>/statocyst:vnext-latest`
     - `docker.io/<dockerhub-username>/statocyst:vnext-<yyyymmdd>`
   - Triggers VNext deploy hook.
 - `.github/workflows/deploy-prod.yml`
@@ -215,5 +214,5 @@ The workflow posts JSON to your deploy hook with:
 - `git_sha`
 
 If your deploy hook ignores JSON payload, configure your target runtime to pull:
-- VNext: `vnext-latest`
+- VNext: `vnext`
 - Prod: `latest`

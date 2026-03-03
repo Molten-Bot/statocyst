@@ -78,7 +78,6 @@ jobs:
           push: true
           tags: |
             ${{ steps.dockerhub.outputs.image_repo }}:vnext
-            ${{ steps.dockerhub.outputs.image_repo }}:vnext-latest
             ${{ steps.dockerhub.outputs.image_repo }}:vnext-${{ steps.release_date.outputs.release_date }}
 
       - name: Export image reference
