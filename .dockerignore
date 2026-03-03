@@ -1,0 +1,7 @@
+.git
+.github
+multi-agent
+skills
+tmp
+*.log
+node_modules
