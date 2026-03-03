@@ -2,11 +2,6 @@ name: deploy-prod
 
 on:
   workflow_dispatch:
-    inputs:
-      source_date:
-        description: "Date tag to promote from vnext tag (vnext-yyyymmdd). Defaults to current UTC date."
-        required: false
-        type: string
 
 concurrency:
   group: deploy-prod
@@ -49,7 +44,7 @@ jobs:
       - test
     outputs:
       image_ref: ${{ steps.image.outputs.image_ref }}
-      promoted_date: ${{ steps.resolve_source.outputs.promote_date }}
+      promoted_date: ${{ steps.release_date.outputs.promote_date }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,23 +77,16 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Resolve release date
+        id: release_date
+        run: echo "promote_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
       - name: Resolve source vnext image
         id: resolve_source
         env:
           IMAGE_REPO: ${{ steps.dockerhub.outputs.image_repo }}
-          INPUT_SOURCE_DATE: ${{ inputs.source_date }}
         run: |
-          promote_date="$INPUT_SOURCE_DATE"
-          if [ -z "$promote_date" ]; then
-            promote_date="$(date -u +%Y%m%d)"
-          fi
-
-          if [[ ! "$promote_date" =~ ^[0-9]{8}$ ]]; then
-            echo "ERROR: source_date must be in yyyymmdd format. got: $promote_date" >&2
-            exit 1
-          fi
-
-          source_tag_ref="${IMAGE_REPO}:vnext-${promote_date}"
+          source_tag_ref="${IMAGE_REPO}:vnext"
           inspect_output="$(docker buildx imagetools inspect "$source_tag_ref" || true)"
           source_digest="$(printf '%s\n' "$inspect_output" | awk '/^Digest:/ {print $2; exit}')"
 
@@ -108,14 +96,13 @@ jobs:
             exit 1
           fi
 
-          echo "promote_date=$promote_date" >> "$GITHUB_OUTPUT"
           echo "source_digest=$source_digest" >> "$GITHUB_OUTPUT"
           echo "source_ref=${IMAGE_REPO}@${source_digest}" >> "$GITHUB_OUTPUT"
 
       - name: Promote vnext digest to prod tags
         env:
           IMAGE_REPO: ${{ steps.dockerhub.outputs.image_repo }}
-          PROMOTE_DATE: ${{ steps.resolve_source.outputs.promote_date }}
+          PROMOTE_DATE: ${{ steps.release_date.outputs.promote_date }}
           SOURCE_DIGEST: ${{ steps.resolve_source.outputs.source_digest }}
           SOURCE_REF: ${{ steps.resolve_source.outputs.source_ref }}
         run: |
@@ -132,7 +119,7 @@ jobs:
 
       - name: Export image reference
         id: image
-        run: echo "image_ref=${{ steps.dockerhub.outputs.image_repo }}:${{ steps.resolve_source.outputs.promote_date }}" >> "$GITHUB_OUTPUT"
+        run: echo "image_ref=${{ steps.dockerhub.outputs.image_repo }}:${{ steps.release_date.outputs.promote_date }}" >> "$GITHUB_OUTPUT"
 
   deploy:
     runs-on: ubuntu-latest
