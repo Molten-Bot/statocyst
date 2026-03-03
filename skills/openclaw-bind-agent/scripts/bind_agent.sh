@@ -8,8 +8,8 @@ Usage:
   bind_agent.sh <base_url> <agent_id> <from_agent_id> [token_output_file]
 
 Arguments:
-  agent_id          Agent to register and authorize for allow-inbound updates
-  from_agent_id     Sender agent to allow inbound from
+  agent_id          Agent to register and bond
+  from_agent_id     Peer agent to bond with
   token_output_file Optional path to write token. Default: /tmp/<agent_id>.token. Use '-' to print token to stdout.
 
 Environment:
@@ -48,8 +48,8 @@ else
 fi
 
 register_tmp="$(mktemp)"
-allow_tmp="$(mktemp)"
-trap 'rm -f "$register_tmp" "$allow_tmp"' EXIT
+bond_tmp="$(mktemp)"
+trap 'rm -f "$register_tmp" "$bond_tmp"' EXIT
 
 register_payload="$(node -e 'console.log(JSON.stringify({agent_id: process.argv[1]}))' "$agent_id")"
 
@@ -91,32 +91,33 @@ else
   printf '%s\n' "$token" > "$token_output_file"
 fi
 
-allow_payload="$(node -e 'console.log(JSON.stringify({from_agent_id: process.argv[1]}))' "$from_agent_id")"
+bond_payload="$(node -e 'console.log(JSON.stringify({peer_agent_id: process.argv[1]}))' "$from_agent_id")"
 
-allow_status="$(curl -sS -o "$allow_tmp" -w "%{http_code}" \
-  -X POST "$base_url/v1/agents/$agent_id/allow-inbound" \
+bond_status="$(curl -sS -o "$bond_tmp" -w "%{http_code}" \
+  -X POST "$base_url/v1/bonds" \
   -H "Authorization: Bearer $token" \
   -H "Content-Type: application/json" \
-  --data "$allow_payload")"
+  --data "$bond_payload")"
 
-if [[ "$allow_status" != "200" ]]; then
-  excerpt="$(node -e 'const fs=require("fs"); const t=fs.readFileSync(process.argv[1],"utf8"); console.log(t.slice(0,300));' "$allow_tmp")"
-  echo "ERROR: allow-inbound failed (HTTP $allow_status): $excerpt" >&2
+if [[ "$bond_status" != "200" && "$bond_status" != "201" ]]; then
+  excerpt="$(node -e 'const fs=require("fs"); const t=fs.readFileSync(process.argv[1],"utf8"); console.log(t.slice(0,300));' "$bond_tmp")"
+  echo "ERROR: bond create/join failed (HTTP $bond_status): $excerpt" >&2
   exit 1
 fi
 
 if [[ "$token_output_file" == "-" ]]; then
-  echo "OK: registered $agent_id and allowed inbound from $from_agent_id" >&2
+  echo "OK: registered $agent_id and requested bond with $from_agent_id" >&2
 else
   node -e '
 const result = {
   status: "ok",
   base_url: process.argv[4],
   agent_id: process.argv[1],
-  allowed_from_agent_id: process.argv[2],
+  peer_agent_id: process.argv[2],
   token_file: process.argv[3],
   reused_registration: process.argv[5] === "true",
+  bond: JSON.parse(require("fs").readFileSync(process.argv[6], "utf8")),
 };
 console.log(JSON.stringify(result));
-' "$agent_id" "$from_agent_id" "$token_output_file" "$base_url" "$reused_registration"
+' "$agent_id" "$from_agent_id" "$token_output_file" "$base_url" "$reused_registration" "$bond_tmp"
 fi

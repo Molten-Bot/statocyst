@@ -12,16 +12,16 @@
 
 - Success: `201` with `{ "agent_id": "...", "token": "..." }`
 
-## Allow Inbound
+## Create/Join Bond
 
 - Method: `POST`
-- Path: `/v1/agents/{agent_id}/allow-inbound`
-- Auth header: `Authorization: Bearer <token-for-agent_id>`
+- Path: `/v1/bonds`
+- Auth header: `Authorization: Bearer <token-for-caller>`
 - Request:
 
 ```json
-{ "from_agent_id": "agent-b" }
+{ "peer_agent_id": "agent-b" }
 ```
 
-- Success: `200` with allow confirmation.
-- Common errors: `401`, `403`, `404`.
+- Success: `201` when bond is created (pending), `200` when existing bond is joined/active.
+- Common errors: `401`, `404`.

@@ -58,8 +58,13 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):
 			writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_id is not registered")
-		case errors.Is(err, store.ErrNotAllowed):
-			writeError(w, http.StatusForbidden, "not_allowed", "receiver has not allowed inbound messages from sender")
+		case errors.Is(err, store.ErrNoActiveBond):
+			writeJSON(w, http.StatusAccepted, map[string]string{
+				"status": "dropped",
+				"reason": "no_active_bond",
+			})
+		case errors.Is(err, store.ErrSenderUnknown):
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		default:
 			writeError(w, http.StatusInternalServerError, "store_error", "failed to authorize publish")
 		}

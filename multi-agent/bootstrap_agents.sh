@@ -79,9 +79,9 @@ SHRIMP_REG="$(docker exec multi-agent-shrimp-1 bash -lc "curl -sS -X POST $BASE_
 SHRIMP_TOKEN="$(printf '%s' "$SHRIMP_REG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
 docker exec multi-agent-shrimp-1 bash -lc "umask 077; printf '%s\n' '$SHRIMP_TOKEN' > /tmp/${SHRIMP_ID}.token"
 
-echo "[bootstrap] applying mutual inbound allow rules"
-docker exec multi-agent-crab-1 bash -lc "curl -sS -X POST $BASE_URL/v1/agents/$CRAB_ID/allow-inbound -H 'Authorization: Bearer $CRAB_TOKEN' -H 'Content-Type: application/json' -d '{\"from_agent_id\":\"$SHRIMP_ID\"}' >/tmp/${CRAB_ID}_allow.json"
-docker exec multi-agent-shrimp-1 bash -lc "curl -sS -X POST $BASE_URL/v1/agents/$SHRIMP_ID/allow-inbound -H 'Authorization: Bearer $SHRIMP_TOKEN' -H 'Content-Type: application/json' -d '{\"from_agent_id\":\"$CRAB_ID\"}' >/tmp/${SHRIMP_ID}_allow.json"
+echo "[bootstrap] creating and activating bond"
+docker exec multi-agent-crab-1 bash -lc "curl -sS -X POST $BASE_URL/v1/bonds -H 'Authorization: Bearer $CRAB_TOKEN' -H 'Content-Type: application/json' -d '{\"peer_agent_id\":\"$SHRIMP_ID\"}' >/tmp/${CRAB_ID}_bond.json"
+docker exec multi-agent-shrimp-1 bash -lc "curl -sS -X POST $BASE_URL/v1/bonds -H 'Authorization: Bearer $SHRIMP_TOKEN' -H 'Content-Type: application/json' -d '{\"peer_agent_id\":\"$CRAB_ID\"}' >/tmp/${SHRIMP_ID}_bond.json"
 
 echo "[bootstrap] running exchange smoke test"
 MSG_A="bootstrap-ping-$(date +%s)"

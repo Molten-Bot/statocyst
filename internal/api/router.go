@@ -38,8 +38,10 @@ func NewHandler(st *store.MemoryStore, waiters *longpoll.Waiters) *Handler {
 func NewRouter(handler *Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealthz)
+	mux.HandleFunc("/openapi.yaml", handler.handleOpenAPIYAML)
 	mux.HandleFunc("/v1/agents/register", handler.handleRegister)
-	mux.HandleFunc("/v1/agents/", handler.handleAgentSubroutes)
+	mux.HandleFunc("/v1/bonds", handler.handleBonds)
+	mux.HandleFunc("/v1/bonds/", handler.handleBondByID)
 	mux.HandleFunc("/v1/messages/publish", handler.handlePublish)
 	mux.HandleFunc("/v1/messages/pull", handler.handlePull)
 	return mux
@@ -81,18 +83,16 @@ func validateAgentID(agentID string) bool {
 	return agentIDRegex.MatchString(agentID)
 }
 
-func parseAgentAllowInboundPath(path string) (string, bool) {
-	const prefix = "/v1/agents/"
-	const suffix = "/allow-inbound"
-	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+func parseBondIDPath(path string) (string, bool) {
+	const prefix = "/v1/bonds/"
+	if !strings.HasPrefix(path, prefix) {
 		return "", false
 	}
 	trimmed := strings.TrimPrefix(path, prefix)
-	agentID := strings.TrimSuffix(trimmed, suffix)
-	if agentID == "" || strings.Contains(agentID, "/") {
+	if trimmed == "" || strings.Contains(trimmed, "/") {
 		return "", false
 	}
-	return agentID, true
+	return trimmed, true
 }
 
 func (h *Handler) authenticateAgent(r *http.Request) (string, error) {

@@ -1,6 +1,6 @@
 ---
 name: openclaw-exchange-messages
-description: Validate strict full round-trip messaging between two OpenClaw agents over the local Statocyst HTTP bus. Use when proving end-to-end sender authorization and pull delivery for A->B then B->A.
+description: Validate strict full round-trip messaging between two OpenClaw agents over the local Statocyst HTTP bus. Use when proving bonded A->B and B->A delivery.
 ---
 
 # OpenClaw Exchange Messages
@@ -11,7 +11,7 @@ description: Validate strict full round-trip messaging between two OpenClaw agen
 2. Publish from A to B and verify B pulls expected payload/source.
 3. Publish from B to A and verify A pulls expected payload/source.
 4. Emit pass/fail summary with message IDs and elapsed milliseconds.
-5. Stop on first timeout, mismatch, or non-2xx status.
+5. Stop on first timeout, mismatch, dropped publish, or non-2xx status.
 
 ## Required Inputs
 

@@ -39,11 +39,16 @@ func registerAgent(t *testing.T, router http.Handler, agentID string) string {
 	return token
 }
 
-func allowInbound(t *testing.T, router http.Handler, receiverID, receiverToken, senderID string) *httptest.ResponseRecorder {
+func createBond(t *testing.T, router http.Handler, token, peerID string) *httptest.ResponseRecorder {
 	t.Helper()
-	path := fmt.Sprintf("/v1/agents/%s/allow-inbound", receiverID)
-	body := map[string]string{"from_agent_id": senderID}
-	return doJSONRequest(t, router, http.MethodPost, path, receiverToken, body)
+	body := map[string]string{"peer_agent_id": peerID}
+	return doJSONRequest(t, router, http.MethodPost, "/v1/bonds", token, body)
+}
+
+func deleteBond(t *testing.T, router http.Handler, token, bondID string) *httptest.ResponseRecorder {
+	t.Helper()
+	path := fmt.Sprintf("/v1/bonds/%s", bondID)
+	return doJSONRequest(t, router, http.MethodDelete, path, token, nil)
 }
 
 func publishMessage(t *testing.T, router http.Handler, senderToken, receiverID, payload string) *httptest.ResponseRecorder {
@@ -105,6 +110,35 @@ func decodePulledMessage(t *testing.T, body []byte) map[string]any {
 	return msg
 }
 
+func decodeMap(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode JSON response: %v body=%s", err, string(body))
+	}
+	return payload
+}
+
+func activateBond(t *testing.T, router http.Handler, tokenA, tokenB string) string {
+	t.Helper()
+	resp := createBond(t, router, tokenA, "agent-b")
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("bond create failed: %d %s", resp.Code, resp.Body.String())
+	}
+	payload := decodeMap(t, resp.Body.Bytes())
+	bond, _ := payload["bond"].(map[string]any)
+	bondID, _ := bond["bond_id"].(string)
+	if bondID == "" {
+		t.Fatalf("missing bond_id in response: %s", resp.Body.String())
+	}
+
+	resp = createBond(t, router, tokenB, "agent-a")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("bond join failed: %d %s", resp.Code, resp.Body.String())
+	}
+	return bondID
+}
+
 func TestRegisterAndDuplicate(t *testing.T) {
 	router := newTestRouter()
 
@@ -119,46 +153,121 @@ func TestRegisterAndDuplicate(t *testing.T) {
 	}
 }
 
-func TestAllowInboundTokenMismatch(t *testing.T) {
+func TestCreateBondAndActivation(t *testing.T) {
 	router := newTestRouter()
 	tokenA := registerAgent(t, router, "agent-a")
-	_ = registerAgent(t, router, "agent-b")
+	tokenB := registerAgent(t, router, "agent-b")
 
-	resp := allowInbound(t, router, "agent-b", tokenA, "agent-a")
-	if resp.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for token mismatch, got %d: %s", resp.Code, resp.Body.String())
+	resp := createBond(t, router, tokenA, "agent-b")
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for first bond join, got %d: %s", resp.Code, resp.Body.String())
+	}
+	payload := decodeMap(t, resp.Body.Bytes())
+	bond, _ := payload["bond"].(map[string]any)
+	bondID, _ := bond["bond_id"].(string)
+	state, _ := bond["state"].(string)
+	if state != "pending" {
+		t.Fatalf("expected pending bond after first side joins, got %q", state)
+	}
+	if bondID == "" {
+		t.Fatalf("missing bond_id in create response")
+	}
+
+	resp = publishMessage(t, router, tokenA, "agent-b", "hello-before-bond")
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for dropped message, got %d: %s", resp.Code, resp.Body.String())
+	}
+	publishBefore := decodeMap(t, resp.Body.Bytes())
+	if publishBefore["status"] != "dropped" {
+		t.Fatalf("expected dropped publish before active bond, got %v", publishBefore["status"])
+	}
+
+	resp = createBond(t, router, tokenB, "agent-a")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 when second side joins, got %d: %s", resp.Code, resp.Body.String())
+	}
+	payload = decodeMap(t, resp.Body.Bytes())
+	bond, _ = payload["bond"].(map[string]any)
+	state, _ = bond["state"].(string)
+	if state != "active" {
+		t.Fatalf("expected active bond after both sides join, got %q", state)
+	}
+	bondID2, _ := bond["bond_id"].(string)
+	if bondID2 != bondID {
+		t.Fatalf("expected same bond_id on second join, got %s vs %s", bondID2, bondID)
+	}
+
+	resp = publishMessage(t, router, tokenA, "agent-b", "hello-after-bond")
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 publish queued, got %d: %s", resp.Code, resp.Body.String())
+	}
+	publishAfter := decodeMap(t, resp.Body.Bytes())
+	if publishAfter["status"] != "queued" {
+		t.Fatalf("expected queued publish after active bond, got %v", publishAfter["status"])
+	}
+	if _, ok := publishAfter["message_id"]; !ok {
+		t.Fatalf("expected message_id in queued response: %s", resp.Body.String())
+	}
+
+	pull := pullMessage(t, router, tokenB, 25)
+	if pull.Code != http.StatusOK {
+		t.Fatalf("pull after queued publish failed: %d %s", pull.Code, pull.Body.String())
+	}
+	msg := decodePulledMessage(t, pull.Body.Bytes())
+	if got := msg["payload"]; got != "hello-after-bond" {
+		t.Fatalf("expected payload hello-after-bond, got %v", got)
 	}
 }
 
-func TestAllowInboundUnknownSender(t *testing.T) {
+func TestCreateBondUnknownPeer(t *testing.T) {
 	router := newTestRouter()
 	tokenA := registerAgent(t, router, "agent-a")
 
-	resp := allowInbound(t, router, "agent-a", tokenA, "ghost")
+	resp := createBond(t, router, tokenA, "ghost")
 	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown sender, got %d: %s", resp.Code, resp.Body.String())
+		t.Fatalf("expected 404 for unknown peer, got %d: %s", resp.Code, resp.Body.String())
 	}
 }
 
-func TestUnauthorizedPublishRejected(t *testing.T) {
+func TestDeleteBondAccessAndPublishDrop(t *testing.T) {
 	router := newTestRouter()
 	tokenA := registerAgent(t, router, "agent-a")
 	tokenB := registerAgent(t, router, "agent-b")
 	tokenC := registerAgent(t, router, "agent-c")
 
-	resp := allowInbound(t, router, "agent-b", tokenB, "agent-a")
-	if resp.Code != http.StatusOK {
-		t.Fatalf("allow-inbound setup failed: %d %s", resp.Code, resp.Body.String())
-	}
+	bondID := activateBond(t, router, tokenA, tokenB)
 
-	resp = publishMessage(t, router, tokenA, "agent-b", "hello")
-	if resp.Code != http.StatusAccepted {
-		t.Fatalf("expected 202 for allowed sender, got %d: %s", resp.Code, resp.Body.String())
-	}
-
-	resp = publishMessage(t, router, tokenC, "agent-b", "blocked")
+	resp := deleteBond(t, router, tokenC, bondID)
 	if resp.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for unauthorized sender, got %d: %s", resp.Code, resp.Body.String())
+		t.Fatalf("expected 403 for non-participant delete, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	resp = deleteBond(t, router, tokenA, bondID)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 for participant delete, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	resp = publishMessage(t, router, tokenA, "agent-b", "after-delete")
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 publish response after delete, got %d: %s", resp.Code, resp.Body.String())
+	}
+	payload := decodeMap(t, resp.Body.Bytes())
+	if payload["status"] != "dropped" {
+		t.Fatalf("expected dropped publish after bond delete, got %v", payload["status"])
+	}
+}
+
+func TestLongPollTimeout(t *testing.T) {
+	router := newTestRouter()
+	tokenA := registerAgent(t, router, "agent-a")
+
+	start := time.Now()
+	resp := pullMessage(t, router, tokenA, 25)
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on timeout, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if time.Since(start) < 20*time.Millisecond {
+		t.Fatalf("expected long-poll to wait before timeout")
 	}
 }
 
@@ -166,13 +275,9 @@ func TestFIFOOrdering(t *testing.T) {
 	router := newTestRouter()
 	tokenA := registerAgent(t, router, "agent-a")
 	tokenB := registerAgent(t, router, "agent-b")
+	_ = activateBond(t, router, tokenA, tokenB)
 
-	resp := allowInbound(t, router, "agent-b", tokenB, "agent-a")
-	if resp.Code != http.StatusOK {
-		t.Fatalf("allow-inbound failed: %d %s", resp.Code, resp.Body.String())
-	}
-
-	resp = publishMessage(t, router, tokenA, "agent-b", "first")
+	resp := publishMessage(t, router, tokenA, "agent-b", "first")
 	if resp.Code != http.StatusAccepted {
 		t.Fatalf("publish first failed: %d %s", resp.Code, resp.Body.String())
 	}
@@ -200,29 +305,11 @@ func TestFIFOOrdering(t *testing.T) {
 	}
 }
 
-func TestLongPollTimeout(t *testing.T) {
-	router := newTestRouter()
-	tokenA := registerAgent(t, router, "agent-a")
-
-	start := time.Now()
-	resp := pullMessage(t, router, tokenA, 25)
-	if resp.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 on timeout, got %d: %s", resp.Code, resp.Body.String())
-	}
-	if time.Since(start) < 20*time.Millisecond {
-		t.Fatalf("expected long-poll to wait before timeout")
-	}
-}
-
 func TestConcurrentPublishPull(t *testing.T) {
 	router := newTestRouter()
 	tokenA := registerAgent(t, router, "agent-a")
 	tokenB := registerAgent(t, router, "agent-b")
-
-	resp := allowInbound(t, router, "agent-b", tokenB, "agent-a")
-	if resp.Code != http.StatusOK {
-		t.Fatalf("allow-inbound failed: %d %s", resp.Code, resp.Body.String())
-	}
+	_ = activateBond(t, router, tokenA, tokenB)
 
 	const total = 40
 	var pubWG sync.WaitGroup
@@ -232,11 +319,15 @@ func TestConcurrentPublishPull(t *testing.T) {
 			defer pubWG.Done()
 			payload := fmt.Sprintf("msg-%02d", i)
 			resp := publishMessage(t, router, tokenA, "agent-b", payload)
-				if resp.Code != http.StatusAccepted {
-					t.Errorf("publish failed for %s: %d %s", payload, resp.Code, resp.Body.String())
-					return
-				}
-			}(i)
+			if resp.Code != http.StatusAccepted {
+				t.Errorf("publish failed for %s: %d %s", payload, resp.Code, resp.Body.String())
+				return
+			}
+			pub := decodeMap(t, resp.Body.Bytes())
+			if pub["status"] != "queued" {
+				t.Errorf("publish not queued for %s: %v", payload, pub["status"])
+			}
+		}(i)
 	}
 	pubWG.Wait()
 

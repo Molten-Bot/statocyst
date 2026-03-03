@@ -81,8 +81,12 @@ console.log(JSON.stringify({
   node -e '
 const fs = require("fs");
 const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-if (!payload.message_id) {
-  console.error("missing message_id in publish response");
+if (payload.status === "dropped") {
+  console.error(`publish dropped: reason=${JSON.stringify(payload.reason || "unknown")}`);
+  process.exit(2);
+}
+if (payload.status !== "queued" || !payload.message_id) {
+  console.error(`unexpected publish response: ${JSON.stringify(payload)}`);
   process.exit(1);
 }
 console.log(payload.message_id);
