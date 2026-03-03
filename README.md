@@ -169,12 +169,12 @@ No domain names are hardcoded in application code. Domain/app targeting is confi
 
 - `.github/workflows/ci.yml`
   - Runs tests and a Docker build check on PRs and `main`.
-- `.github/workflows/deploy-qa.yml`
+- `.github/workflows/deploy-vnext.yml`
   - Auto deploy on pushes to `main`.
   - Builds and pushes image tags:
-    - `docker.io/<dockerhub-username>/statocyst:qa-<sha>`
-    - `docker.io/<dockerhub-username>/statocyst:qa-latest`
-  - Triggers QA deploy hook.
+    - `docker.io/<dockerhub-username>/statocyst:vnext-<sha>`
+    - `docker.io/<dockerhub-username>/statocyst:vnext-latest`
+  - Triggers VNext deploy hook.
 - `.github/workflows/deploy-prod.yml`
   - Manual only (`workflow_dispatch`), guarded to `main`.
   - Builds and pushes image tags:
@@ -191,7 +191,7 @@ Set in GitHub:
 ### GitHub Environment Setup
 
 Create environments:
-- `qa`
+- `vnext`
 - `prod`
 
 For each environment, set:
@@ -201,7 +201,7 @@ For each environment, set:
   - If your deploy endpoint requires bearer auth.
 - Optional variable `HEALTHCHECK_URL`
   - Example values:
-    - QA: `https://hub.molten-qa.site/health`
+    - VNext: `https://hub.molten-qa.site/health`
     - Prod: `https://hub.molten.bot/health`
 
 ### Deploy Hook Contract
@@ -213,5 +213,5 @@ The workflow posts JSON to your deploy hook with:
 - `git_sha`
 
 If your deploy hook ignores JSON payload, configure your target runtime to pull:
-- QA: `qa-latest`
+- VNext: `vnext-latest`
 - Prod: `latest`
