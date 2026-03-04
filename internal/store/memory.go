@@ -19,6 +19,9 @@ var (
 	ErrMembershipNotFound = errors.New("membership not found")
 	ErrInviteNotFound     = errors.New("invite not found")
 	ErrInviteInvalid      = errors.New("invite invalid")
+	ErrOrgAccessKeyNotFound = errors.New("org access key not found")
+	ErrOrgAccessKeyInvalid  = errors.New("org access key invalid")
+	ErrOrgAccessScopeDenied = errors.New("org access scope denied")
 	ErrAgentExists        = errors.New("agent already exists")
 	ErrAgentNotFound      = errors.New("agent not found")
 	ErrAgentRevoked       = errors.New("agent revoked")
@@ -46,6 +49,8 @@ type MemoryStore struct {
 	membershipByOrgUser map[string]string
 
 	invites map[string]model.Invite
+	orgAccessKeys      map[string]model.OrgAccessKey
+	orgAccessKeyByHash map[string]string
 
 	agents                 map[string]model.Agent
 	agentTokenIdx          map[string]string
@@ -64,6 +69,7 @@ type MemoryStore struct {
 
 	auditByOrg map[string][]model.AuditEvent
 	statsByOrg map[string]model.OrgStats
+	statsDaily map[string]map[string]model.OrgDailyStats
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -75,6 +81,8 @@ func NewMemoryStore() *MemoryStore {
 		memberships:            make(map[string]model.Membership),
 		membershipByOrgUser:    make(map[string]string),
 		invites:                make(map[string]model.Invite),
+		orgAccessKeys:          make(map[string]model.OrgAccessKey),
+		orgAccessKeyByHash:     make(map[string]string),
 		agents:                 make(map[string]model.Agent),
 		agentTokenIdx:          make(map[string]string),
 		orgOwnedAgentNameIdx:   make(map[string]string),
@@ -88,6 +96,7 @@ func NewMemoryStore() *MemoryStore {
 		agentTrustByPair:       make(map[string]string),
 		auditByOrg:             make(map[string][]model.AuditEvent),
 		statsByOrg:             make(map[string]model.OrgStats),
+		statsDaily:             make(map[string]map[string]model.OrgDailyStats),
 	}
 }
 
@@ -315,6 +324,147 @@ func (s *MemoryStore) RevokeInvite(inviteID, actorHumanID, actorEmail string, is
 	s.invites[inviteID] = invite
 	s.appendAuditLocked(invite.OrgID, actorHumanID, "invite", "revoke", inviteID, nil, now)
 	return invite, nil
+}
+
+func (s *MemoryStore) CreateOrgAccessKey(
+	orgID, label string,
+	scopes []string,
+	expiresAt *time.Time,
+	actorHumanID, keyID, tokenHash string,
+	now time.Time,
+) (model.OrgAccessKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.orgs[orgID]; !ok {
+		return model.OrgAccessKey{}, ErrOrgNotFound
+	}
+	if !hasRoleAtLeast(s.membershipRoleLocked(orgID, actorHumanID), model.RoleAdmin) {
+		return model.OrgAccessKey{}, ErrUnauthorizedRole
+	}
+	if _, exists := s.orgAccessKeyByHash[tokenHash]; exists {
+		return model.OrgAccessKey{}, ErrOrgAccessKeyInvalid
+	}
+
+	normalizedScopes := normalizeOrgAccessScopes(scopes)
+	if len(normalizedScopes) == 0 {
+		return model.OrgAccessKey{}, ErrOrgAccessScopeDenied
+	}
+	if strings.TrimSpace(label) == "" {
+		label = "Organization Access Key"
+	}
+
+	key := model.OrgAccessKey{
+		KeyID:      keyID,
+		OrgID:      orgID,
+		Label:      strings.TrimSpace(label),
+		Scopes:     normalizedScopes,
+		Status:     model.StatusActive,
+		CreatedBy:  actorHumanID,
+		CreatedAt:  now,
+		ExpiresAt:  expiresAt,
+		LastUsedAt: nil,
+		RevokedAt:  nil,
+		TokenHash:  tokenHash,
+	}
+	s.orgAccessKeys[keyID] = key
+	s.orgAccessKeyByHash[tokenHash] = keyID
+	s.appendAuditLocked(orgID, actorHumanID, "org_access_key", "create", keyID, map[string]any{
+		"label":      key.Label,
+		"scopes":     key.Scopes,
+		"expires_at": key.ExpiresAt,
+	}, now)
+	return key, nil
+}
+
+func (s *MemoryStore) ListOrgAccessKeys(orgID, actorHumanID string, isSuperAdmin bool) ([]model.OrgAccessKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if _, ok := s.orgs[orgID]; !ok {
+		return nil, ErrOrgNotFound
+	}
+	if !isSuperAdmin && !hasRoleAtLeast(s.membershipRoleLocked(orgID, actorHumanID), model.RoleAdmin) {
+		return nil, ErrUnauthorizedRole
+	}
+
+	out := make([]model.OrgAccessKey, 0)
+	for _, key := range s.orgAccessKeys {
+		if key.OrgID != orgID {
+			continue
+		}
+		key.Scopes = append([]string(nil), key.Scopes...)
+		out = append(out, key)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *MemoryStore) RevokeOrgAccessKey(orgID, keyID, actorHumanID string, isSuperAdmin bool, now time.Time) (model.OrgAccessKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.orgs[orgID]; !ok {
+		return model.OrgAccessKey{}, ErrOrgNotFound
+	}
+	key, ok := s.orgAccessKeys[keyID]
+	if !ok || key.OrgID != orgID {
+		return model.OrgAccessKey{}, ErrOrgAccessKeyNotFound
+	}
+	if !isSuperAdmin && !hasRoleAtLeast(s.membershipRoleLocked(orgID, actorHumanID), model.RoleAdmin) {
+		return model.OrgAccessKey{}, ErrUnauthorizedRole
+	}
+	if key.Status == model.StatusRevoked {
+		return key, nil
+	}
+
+	delete(s.orgAccessKeyByHash, key.TokenHash)
+	key.Status = model.StatusRevoked
+	revoked := now
+	key.RevokedAt = &revoked
+	s.orgAccessKeys[keyID] = key
+	s.appendAuditLocked(orgID, actorHumanID, "org_access_key", "revoke", keyID, nil, now)
+	return key, nil
+}
+
+func (s *MemoryStore) AuthorizeOrgAccessByName(orgName, accessKeyHash, requiredScope string, now time.Time) (model.Organization, model.OrgAccessKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	orgID, ok := s.orgByName[strings.ToLower(strings.TrimSpace(orgName))]
+	if !ok || orgID == "" {
+		return model.Organization{}, model.OrgAccessKey{}, ErrOrgNotFound
+	}
+	org, ok := s.orgs[orgID]
+	if !ok {
+		return model.Organization{}, model.OrgAccessKey{}, ErrOrgNotFound
+	}
+
+	keyID, ok := s.orgAccessKeyByHash[accessKeyHash]
+	if !ok || keyID == "" {
+		return model.Organization{}, model.OrgAccessKey{}, ErrOrgAccessKeyNotFound
+	}
+	key, ok := s.orgAccessKeys[keyID]
+	if !ok || key.OrgID != orgID {
+		return model.Organization{}, model.OrgAccessKey{}, ErrOrgAccessKeyNotFound
+	}
+	if key.Status != model.StatusActive || key.RevokedAt != nil {
+		return model.Organization{}, model.OrgAccessKey{}, ErrOrgAccessKeyInvalid
+	}
+	if key.ExpiresAt != nil && now.After(*key.ExpiresAt) {
+		return model.Organization{}, model.OrgAccessKey{}, ErrOrgAccessKeyInvalid
+	}
+	if !orgAccessScopeAllowed(key.Scopes, requiredScope) {
+		return model.Organization{}, model.OrgAccessKey{}, ErrOrgAccessScopeDenied
+	}
+
+	usedAt := now
+	key.LastUsedAt = &usedAt
+	s.orgAccessKeys[keyID] = key
+	key.Scopes = append([]string(nil), key.Scopes...)
+	return org, key, nil
 }
 
 func (s *MemoryStore) ListOrgHumans(orgID, requesterHumanID string, isSuperAdmin bool) ([]model.OrgHumanView, error) {
@@ -698,6 +848,7 @@ func (s *MemoryStore) GetOrgStats(orgID, requesterHumanID string, isSuperAdmin b
 		return model.OrgStats{}, ErrUnauthorizedRole
 	}
 	stats := s.statsByOrg[orgID]
+	stats.Last7Days = s.last7DaysLocked(orgID, time.Now().UTC())
 	return stats, nil
 }
 
@@ -781,17 +932,21 @@ func (s *MemoryStore) CanPublish(senderAgentID, receiverAgentID string) (string,
 func (s *MemoryStore) RecordMessageQueued(orgID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now().UTC()
 	stats := s.ensureOrgStatsLocked(orgID)
 	stats.QueuedMessages++
 	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 1, 0)
 }
 
 func (s *MemoryStore) RecordMessageDropped(orgID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now().UTC()
 	stats := s.ensureOrgStatsLocked(orgID)
 	stats.DroppedMessages++
 	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 0, 1)
 }
 
 func (s *MemoryStore) Enqueue(message model.Message) error {
@@ -1057,6 +1212,40 @@ func (s *MemoryStore) ensureOrgStatsLocked(orgID string) model.OrgStats {
 	return stats
 }
 
+func (s *MemoryStore) incrementDailyLocked(orgID string, now time.Time, queuedDelta, droppedDelta int64) {
+	dayKey := now.Format("2006-01-02")
+	perOrg, ok := s.statsDaily[orgID]
+	if !ok {
+		perOrg = make(map[string]model.OrgDailyStats)
+		s.statsDaily[orgID] = perOrg
+	}
+	day := perOrg[dayKey]
+	day.Date = dayKey
+	day.QueuedMessages += queuedDelta
+	day.DroppedMessages += droppedDelta
+	perOrg[dayKey] = day
+}
+
+func (s *MemoryStore) last7DaysLocked(orgID string, now time.Time) []model.OrgDailyStats {
+	perOrg := s.statsDaily[orgID]
+	out := make([]model.OrgDailyStats, 0, 7)
+	start := now.AddDate(0, 0, -6)
+	for i := 0; i < 7; i++ {
+		day := start.AddDate(0, 0, i)
+		dayKey := day.Format("2006-01-02")
+		row, ok := perOrg[dayKey]
+		if !ok {
+			row = model.OrgDailyStats{
+				Date:            dayKey,
+				QueuedMessages:  0,
+				DroppedMessages: 0,
+			}
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 func applyTrustRequest(edge model.TrustEdge, isLeftRequester bool, now time.Time) model.TrustEdge {
 	if edge.State == model.StatusBlocked || edge.State == model.StatusRevoked {
 		edge.State = model.StatusPending
@@ -1082,6 +1271,34 @@ func opposite(edge model.TrustEdge, id string) string {
 		return edge.RightID
 	}
 	return edge.LeftID
+}
+
+func normalizeOrgAccessScopes(scopes []string) []string {
+	set := make(map[string]struct{})
+	for _, raw := range scopes {
+		scope := strings.ToLower(strings.TrimSpace(raw))
+		switch scope {
+		case model.OrgAccessScopeListHumans, model.OrgAccessScopeListAgents:
+			set[scope] = struct{}{}
+		default:
+			continue
+		}
+	}
+	out := make([]string, 0, len(set))
+	for scope := range set {
+		out = append(out, scope)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func orgAccessScopeAllowed(scopes []string, required string) bool {
+	for _, scope := range scopes {
+		if scope == required {
+			return true
+		}
+	}
+	return false
 }
 
 func hasRoleAtLeast(actualRole, minimumRole string) bool {

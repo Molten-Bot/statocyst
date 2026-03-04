@@ -103,6 +103,28 @@ paths:
       responses:
         '201':
           description: Invite created
+  /v1/org-invites:
+    get:
+      summary: List invites for current human
+      security:
+        - humanAuth: []
+      responses:
+        '200':
+          description: Invite list
+  /v1/org-invites/{invite_id}:
+    delete:
+      summary: Revoke invite
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: invite_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Invite revoked
   /v1/org-invites/{invite_id}/accept:
     post:
       summary: Accept invite
@@ -117,6 +139,99 @@ paths:
       responses:
         '200':
           description: Invite accepted
+  /v1/orgs/{org_id}/access-keys:
+    get:
+      summary: List organization access keys
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: org_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Access key metadata list
+    post:
+      summary: Create organization access key
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: org_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scopes]
+              properties:
+                label:
+                  type: string
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                    enum: [list_humans, list_agents]
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 3650
+      responses:
+        '201':
+          description: Access key created (key secret returned once)
+  /v1/orgs/{org_id}/access-keys/{key_id}:
+    delete:
+      summary: Revoke organization access key
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: org_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: key_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Access key revoked
+  /v1/org-access/humans:
+    get:
+      summary: List humans via org_name + org access key
+      security:
+        - orgAccessKey: []
+      parameters:
+        - in: query
+          name: org_name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Human list
+  /v1/org-access/agents:
+    get:
+      summary: List agents via org_name + org access key
+      security:
+        - orgAccessKey: []
+      parameters:
+        - in: query
+          name: org_name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent list
   /v1/orgs/{org_id}/humans:
     get:
       summary: List humans in org
@@ -460,3 +575,8 @@ components:
       type: http
       scheme: bearer
       bearerFormat: AgentToken
+    orgAccessKey:
+      type: apiKey
+      in: header
+      name: X-Org-Access-Key
+      description: Organization scoped access key secret for limited cross-org reads.

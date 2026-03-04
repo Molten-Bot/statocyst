@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"statocyst/internal/auth"
+	"statocyst/internal/model"
 	"statocyst/internal/store"
 )
 
@@ -45,6 +47,17 @@ type trustAgentRequest struct {
 	AgentID     string `json:"agent_id"`
 	PeerAgentID string `json:"peer_agent_id"`
 }
+
+type createOrgAccessKeyRequest struct {
+	Label        string   `json:"label"`
+	Scopes       []string `json:"scopes"`
+	ExpiresInDays *int     `json:"expires_in_days,omitempty"`
+}
+
+var (
+	errMissingOrgName      = errors.New("missing_org_name")
+	errMissingOrgAccessKey = errors.New("missing_org_access_key")
+)
 
 func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -212,6 +225,114 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"invite": invite})
 		return
+	case "access-keys":
+		if len(parts) == 4 {
+			switch r.Method {
+			case http.MethodGet:
+				keys, err := h.store.ListOrgAccessKeys(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+				if err != nil {
+					switch {
+					case errors.Is(err, store.ErrOrgNotFound):
+						writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+					case errors.Is(err, store.ErrUnauthorizedRole):
+						writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+					default:
+						writeError(w, http.StatusInternalServerError, "store_error", "failed to list access keys")
+					}
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"access_keys": keys})
+				return
+			case http.MethodPost:
+				if h.denySuperAdminWrite(w, actor) {
+					return
+				}
+				var req createOrgAccessKeyRequest
+				if err := decodeJSON(r, &req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+					return
+				}
+				var expiresAt *time.Time
+				if req.ExpiresInDays != nil {
+					if *req.ExpiresInDays <= 0 || *req.ExpiresInDays > 3650 {
+						writeError(w, http.StatusBadRequest, "invalid_expires_in_days", "expires_in_days must be in range 1..3650")
+						return
+					}
+					expires := h.now().UTC().AddDate(0, 0, *req.ExpiresInDays)
+					expiresAt = &expires
+				}
+				keySecret, err := auth.GenerateToken()
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate access key")
+					return
+				}
+				keyID, err := h.idFactory()
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate key_id")
+					return
+				}
+				key, err := h.store.CreateOrgAccessKey(
+					orgID,
+					req.Label,
+					req.Scopes,
+					expiresAt,
+					actor.Human.HumanID,
+					keyID,
+					auth.HashToken(keySecret),
+					h.now().UTC(),
+				)
+				if err != nil {
+					switch {
+					case errors.Is(err, store.ErrOrgNotFound):
+						writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+					case errors.Is(err, store.ErrUnauthorizedRole):
+						writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+					case errors.Is(err, store.ErrOrgAccessScopeDenied):
+						writeError(w, http.StatusBadRequest, "invalid_scopes", "at least one valid scope is required")
+					default:
+						writeError(w, http.StatusInternalServerError, "store_error", "failed to create access key")
+					}
+					return
+				}
+				writeJSON(w, http.StatusCreated, map[string]any{
+					"access_key": key,
+					"key":        keySecret,
+				})
+				return
+			default:
+				writeMethodNotAllowed(w)
+				return
+			}
+		}
+
+		if len(parts) == 5 {
+			if r.Method != http.MethodDelete {
+				writeMethodNotAllowed(w)
+				return
+			}
+			if h.denySuperAdminWrite(w, actor) {
+				return
+			}
+			keyID := parts[4]
+			key, err := h.store.RevokeOrgAccessKey(orgID, keyID, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
+			if err != nil {
+				switch {
+				case errors.Is(err, store.ErrOrgNotFound):
+					writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+				case errors.Is(err, store.ErrOrgAccessKeyNotFound):
+					writeError(w, http.StatusNotFound, "unknown_access_key", "key_id is not registered")
+				case errors.Is(err, store.ErrUnauthorizedRole):
+					writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+				default:
+					writeError(w, http.StatusInternalServerError, "store_error", "failed to revoke access key")
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"access_key": key})
+			return
+		}
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
 	case "humans":
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -313,6 +434,92 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
+	}
+}
+
+func (h *Handler) handleOrgAccessHumans(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	org, key, err := h.authorizeOrgAccess(r, model.OrgAccessScopeListHumans)
+	if err != nil {
+		h.writeOrgAccessErr(w, err)
+		return
+	}
+	humans, err := h.store.ListOrgHumans(org.OrgID, "", true)
+	if err != nil {
+		if errors.Is(err, store.ErrOrgNotFound) {
+			writeError(w, http.StatusNotFound, "unknown_org", "org_name is not registered")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to list humans")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"organization": org,
+		"access_key":   key,
+		"humans":       humans,
+	})
+}
+
+func (h *Handler) handleOrgAccessAgents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	org, key, err := h.authorizeOrgAccess(r, model.OrgAccessScopeListAgents)
+	if err != nil {
+		h.writeOrgAccessErr(w, err)
+		return
+	}
+	agents, err := h.store.ListOrgAgents(org.OrgID, "", true)
+	if err != nil {
+		if errors.Is(err, store.ErrOrgNotFound) {
+			writeError(w, http.StatusNotFound, "unknown_org", "org_name is not registered")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to list agents")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"organization": org,
+		"access_key":   key,
+		"agents":       agents,
+	})
+}
+
+func (h *Handler) authorizeOrgAccess(r *http.Request, requiredScope string) (model.Organization, model.OrgAccessKey, error) {
+	orgName := strings.TrimSpace(r.URL.Query().Get("org_name"))
+	if orgName == "" {
+		return model.Organization{}, model.OrgAccessKey{}, errMissingOrgName
+	}
+	secret := strings.TrimSpace(r.Header.Get("X-Org-Access-Key"))
+	if secret == "" {
+		if bearer, err := auth.ExtractBearerToken(r.Header.Get("Authorization")); err == nil {
+			secret = bearer
+		}
+	}
+	if secret == "" {
+		return model.Organization{}, model.OrgAccessKey{}, errMissingOrgAccessKey
+	}
+	return h.store.AuthorizeOrgAccessByName(orgName, auth.HashToken(secret), requiredScope, h.now().UTC())
+}
+
+func (h *Handler) writeOrgAccessErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errMissingOrgName):
+		writeError(w, http.StatusBadRequest, "invalid_org_name", "org_name query parameter is required")
+	case errors.Is(err, errMissingOrgAccessKey):
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing org access key")
+	case errors.Is(err, store.ErrOrgNotFound):
+		writeError(w, http.StatusNotFound, "unknown_org", "org_name is not registered")
+	case errors.Is(err, store.ErrOrgAccessScopeDenied):
+		writeError(w, http.StatusForbidden, "forbidden", "access key lacks required scope")
+	case errors.Is(err, store.ErrOrgAccessKeyNotFound), errors.Is(err, store.ErrOrgAccessKeyInvalid):
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired org access key")
+	default:
+		writeError(w, http.StatusInternalServerError, "store_error", "failed org access authorization")
 	}
 }
 

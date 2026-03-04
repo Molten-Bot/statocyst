@@ -49,20 +49,13 @@
         cursor: pointer;
       }
       main {
-        max-width: 1100px;
+        max-width: 1200px;
         margin: 16px auto;
         padding: 0 12px 24px;
       }
-      .banner {
-        border: 1px solid var(--line);
-        background: #fff;
-        border-radius: 8px;
-        padding: 10px;
-        margin-bottom: 12px;
-      }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
         gap: 12px;
       }
       .panel {
@@ -74,6 +67,10 @@
       h2 {
         margin: 4px 0 10px;
         font-size: 1rem;
+      }
+      h3 {
+        margin: 16px 0 8px;
+        font-size: 0.95rem;
       }
       input,
       button,
@@ -93,18 +90,6 @@
         font-weight: 600;
         cursor: pointer;
       }
-      button.secondary {
-        background: #fff;
-        color: var(--ink);
-      }
-      pre {
-        background: #0f172a;
-        color: #cbd5e1;
-        border-radius: 6px;
-        padding: 8px;
-        overflow: auto;
-        max-height: 240px;
-      }
       .status {
         margin-top: 6px;
         border: 1px solid var(--line);
@@ -118,6 +103,48 @@
       }
       .muted {
         color: var(--muted);
+      }
+      .list {
+        margin: 8px 0 0;
+        padding-left: 18px;
+      }
+      .list li {
+        margin: 4px 0;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        margin-top: 8px;
+      }
+      .chartWrap {
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        background: #fff;
+      }
+      #statsChart {
+        width: 100%;
+        min-height: 220px;
+      }
+      .twoCol {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .kpi {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .kpiLabel {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .kpiValue {
+        font-weight: 700;
+        margin-top: 4px;
       }
     </style>
   </head>
@@ -138,25 +165,21 @@
     </header>
 
     <main>
-      <div class="banner">
-        <strong>/organization</strong> is for organization admins/owners to manage organizations, invite humans,
-        and view trust/audit metrics. Invited non-admin users can still access profile pages, but org management
-        actions are enforced by backend roles.
-      </div>
-
       <div class="grid">
         <section class="panel">
           <h2>Organizations</h2>
           <input id="orgName" placeholder="New organization name" />
           <button id="btnCreateOrg">Create Organization</button>
-          <button id="btnListOrgs">List My Organizations</button>
+          <div id="orgStatus" class="status">Loading organizations...</div>
+          <h3>Your Organizations</h3>
+          <ul id="orgList" class="list"></ul>
+          <h3>Selected Organization</h3>
           <select id="orgSelect"></select>
-          <pre id="orgOut"></pre>
         </section>
 
         <section class="panel">
-          <h2>Invite Humans</h2>
-          <p class="muted">Send organization invites by email.</p>
+          <h2>Humans</h2>
+          <p class="muted">Invite humans by email, then review who is in this organization.</p>
           <input id="inviteEmail" placeholder="invite email" />
           <select id="inviteRole">
             <option value="admin">admin</option>
@@ -164,24 +187,46 @@
             <option value="viewer">viewer</option>
           </select>
           <button id="btnInvite">Create Invite</button>
-          <button id="btnListHumans">List Organization Humans</button>
-          <pre id="inviteOut"></pre>
-          <pre id="humansOut"></pre>
+          <div id="inviteStatus" class="status">No invite action yet.</div>
+
+          <h3>Organization Humans</h3>
+          <div id="humansStatus" class="muted">Select an organization to load humans.</div>
+          <div id="humansList"></div>
         </section>
 
         <section class="panel">
           <h2>Organization Metrics</h2>
-          <p class="muted">Graph, audit stream, and stats are visible here per selected organization.</p>
-          <button id="btnStats">Load Stats</button>
-          <button id="btnGraph">Load Trust Graph</button>
-          <button id="btnAudit">Load Audit</button>
-          <pre id="statsOut"></pre>
-          <pre id="graphOut"></pre>
-          <pre id="auditOut"></pre>
+          <p class="muted">Last 7 days stats, trusted organization links, and recent audit events.</p>
+          <button id="btnRefreshMetrics">Refresh Metrics</button>
+
+          <h3>Stats (Last 7 Days)</h3>
+          <div class="twoCol">
+            <div class="kpi">
+              <div class="kpiLabel">Queued Messages</div>
+              <div class="kpiValue" id="kpiQueued">-</div>
+            </div>
+            <div class="kpi">
+              <div class="kpiLabel">Dropped Messages</div>
+              <div class="kpiValue" id="kpiDropped">-</div>
+            </div>
+          </div>
+          <div class="chartWrap">
+            <svg id="statsChart" viewBox="0 0 560 220" preserveAspectRatio="none"></svg>
+            <div id="statsEmpty" class="muted" style="display: none; margin-top: 8px">No data yet.</div>
+          </div>
+
+          <h3>Trusted Organizations</h3>
+          <div id="trustStatus" class="muted">No data yet.</div>
+          <ul id="trustList" class="list"></ul>
+
+          <h3>Recent Audit (Last 10)</h3>
+          <div id="auditStatus" class="muted">No data yet.</div>
+          <div id="auditList"></div>
         </section>
       </div>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="/common.js"></script>
     <script src="/organization.js"></script>
   </body>

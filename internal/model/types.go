@@ -12,6 +12,9 @@ const (
 	StatusActive  = "active"
 	StatusBlocked = "blocked"
 	StatusRevoked = "revoked"
+
+	OrgAccessScopeListHumans = "list_humans"
+	OrgAccessScopeListAgents = "list_agents"
 )
 
 type Organization struct {
@@ -106,7 +109,14 @@ type OrgHumanView struct {
 }
 
 type OrgStats struct {
-	OrgID           string `json:"org_id"`
+	OrgID           string          `json:"org_id"`
+	QueuedMessages  int64           `json:"queued_messages"`
+	DroppedMessages int64           `json:"dropped_messages"`
+	Last7Days       []OrgDailyStats `json:"last_7_days"`
+}
+
+type OrgDailyStats struct {
+	Date            string `json:"date"`
 	QueuedMessages  int64  `json:"queued_messages"`
 	DroppedMessages int64  `json:"dropped_messages"`
 }
@@ -130,6 +140,20 @@ type MembershipWithOrg struct {
 type InviteWithOrg struct {
 	Invite Invite       `json:"invite"`
 	Org    Organization `json:"org"`
+}
+
+type OrgAccessKey struct {
+	KeyID      string     `json:"key_id"`
+	OrgID      string     `json:"org_id"`
+	Label      string     `json:"label"`
+	Scopes     []string   `json:"scopes"`
+	Status     string     `json:"status"`
+	CreatedBy  string     `json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	TokenHash  string     `json:"-"`
 }
 
 type AdminSnapshot struct {
