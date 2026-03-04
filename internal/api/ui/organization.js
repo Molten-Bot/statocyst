@@ -72,7 +72,7 @@ async function loadAudit() {
 }
 
 async function init() {
-  await UI.initSessionPanel();
+  UI.initTopNav();
 
   UI.$("btnCreateOrg").onclick = createOrg;
   UI.$("btnListOrgs").onclick = listOrgs;

@@ -22,7 +22,7 @@ async function acceptInvite() {
 }
 
 async function init() {
-  await UI.initSessionPanel();
+  UI.initTopNav();
 
   UI.$("btnLoadMe").onclick = loadMe;
   UI.$("btnLoadOrgs").onclick = loadOrgs;

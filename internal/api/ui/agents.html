@@ -24,11 +24,29 @@
         border-bottom: 1px solid var(--line);
         background: #fff;
       }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
       nav a {
         margin-right: 12px;
         color: var(--accent);
         text-decoration: none;
         font-weight: 600;
+      }
+      .navButton {
+        width: auto;
+        margin: 0;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
       }
       main {
         max-width: 1200px;
@@ -124,13 +142,18 @@
   </head>
   <body>
     <header>
-      <strong>Statocyst</strong>
-      <nav style="margin-top: 6px">
-        <a href="/profile">Profile</a>
-        <a href="/organization">Organization</a>
-        <a href="/agents">Agents</a>
-        <a href="/domains">Domains (Legacy)</a>
-      </nav>
+      <div class="topbar">
+        <div>
+          <strong>Statocyst</strong>
+          <nav style="margin-top: 6px">
+            <a href="/profile">Profile</a>
+            <a href="/organization">Organization</a>
+            <a href="/agents">Agents</a>
+            <a href="/domains">Domains (Legacy)</a>
+          </nav>
+        </div>
+        <button id="btnLogout" class="navButton" type="button">Logout</button>
+      </div>
     </header>
 
     <main>
@@ -140,18 +163,6 @@
       </div>
 
       <div class="grid">
-        <section class="panel">
-          <h2>Session</h2>
-          <div id="configSummary" class="muted">Loading auth config...</div>
-          <input id="authToken" placeholder="Bearer token (auto-saved from login)" />
-          <input id="humanId" placeholder="Dev header: X-Human-Id" />
-          <input id="humanEmail" placeholder="Dev header: X-Human-Email" />
-          <button id="btnSaveSession">Save Session</button>
-          <button id="btnClearSession" class="secondary">Clear Session</button>
-          <button id="btnGoLogin" class="secondary">Go to Login</button>
-          <div id="sessionStatus" class="status"></div>
-        </section>
-
         <section class="panel">
           <h2>Organization Scope</h2>
           <p class="muted">Pick organization before listing agents or trust queue.</p>
