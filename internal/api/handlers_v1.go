@@ -51,11 +51,14 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"human_auth_provider": h.humanAuth.Name(),
-		"supabase_url":        h.supabaseURL,
-		"supabase_anon_key":   h.supabaseAnonKey,
-		"super_admin_domains": h.superAdminDomains,
-		"bind_token_ttl_sec":  int(h.bindTokenTTL.Seconds()),
+		"human_auth_provider":      h.humanAuth.Name(),
+		"supabase_url":             h.supabaseURL,
+		"supabase_anon_key":        h.supabaseAnonKey,
+		"super_admin_emails":       setToSortedSlice(h.superAdminEmails),
+		"super_admin_domains":      setToSortedSlice(h.superAdminDomains),
+		"super_admin_review_mode":  h.superAdminReview,
+		"super_admin_write_policy": "review_mode_read_only",
+		"bind_token_ttl_sec":       int(h.bindTokenTTL.Seconds()),
 	})
 }
 

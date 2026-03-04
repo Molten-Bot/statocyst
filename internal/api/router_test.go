@@ -19,7 +19,7 @@ import (
 func newTestRouter() http.Handler {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, waiters, auth.NewDevHumanAuthProvider(), "", "", "molten.bot", 15*time.Minute)
+	h := NewHandler(st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute)
 	return NewRouter(h)
 }
 
@@ -446,7 +446,7 @@ func TestOrganizationNameUniqueCaseInsensitive(t *testing.T) {
 func TestBindTokenExpires(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, waiters, auth.NewDevHumanAuthProvider(), "", "", "molten.bot", 15*time.Minute)
+	h := NewHandler(st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute)
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
 	h.now = func() time.Time { return now }
 	router := NewRouter(h)

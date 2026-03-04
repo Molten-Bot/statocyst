@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,9 @@ type Handler struct {
 	idFactory         func() (string, error)
 	supabaseURL       string
 	supabaseAnonKey   string
+	superAdminEmails  map[string]struct{}
 	superAdminDomains map[string]struct{}
+	superAdminReview  bool
 	bindTokenTTL      time.Duration
 }
 
@@ -39,7 +42,17 @@ type humanActor struct {
 	IsSuperAdmin bool
 }
 
-func NewHandler(st *store.MemoryStore, waiters *longpoll.Waiters, humanAuth auth.HumanAuthProvider, supabaseURL, supabaseAnonKey, superAdminDomainsCSV string, bindTokenTTL time.Duration) *Handler {
+func NewHandler(
+	st *store.MemoryStore,
+	waiters *longpoll.Waiters,
+	humanAuth auth.HumanAuthProvider,
+	supabaseURL,
+	supabaseAnonKey,
+	superAdminEmailsCSV,
+	superAdminDomainsCSV string,
+	superAdminReview bool,
+	bindTokenTTL time.Duration,
+) *Handler {
 	if bindTokenTTL <= 0 {
 		bindTokenTTL = 15 * time.Minute
 	}
@@ -51,7 +64,9 @@ func NewHandler(st *store.MemoryStore, waiters *longpoll.Waiters, humanAuth auth
 		idFactory:         newUUIDv7,
 		supabaseURL:       strings.TrimSpace(supabaseURL),
 		supabaseAnonKey:   strings.TrimSpace(supabaseAnonKey),
+		superAdminEmails:  parseEmails(superAdminEmailsCSV),
 		superAdminDomains: parseDomains(superAdminDomainsCSV),
+		superAdminReview:  superAdminReview,
 		bindTokenTTL:      bindTokenTTL,
 	}
 }
@@ -180,11 +195,43 @@ func parseDomains(csv string) map[string]struct{} {
 	return out
 }
 
+func parseEmails(csv string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, raw := range strings.Split(csv, ",") {
+		email := strings.ToLower(strings.TrimSpace(raw))
+		if email == "" {
+			continue
+		}
+		out[email] = struct{}{}
+	}
+	return out
+}
+
+func setToSortedSlice(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (h *Handler) isSuperAdmin(identity auth.HumanIdentity) bool {
+	if !h.superAdminReview {
+		return false
+	}
 	if !identity.EmailVerified {
 		return false
 	}
-	parts := strings.Split(strings.ToLower(strings.TrimSpace(identity.Email)), "@")
+	email := strings.ToLower(strings.TrimSpace(identity.Email))
+	if email == "" {
+		return false
+	}
+	if _, ok := h.superAdminEmails[email]; ok {
+		return true
+	}
+
+	parts := strings.Split(email, "@")
 	if len(parts) != 2 {
 		return false
 	}

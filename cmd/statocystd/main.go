@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"statocyst/internal/api"
@@ -23,9 +24,15 @@ func main() {
 	waiters := longpoll.NewWaiters()
 	humanAuth := auth.NewHumanAuthProviderFromEnv()
 	bindTTL := 15 * time.Minute
+	superAdminReviewMode := false
 	if raw := os.Getenv("BIND_TOKEN_TTL_MINUTES"); raw != "" {
 		if mins, err := strconv.Atoi(raw); err == nil && mins > 0 {
 			bindTTL = time.Duration(mins) * time.Minute
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("SUPER_ADMIN_REVIEW_MODE")); raw != "" {
+		if mode, err := strconv.ParseBool(raw); err == nil {
+			superAdminReviewMode = mode
 		}
 	}
 	handler := api.NewHandler(
@@ -34,7 +41,9 @@ func main() {
 		humanAuth,
 		os.Getenv("SUPABASE_URL"),
 		os.Getenv("SUPABASE_ANON_KEY"),
+		os.Getenv("SUPER_ADMIN_EMAILS"),
 		os.Getenv("SUPER_ADMIN_DOMAINS"),
+		superAdminReviewMode,
 		bindTTL,
 	)
 	router := api.NewRouter(handler)

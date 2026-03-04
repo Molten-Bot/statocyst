@@ -18,8 +18,13 @@ This version provides:
 - `HUMAN_AUTH_PROVIDER=supabase`: use Supabase JWT bearer token.
   - Requires `SUPABASE_JWT_SECRET`.
   - Optional UI config values: `SUPABASE_URL`, `SUPABASE_ANON_KEY`.
-- Super-admin domains (read-only): `SUPER_ADMIN_DOMAINS=molten.bot`
+- Super-admin identity lists:
+  - `SUPER_ADMIN_EMAILS=root@molten.bot,ops@molten.bot` (recommended)
+  - `SUPER_ADMIN_DOMAINS=molten.bot` (broader; optional)
   - Requires verified email claim when using Supabase (`email_verified=true`).
+- Super-admin review toggle:
+  - `SUPER_ADMIN_REVIEW_MODE=false` (default): super-admin identities behave like normal users.
+  - `SUPER_ADMIN_REVIEW_MODE=true`: super-admin identities can read across orgs but remain read-only for writes.
 - Bind token TTL minutes: `BIND_TOKEN_TTL_MINUTES=15` (default `15`).
 
 ### In-memory warning
@@ -71,6 +76,7 @@ Notes:
 - `HUMAN_AUTH_PROVIDER=supabase`: `/` login button uses Supabase Google OAuth (via Supabase JS + `/v1/ui/config`).
 - `HUMAN_AUTH_PROVIDER=dev`: `/` login button skips directly to `/profile` for local development.
 - Role checks are enforced by API; non-admin users may see org/agent pages but write actions can return `403`.
+- Super-admin review mode (`SUPER_ADMIN_REVIEW_MODE=true`) is enforced server-side in API handlers (no client trust).
 
 ## Quick API Flow (Dev Auth)
 
