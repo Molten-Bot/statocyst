@@ -194,8 +194,7 @@ async function init() {
   }
 
   oauthEnabled = true;
-  $("loginBtn").textContent = "Login with Google";
-  setStatus("Click Login with Google to authenticate via Supabase.");
+  $("loginBtn").textContent = "Google";
 }
 
 init().catch((err) => {
