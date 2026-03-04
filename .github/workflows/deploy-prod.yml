@@ -160,12 +160,14 @@ jobs:
         env:
           HEALTHCHECK_URL: ${{ vars.HEALTHCHECK_URL }}
         run: |
-          for i in $(seq 1 30); do
+          attempts=0
+          while [ "$attempts" -lt 30 ]; do
             code="$(curl -s -o /dev/null -w "%{http_code}" "$HEALTHCHECK_URL" || true)"
             if [ "$code" = "200" ]; then
               echo "health check passed"
               exit 0
             fi
+            attempts=$((attempts + 1))
             sleep 2
           done
           echo "ERROR: production health check failed for $HEALTHCHECK_URL" >&2

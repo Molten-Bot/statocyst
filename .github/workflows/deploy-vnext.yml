@@ -63,6 +63,9 @@ jobs:
           username: ${{ steps.dockerhub.outputs.username }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -76,6 +79,7 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
             ${{ steps.dockerhub.outputs.image_repo }}:vnext
             ${{ steps.dockerhub.outputs.image_repo }}:vnext-${{ steps.release_date.outputs.release_date }}
@@ -123,12 +127,14 @@ jobs:
         env:
           HEALTHCHECK_URL: ${{ vars.HEALTHCHECK_URL }}
         run: |
-          for i in $(seq 1 30); do
+          attempts=0
+          while [ "$attempts" -lt 30 ]; do
             code="$(curl -s -o /dev/null -w "%{http_code}" "$HEALTHCHECK_URL" || true)"
             if [ "$code" = "200" ]; then
               echo "health check passed"
               exit 0
             fi
+            attempts=$((attempts + 1))
             sleep 2
           done
           echo "ERROR: vnext health check failed for $HEALTHCHECK_URL" >&2
