@@ -314,36 +314,73 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 	parts := splitPath(r.URL.Path)
-	if len(parts) != 4 || parts[0] != "v1" || parts[1] != "org-invites" || parts[3] != "accept" {
+	if len(parts) < 2 || parts[0] != "v1" || parts[1] != "org-invites" {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	inviteID := parts[2]
 	actor, err := h.authenticateHuman(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
 		return
 	}
-	if h.denySuperAdminWrite(w, actor) {
-		return
-	}
-	membership, err := h.store.AcceptInvite(inviteID, actor.Human.HumanID, actor.Human.Email, h.now().UTC(), h.idFactory)
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrInviteNotFound):
-			writeError(w, http.StatusNotFound, "unknown_invite", "invite_id is not registered")
-		case errors.Is(err, store.ErrInviteInvalid):
-			writeError(w, http.StatusBadRequest, "invalid_invite", "invite cannot be accepted by this user")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to accept invite")
+
+	if len(parts) == 2 {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
 		}
+		invites := h.store.ListInvitesForHuman(actor.Human.HumanID, actor.Human.Email, actor.IsSuperAdmin)
+		writeJSON(w, http.StatusOK, map[string]any{"invites": invites})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
+
+	if len(parts) == 4 && parts[3] == "accept" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		if h.denySuperAdminWrite(w, actor) {
+			return
+		}
+		inviteID := parts[2]
+		membership, err := h.store.AcceptInvite(inviteID, actor.Human.HumanID, actor.Human.Email, h.now().UTC(), h.idFactory)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrInviteNotFound):
+				writeError(w, http.StatusNotFound, "unknown_invite", "invite_id is not registered")
+			case errors.Is(err, store.ErrInviteInvalid):
+				writeError(w, http.StatusBadRequest, "invalid_invite", "invite cannot be accepted by this user")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to accept invite")
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
+		return
+	}
+
+	if len(parts) == 3 && r.Method == http.MethodDelete {
+		if h.denySuperAdminWrite(w, actor) {
+			return
+		}
+		inviteID := parts[2]
+		invite, err := h.store.RevokeInvite(inviteID, actor.Human.HumanID, actor.Human.Email, actor.IsSuperAdmin, h.now().UTC())
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrInviteNotFound):
+				writeError(w, http.StatusNotFound, "unknown_invite", "invite_id is not registered")
+			case errors.Is(err, store.ErrUnauthorizedRole):
+				writeError(w, http.StatusForbidden, "forbidden", "invite recipient or org admin required")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to revoke invite")
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"invite": invite})
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "route not found")
 }
 
 func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) {

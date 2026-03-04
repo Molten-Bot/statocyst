@@ -11,13 +11,6 @@ function setStatus(message, warn = false) {
   el.className = warn ? "status warn" : "status";
 }
 
-function formatDate(raw) {
-  if (!raw) return "-";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw;
-  return d.toLocaleString();
-}
-
 function daysAgoLabel(raw) {
   if (!raw) return "Joined recently";
   const d = new Date(raw);
@@ -75,24 +68,135 @@ function renderProfile(me, orgs) {
   UI.$("superAdminRow").style.display = isSuperAdmin ? "block" : "none";
 }
 
-async function init() {
-  UI.initTopNav();
-  setStatus("Loading profile...");
+function setInviteStatus(message, warn = false) {
+  const el = UI.$("inviteStatus");
+  el.textContent = message;
+  el.className = warn ? "status warn" : "muted";
+}
 
-  const [me, orgs] = await Promise.all([UI.req("/v1/me"), UI.req("/v1/me/orgs")]);
+function titleCaseStatus(status) {
+  if (status === "pending") return "Pending";
+  if (status === "active") return "Accepted";
+  if (status === "revoked") return "Revoked";
+  return status || "Unknown";
+}
+
+function renderInvites(invites) {
+  const root = UI.$("inviteList");
+  root.innerHTML = "";
+
+  const visible = (Array.isArray(invites) ? invites : []).filter((entry) => {
+    const status = String(entry?.invite?.status || "").toLowerCase();
+    return status === "pending" || status === "active";
+  });
+
+  if (visible.length === 0) {
+    setInviteStatus("No pending or accepted invites.");
+    return;
+  }
+
+  setInviteStatus(`${visible.length} invite(s).`);
+  for (const entry of visible) {
+    const invite = entry.invite || {};
+    const org = entry.org || {};
+
+    const card = document.createElement("div");
+    card.className = "inviteItem";
+
+    const title = document.createElement("div");
+    title.className = "value";
+    title.textContent = org.name || "Organization";
+    card.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "inviteMeta";
+    meta.textContent = `${titleCaseStatus(invite.status)} invite as ${invite.role || "member"}`;
+    card.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "inviteActions";
+
+    if (invite.status === "pending") {
+      const acceptBtn = document.createElement("button");
+      acceptBtn.className = "primary";
+      acceptBtn.textContent = "Accept";
+      acceptBtn.dataset.action = "accept";
+      acceptBtn.dataset.inviteId = invite.invite_id || "";
+      actions.appendChild(acceptBtn);
+    }
+
+    if (invite.status === "pending" || invite.status === "active") {
+      const revokeBtn = document.createElement("button");
+      revokeBtn.textContent = "Revoke";
+      revokeBtn.dataset.action = "revoke";
+      revokeBtn.dataset.inviteId = invite.invite_id || "";
+      actions.appendChild(revokeBtn);
+    }
+
+    card.appendChild(actions);
+    root.appendChild(card);
+  }
+}
+
+async function loadProfileData() {
+  const [me, orgs, invites] = await Promise.all([UI.req("/v1/me"), UI.req("/v1/me/orgs"), UI.req("/v1/org-invites")]);
 
   if (me.status !== 200) {
     setStatus("Could not load profile. Please login again.", true);
-    return;
+    return false;
   }
+
   if (orgs.status !== 200) {
     setStatus("Profile loaded, but organizations could not be loaded.", true);
     renderProfile(me, { data: { memberships: [] } });
-    return;
+  } else {
+    renderProfile(me, orgs);
   }
 
-  renderProfile(me, orgs);
+  if (invites.status !== 200) {
+    setInviteStatus("Could not load invites.", true);
+  } else {
+    renderInvites(invites.data?.invites || []);
+  }
+
   setStatus("Profile loaded.");
+  return true;
+}
+
+async function runInviteAction(inviteID, action) {
+  if (!inviteID) return;
+  if (action === "accept") {
+    setInviteStatus("Accepting invite...");
+    const res = await UI.req(`/v1/org-invites/${inviteID}/accept`, "POST");
+    if (res.status !== 200) {
+      setInviteStatus("Could not accept invite.", true);
+      return;
+    }
+  } else if (action === "revoke") {
+    setInviteStatus("Revoking invite...");
+    const res = await UI.req(`/v1/org-invites/${inviteID}`, "DELETE");
+    if (res.status !== 200) {
+      setInviteStatus("Could not revoke invite.", true);
+      return;
+    }
+  } else {
+    return;
+  }
+  await loadProfileData();
+}
+
+async function init() {
+  UI.initTopNav();
+  setStatus("Loading profile...");
+  setInviteStatus("Loading invites...");
+
+  UI.$("inviteList").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action][data-invite-id]");
+    if (!button) return;
+    await runInviteAction(button.dataset.inviteId || "", button.dataset.action || "");
+  });
+
+  await loadProfileData();
 }
 
 init().catch((err) => {

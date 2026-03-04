@@ -117,6 +117,41 @@
       a {
         color: var(--accent);
       }
+      .inviteList {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .inviteItem {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .inviteMeta {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .inviteActions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .inviteActions button {
+        width: auto;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .inviteActions button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
     </style>
   </head>
   <body>
@@ -156,6 +191,11 @@
             <div class="row" id="superAdminRow" style="display: none">
               <span class="label">Account Role</span>
               <div class="value">Super Admin</div>
+            </div>
+            <div class="row">
+              <span class="label">Invites</span>
+              <div id="inviteStatus" class="muted">Loading invites...</div>
+              <div class="inviteList" id="inviteList"></div>
             </div>
           </div>
         </section>
