@@ -1,4 +1,6 @@
 const TOKEN_KEY = "statocyst_access_token";
+const DEV_ID_KEY = "statocyst_dev_human_id";
+const DEV_EMAIL_KEY = "statocyst_dev_human_email";
 
 const $ = (id) => document.getElementById(id);
 
@@ -20,6 +22,23 @@ function saveToken(token) {
     return;
   }
   localStorage.setItem(TOKEN_KEY, token);
+}
+
+function saveDevIdentity(humanID, humanEmail) {
+  const id = String(humanID || "").trim();
+  const email = String(humanEmail || "")
+    .trim()
+    .toLowerCase();
+  if (id) {
+    localStorage.setItem(DEV_ID_KEY, id);
+  } else {
+    localStorage.removeItem(DEV_ID_KEY);
+  }
+  if (email) {
+    localStorage.setItem(DEV_EMAIL_KEY, email);
+  } else {
+    localStorage.removeItem(DEV_EMAIL_KEY);
+  }
 }
 
 function clearToken() {
@@ -94,11 +113,16 @@ async function startGoogleLogin() {
 }
 
 async function init() {
+  let devHumanID = "";
+  let devHumanEmail = "";
+  let devAutoLogin = false;
+
   $("loginBtn").onclick = async () => {
     if (oauthEnabled) {
       await startGoogleLogin();
       return;
     }
+    saveDevIdentity(devHumanID, devHumanEmail);
     window.location.assign("/profile");
   };
 
@@ -111,14 +135,29 @@ async function init() {
   const provider = String(cfg.data.human_auth_provider || "").toLowerCase();
   const supabaseURL = String(cfg.data.supabase_url || "").trim();
   const supabaseAnonKey = String(cfg.data.supabase_anon_key || "").trim();
+  devHumanID = String(cfg.data.dev_human_id || "").trim();
+  devHumanEmail = String(cfg.data.dev_human_email || "")
+    .trim()
+    .toLowerCase();
+  devAutoLogin = Boolean(cfg.data.dev_auto_login);
 
   if (await trySavedSession()) {
     return;
   }
 
   if (provider !== "supabase") {
-    $("loginBtn").textContent = "Login (Local Dev Skip)";
+    if (devHumanEmail) {
+      $("loginBtn").textContent = `Continue as ${devHumanEmail}`;
+    } else {
+      $("loginBtn").textContent = "Login (Local Dev Skip)";
+    }
     setStatus("Supabase auth not enabled. Login button will continue to /profile.", "warn");
+    if (devAutoLogin) {
+      saveDevIdentity(devHumanID, devHumanEmail);
+      setStatus("Auto-login enabled for local dev. Redirecting to /profile ...");
+      window.location.assign("/profile");
+      return;
+    }
     return;
   }
 
