@@ -1,4 +1,5 @@
 const UI = StatocystUI;
+let currentHumanID = "";
 
 function selectedOrg() {
   return UI.selectedOrg("orgSelect");
@@ -20,6 +21,39 @@ function requireOrg(statusID, message = "Select an organization first.") {
   return orgID;
 }
 
+function setOrgPickerVisible(visible) {
+  const picker = UI.$("orgPicker");
+  const hint = UI.$("orgEmptyHint");
+  if (picker) picker.style.display = visible ? "" : "none";
+  if (hint) hint.style.display = visible ? "none" : "block";
+}
+
+function setAgentControlsEnabled(enabled) {
+  const ids = [
+    "orgSelect",
+    "agentId",
+    "ownerHumanId",
+    "btnRegisterAgent",
+    "btnRotateAgent",
+    "btnRevokeAgent",
+    "btnRefreshPending",
+  ];
+  for (const id of ids) {
+    const el = UI.$(id);
+    if (!el) continue;
+    el.disabled = !enabled;
+  }
+}
+
+async function loadCurrentHuman() {
+  const res = await UI.req("/v1/me");
+  if (res.status !== 200) return;
+  currentHumanID = String(res?.data?.human?.human_id || "").trim();
+  if (currentHumanID && !UI.$("ownerHumanId").value.trim()) {
+    UI.$("ownerHumanId").value = currentHumanID;
+  }
+}
+
 async function listOrgs(preserveCurrent = true) {
   const res = await UI.req("/v1/me/orgs");
   const select = UI.$("orgSelect");
@@ -27,8 +61,12 @@ async function listOrgs(preserveCurrent = true) {
   select.innerHTML = "";
 
   if (res.status !== 200 || !Array.isArray(res.data.memberships)) {
+    setOrgPickerVisible(false);
+    setAgentControlsEnabled(false);
     setStatus("agentStatus", "Could not load organizations.", true);
+    setStatus("pendingStatus", "Could not load organizations.", true);
     UI.$("agentsList").innerHTML = "";
+    UI.$("pendingList").innerHTML = "";
     return;
   }
 
@@ -40,15 +78,26 @@ async function listOrgs(preserveCurrent = true) {
   }
 
   if (select.options.length === 0) {
-    setStatus("agentStatus", "No organizations yet.");
+    setOrgPickerVisible(false);
+    setAgentControlsEnabled(false);
+    setStatus("agentStatus", "Create an organization first to add agents.");
+    setStatus("pendingStatus", "Create an organization first to view trust approvals.");
     UI.$("agentsList").innerHTML = "";
+    UI.$("pendingList").innerHTML = "";
     return;
   }
+
+  setOrgPickerVisible(true);
+  setAgentControlsEnabled(true);
 
   if (preserveCurrent && current && [...select.options].some((opt) => opt.value === current)) {
     select.value = current;
   } else {
     select.value = select.options[0].value;
+  }
+
+  if (currentHumanID && !UI.$("ownerHumanId").value.trim()) {
+    UI.$("ownerHumanId").value = currentHumanID;
   }
 
   await loadAgents();
@@ -256,6 +305,7 @@ async function runTrustAction(edgeID, action) {
 
 async function init() {
   UI.initTopNav();
+  await loadCurrentHuman();
 
   UI.$("btnRegisterAgent").onclick = registerAgent;
   UI.$("btnRotateAgent").onclick = rotateAgent;

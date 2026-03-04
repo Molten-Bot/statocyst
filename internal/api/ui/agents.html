@@ -139,11 +139,11 @@
     <header>
       <div class="topbar">
         <div>
-          <strong>Statocyst</strong>
+          <strong data-app-name>Statocyst</strong>
           <nav style="margin-top: 6px">
-            <a href="/profile">Profile</a>
-            <a href="/organization">Organization</a>
             <a href="/agents">Agents</a>
+            <a href="/organization">Organization</a>
+            <a href="/profile">Profile</a>
             <a href="/domains" data-super-admin-only style="display: none">Domains (Legacy)</a>
           </nav>
         </div>
@@ -159,8 +159,13 @@
       <div class="grid">
         <section class="panel">
           <h2>Agents</h2>
-          <label class="muted" for="orgSelect">Organization</label>
-          <select id="orgSelect"></select>
+          <div id="orgPicker">
+            <label class="muted" for="orgSelect">Organization</label>
+            <select id="orgSelect"></select>
+          </div>
+          <div id="orgEmptyHint" class="muted" style="display: none">
+            No organizations yet. Create one on <a href="/organization">/organization</a>.
+          </div>
 
           <div id="agentStatus" class="status">Loading agents...</div>
           <ul id="agentsList" class="list"></ul>

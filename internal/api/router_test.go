@@ -90,6 +90,12 @@ func currentHumanID(t *testing.T, router http.Handler, humanID, email string) st
 
 func createInvite(t *testing.T, router http.Handler, humanID, email, orgID, inviteeEmail, role string) string {
 	t.Helper()
+	inviteID, _ := createInviteWithCode(t, router, humanID, email, orgID, inviteeEmail, role)
+	return inviteID
+}
+
+func createInviteWithCode(t *testing.T, router http.Handler, humanID, email, orgID, inviteeEmail, role string) (string, string) {
+	t.Helper()
 	resp := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgID+"/invites", map[string]string{
 		"email": inviteeEmail,
 		"role":  role,
@@ -97,15 +103,20 @@ func createInvite(t *testing.T, router http.Handler, humanID, email, orgID, invi
 	if resp.Code != http.StatusCreated {
 		t.Fatalf("create invite failed: %d %s", resp.Code, resp.Body.String())
 	}
-	var payload map[string]map[string]any
+	var payload map[string]any
 	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode invite: %v", err)
 	}
-	inviteID, _ := payload["invite"]["invite_id"].(string)
+	inviteObj, _ := payload["invite"].(map[string]any)
+	inviteID, _ := inviteObj["invite_id"].(string)
 	if inviteID == "" {
 		t.Fatalf("missing invite_id")
 	}
-	return inviteID
+	inviteCode, _ := payload["invite_code"].(string)
+	if inviteCode == "" {
+		t.Fatalf("missing invite_code")
+	}
+	return inviteID, inviteCode
 }
 
 func acceptInvite(t *testing.T, router http.Handler, humanID, email, inviteID string) {
@@ -248,6 +259,77 @@ func TestInviteAcceptFlow(t *testing.T) {
 	humans := body["humans"].([]any)
 	if len(humans) < 2 {
 		t.Fatalf("expected at least 2 humans, got %d", len(humans))
+	}
+}
+
+func TestInviteCodeRedeemFlow(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Org Invite Codes")
+	_, inviteCode := createInviteWithCode(t, router, "alice", "alice@a.test", orgID, "bob@b.test", "member")
+
+	listInvites := doJSONRequest(t, router, http.MethodGet, "/v1/orgs/"+orgID+"/invites", nil, humanHeaders("alice", "alice@a.test"))
+	if listInvites.Code != http.StatusOK {
+		t.Fatalf("list org invites failed: %d %s", listInvites.Code, listInvites.Body.String())
+	}
+	listPayload := decodeJSONMap(t, listInvites.Body.Bytes())
+	invites, _ := listPayload["invites"].([]any)
+	if len(invites) != 1 {
+		t.Fatalf("expected exactly 1 invite, got %d", len(invites))
+	}
+
+	redeem := doJSONRequest(t, router, http.MethodPost, "/v1/org-invites/redeem", map[string]string{
+		"invite_code": inviteCode,
+	}, humanHeaders("bob", "bob@b.test"))
+	if redeem.Code != http.StatusOK {
+		t.Fatalf("redeem invite code failed: %d %s", redeem.Code, redeem.Body.String())
+	}
+
+	humansResp := doJSONRequest(t, router, http.MethodGet, "/v1/orgs/"+orgID+"/humans", nil, humanHeaders("alice", "alice@a.test"))
+	if humansResp.Code != http.StatusOK {
+		t.Fatalf("list humans failed: %d %s", humansResp.Code, humansResp.Body.String())
+	}
+	humansPayload := decodeJSONMap(t, humansResp.Body.Bytes())
+	humans, _ := humansPayload["humans"].([]any)
+	if len(humans) < 2 {
+		t.Fatalf("expected at least 2 humans after redeem, got %d", len(humans))
+	}
+}
+
+func TestInviteCodeRedeemRejectsWrongEmail(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Org Invite Security")
+	_, inviteCode := createInviteWithCode(t, router, "alice", "alice@a.test", orgID, "bob@b.test", "member")
+
+	redeem := doJSONRequest(t, router, http.MethodPost, "/v1/org-invites/redeem", map[string]string{
+		"invite_code": inviteCode,
+	}, humanHeaders("charlie", "charlie@c.test"))
+	if redeem.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for wrong-email invite redeem, got %d %s", redeem.Code, redeem.Body.String())
+	}
+}
+
+func TestOwnerCanRevokeHumanMembership(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "owner", "owner@a.test", "Org Human Revoke")
+	inviteID := createInvite(t, router, "owner", "owner@a.test", orgID, "member@a.test", "member")
+	acceptInvite(t, router, "member", "member@a.test", inviteID)
+	memberHumanID := currentHumanID(t, router, "member", "member@a.test")
+
+	revoke := doJSONRequest(
+		t,
+		router,
+		http.MethodDelete,
+		"/v1/orgs/"+orgID+"/humans/"+memberHumanID,
+		nil,
+		humanHeaders("owner", "owner@a.test"),
+	)
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("revoke human failed: %d %s", revoke.Code, revoke.Body.String())
+	}
+
+	memberList := doJSONRequest(t, router, http.MethodGet, "/v1/orgs/"+orgID+"/humans", nil, humanHeaders("member", "member@a.test"))
+	if memberList.Code != http.StatusForbidden {
+		t.Fatalf("expected revoked member access to be forbidden, got %d %s", memberList.Code, memberList.Body.String())
 	}
 }
 
@@ -580,12 +662,8 @@ func TestOpenAPIYAMLHeaders(t *testing.T) {
 		t.Fatalf("openapi failed: %d %s", resp.Code, resp.Body.String())
 	}
 	contentType := resp.Header().Get("Content-Type")
-	if !strings.HasPrefix(contentType, "application/yaml") {
-		t.Fatalf("expected application/yaml content type, got %q", contentType)
-	}
-	disposition := resp.Header().Get("Content-Disposition")
-	if !strings.Contains(disposition, "inline") {
-		t.Fatalf("expected inline content disposition, got %q", disposition)
+	if !strings.HasPrefix(contentType, "text/yaml") {
+		t.Fatalf("expected text/yaml content type, got %q", contentType)
 	}
 }
 
@@ -622,8 +700,8 @@ func TestUIRoutes_MainPages(t *testing.T) {
 		{path: "/profile/", contentHint: "/profile"},
 		{path: "/organization", contentHint: "/organization"},
 		{path: "/agents", contentHint: "/agents"},
-		{path: "/domains", contentHint: "Statocyst Domains UI"},
-		{path: "/domains/", contentHint: "Statocyst Domains UI"},
+		{path: "/domains", contentHint: "Domains UI"},
+		{path: "/domains/", contentHint: "Domains UI"},
 	}
 
 	for _, tc := range testCases {

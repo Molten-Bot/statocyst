@@ -2,6 +2,7 @@ const StatocystUI = (() => {
   const TOKEN_KEY = "statocyst_access_token";
   const DEV_ID_KEY = "statocyst_dev_human_id";
   const DEV_EMAIL_KEY = "statocyst_dev_human_email";
+  const DEFAULT_APP_NAME = "Statocyst";
 
   const $ = (id) => document.getElementById(id);
 
@@ -79,6 +80,21 @@ const StatocystUI = (() => {
     for (const node of adminOnlyLinks) {
       node.style.display = "none";
     }
+
+    req("/v1/ui/config")
+      .then((cfg) => {
+        const appName = String(cfg?.data?.app_name || "").trim() || DEFAULT_APP_NAME;
+        const appNameNodes = document.querySelectorAll("[data-app-name]");
+        for (const node of appNameNodes) {
+          node.textContent = appName;
+        }
+      })
+      .catch(() => {
+        const appNameNodes = document.querySelectorAll("[data-app-name]");
+        for (const node of appNameNodes) {
+          node.textContent = DEFAULT_APP_NAME;
+        }
+      });
 
     req("/v1/me")
       .then((r) => {

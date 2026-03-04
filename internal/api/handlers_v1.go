@@ -17,8 +17,8 @@ type createOrgRequest struct {
 }
 
 type createInviteRequest struct {
-	Email        string `json:"email"`
-	Role         string `json:"role"`
+	Email         string `json:"email"`
+	Role          string `json:"role"`
 	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
 }
 
@@ -67,6 +67,7 @@ var (
 const (
 	defaultInviteExpiryDays = 7
 	maxInviteExpiryDays     = 365
+	defaultUIAppName        = "Statocyst"
 )
 
 func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +76,7 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"app_name":                 uiAppName(),
 		"human_auth_provider":      h.humanAuth.Name(),
 		"supabase_url":             h.supabaseURL,
 		"supabase_anon_key":        h.supabaseAnonKey,
@@ -87,6 +89,14 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		"super_admin_write_policy": "review_mode_read_only",
 		"bind_token_ttl_sec":       int(h.bindTokenTTL.Seconds()),
 	})
+}
+
+func uiAppName() string {
+	name := strings.TrimSpace(os.Getenv("STATOCYST_APP_NAME"))
+	if name == "" {
+		return defaultUIAppName
+	}
+	return name
 }
 
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {

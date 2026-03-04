@@ -77,8 +77,21 @@ paths:
         '201':
           description: Organization created
   /v1/orgs/{org_id}/invites:
+    get:
+      summary: List invites for an organization
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: org_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Invite list
     post:
-      summary: Create invite
+      summary: Create invite with shareable code
       security:
         - humanAuth: []
       parameters:
@@ -100,9 +113,13 @@ paths:
                 role:
                   type: string
                   enum: [admin, member, viewer]
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
       responses:
         '201':
-          description: Invite created
+          description: Invite created (invite_code returned once)
   /v1/org-invites:
     get:
       summary: List invites for current human
@@ -111,6 +128,24 @@ paths:
       responses:
         '200':
           description: Invite list
+  /v1/org-invites/redeem:
+    post:
+      summary: Redeem an invite code
+      security:
+        - humanAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invite_code]
+              properties:
+                invite_code:
+                  type: string
+      responses:
+        '200':
+          description: Invite redeemed
   /v1/org-invites/{invite_id}:
     delete:
       summary: Revoke invite
@@ -246,6 +281,25 @@ paths:
       responses:
         '200':
           description: Human list
+  /v1/orgs/{org_id}/humans/{human_id}:
+    delete:
+      summary: Revoke a human membership in org
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: org_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: human_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Membership revoked
   /v1/orgs/{org_id}/agents:
     get:
       summary: List agents in org
