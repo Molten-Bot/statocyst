@@ -11,10 +11,6 @@ function setStatus(message, kind = "info") {
   el.className = `status${kind === "warn" ? " warn" : ""}`;
 }
 
-function setSummary(message) {
-  $("configSummary").textContent = message;
-}
-
 function loadSavedToken() {
   return localStorage.getItem(TOKEN_KEY) || "";
 }
@@ -108,7 +104,6 @@ async function init() {
 
   const cfg = await fetchJSON("/v1/ui/config");
   if (cfg.status !== 200) {
-    setSummary("Failed to load auth config.");
     setStatus("Could not read /v1/ui/config. Login will continue locally.", "warn");
     return;
   }
@@ -116,8 +111,6 @@ async function init() {
   const provider = String(cfg.data.human_auth_provider || "").toLowerCase();
   const supabaseURL = String(cfg.data.supabase_url || "").trim();
   const supabaseAnonKey = String(cfg.data.supabase_anon_key || "").trim();
-
-  setSummary(`Auth provider: ${provider || "unknown"}`);
 
   if (await trySavedSession()) {
     return;

@@ -43,6 +43,12 @@ Optional:
 STATOCYST_ADDR=:8080 HUMAN_AUTH_PROVIDER=dev go run ./cmd/statocystd
 ```
 
+UI hot-refresh mode (no restart needed for `internal/api/ui/*` edits):
+
+```bash
+STATOCYST_UI_DEV_MODE=true go run ./cmd/statocystd
+```
+
 Test UI changes locally without Docker Hub:
 
 ```bash

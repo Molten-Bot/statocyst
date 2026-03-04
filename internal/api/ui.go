@@ -3,6 +3,8 @@ package api
 import (
 	_ "embed"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -39,6 +41,8 @@ var uiAgentsHTML []byte
 //go:embed ui/agents.js
 var uiAgentsJS []byte
 
+var uiDevMode = strings.EqualFold(strings.TrimSpace(os.Getenv("STATOCYST_UI_DEV_MODE")), "true")
+
 func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/v1/") || strings.HasPrefix(r.URL.Path, "/health") || strings.HasPrefix(r.URL.Path, "/openapi") {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
@@ -47,106 +51,58 @@ func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
 
 	switch r.URL.Path {
 	case "/", "/index.html":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiLoginHTML)
+		writeUIAsset(w, r, "text/html; charset=utf-8", uiLoginHTML, "login.html")
 		return
 	case "/login.js":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiLoginJS)
+		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiLoginJS, "login.js")
 		return
 	case "/common.js":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiCommonJS)
+		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiCommonJS, "common.js")
 		return
 	case "/profile", "/profile/", "/profile/index.html":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiProfileHTML)
+		writeUIAsset(w, r, "text/html; charset=utf-8", uiProfileHTML, "profile.html")
 		return
 	case "/profile.js":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiProfileJS)
+		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiProfileJS, "profile.js")
 		return
 	case "/organization", "/organization/", "/organization/index.html":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiOrganizationHTML)
+		writeUIAsset(w, r, "text/html; charset=utf-8", uiOrganizationHTML, "organization.html")
 		return
 	case "/organization.js":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiOrganizationJS)
+		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiOrganizationJS, "organization.js")
 		return
 	case "/agents", "/agents/", "/agents/index.html":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiAgentsHTML)
+		writeUIAsset(w, r, "text/html; charset=utf-8", uiAgentsHTML, "agents.html")
 		return
 	case "/agents.js":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiAgentsJS)
+		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiAgentsJS, "agents.js")
 		return
 	case "/domains", "/domains/", "/domains/index.html":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiIndexHTML)
+		writeUIAsset(w, r, "text/html; charset=utf-8", uiIndexHTML, "index.html")
 		return
 	case "/app.js", "/domains/app.js":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w)
-			return
-		}
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(uiAppJS)
+		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiAppJS, "app.js")
 		return
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
+}
+
+func writeUIAsset(w http.ResponseWriter, r *http.Request, contentType string, embedded []byte, devFileName string) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	body := embedded
+	if uiDevMode {
+		path := filepath.Clean(filepath.Join("internal", "api", "ui", devFileName))
+		if fromDisk, err := os.ReadFile(path); err == nil {
+			body = fromDisk
+		}
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
