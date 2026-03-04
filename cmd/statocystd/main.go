@@ -24,7 +24,10 @@ func main() {
 		addr = ":8080"
 	}
 
-	st := store.NewMemoryStore()
+	controlStore, queueStore, err := store.NewStoresFromEnv()
+	if err != nil {
+		log.Fatalf("storage backend configuration error: %v", err)
+	}
 	waiters := longpoll.NewWaiters()
 	humanAuth := auth.NewHumanAuthProviderFromEnv()
 	bindTTL := 15 * time.Minute
@@ -46,7 +49,8 @@ func main() {
 		}
 	}
 	handler := api.NewHandler(
-		st,
+		controlStore,
+		queueStore,
 		waiters,
 		humanAuth,
 		os.Getenv("SUPABASE_URL"),

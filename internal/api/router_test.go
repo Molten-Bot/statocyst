@@ -19,8 +19,27 @@ import (
 func newTestRouter() http.Handler {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
 	return NewRouter(h)
+}
+
+func TestHandlerWiringWithInterfaceStores(t *testing.T) {
+	mem := store.NewMemoryStore()
+	var control store.ControlPlaneStore = mem
+	var queue store.MessageQueueStore = mem
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(control, queue, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	router := NewRouter(h)
+
+	health := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
+	if health.Code != http.StatusOK {
+		t.Fatalf("expected /health 200, got %d %s", health.Code, health.Body.String())
+	}
+
+	me := doJSONRequest(t, router, http.MethodGet, "/v1/me", nil, humanHeaders("alice", "alice@a.test"))
+	if me.Code != http.StatusOK {
+		t.Fatalf("expected /v1/me 200, got %d %s", me.Code, me.Body.String())
+	}
 }
 
 func doJSONRequest(t *testing.T, router http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -954,7 +973,7 @@ func TestLiveShowsOnlyPublicEntities(t *testing.T) {
 func TestBindTokenExpires(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
 	h.now = func() time.Time { return now }
 	router := NewRouter(h)
@@ -1136,7 +1155,7 @@ func TestUIRoutes_JavascriptAssets(t *testing.T) {
 func TestHeadlessModeDisablesUIRoutes(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, true)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, true)
 	router := NewRouter(h)
 
 	me := doJSONRequest(t, router, http.MethodGet, "/v1/me", nil, humanHeaders("alice", "alice@a.test"))

@@ -160,7 +160,7 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		human, err := h.store.UpdateHumanProfile(actor.Human.HumanID, handle, req.IsPublic, req.Handle != nil, h.now().UTC())
+		human, err := h.control.UpdateHumanProfile(actor.Human.HumanID, handle, req.IsPublic, req.Handle != nil, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrHumanNotFound):
@@ -201,7 +201,7 @@ func (h *Handler) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"memberships": h.store.ListMyMemberships(actor.Human.HumanID),
+		"memberships": h.control.ListMyMemberships(actor.Human.HumanID),
 	})
 }
 
@@ -215,7 +215,7 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"agents": h.store.ListHumanAgents(actor.Human.HumanID),
+			"agents": h.control.ListHumanAgents(actor.Human.HumanID),
 		})
 		return
 	case http.MethodPost:
@@ -237,7 +237,7 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 
 		orgID := req.OrgID
 		if orgID == "" {
-			org, err := h.store.EnsurePersonalOrg(actor.Human.HumanID, h.now().UTC(), h.idFactory)
+			org, err := h.control.EnsurePersonalOrg(actor.Human.HumanID, h.now().UTC(), h.idFactory)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "store_error", "failed to provision personal organization")
 				return
@@ -254,7 +254,7 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate token")
 			return
 		}
-		agent, err := h.store.RegisterAgent(orgID, req.AgentID, &ownerHumanID, auth.HashToken(token), actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+		agent, err := h.control.RegisterAgent(orgID, req.AgentID, &ownerHumanID, auth.HashToken(token), actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrOrgNotFound):
@@ -310,7 +310,7 @@ func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request
 
 	orgID := req.OrgID
 	if orgID == "" {
-		org, err := h.store.EnsurePersonalOrg(actor.Human.HumanID, h.now().UTC(), h.idFactory)
+		org, err := h.control.EnsurePersonalOrg(actor.Human.HumanID, h.now().UTC(), h.idFactory)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "store_error", "failed to provision personal organization")
 			return
@@ -333,7 +333,7 @@ func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request
 		return
 	}
 	expiresAt := h.now().UTC().Add(h.bindTokenTTL)
-	bind, err := h.store.CreateBindToken(orgID, &ownerHumanID, actor.Human.HumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC(), actor.IsSuperAdmin)
+	bind, err := h.control.CreateBindToken(orgID, &ownerHumanID, actor.Human.HumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC(), actor.IsSuperAdmin)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
@@ -366,7 +366,7 @@ func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"agent_trusts": h.store.ListHumanAgentTrusts(actor.Human.HumanID),
+			"agent_trusts": h.control.ListHumanAgentTrusts(actor.Human.HumanID),
 		})
 		return
 	case http.MethodPost:
@@ -391,7 +391,7 @@ func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate edge_id")
 			return
 		}
-		edge, created, err := h.store.CreateOrJoinAgentTrust(req.OrgID, req.AgentID, req.PeerAgentID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
+		edge, created, err := h.control.CreateOrJoinAgentTrust(req.OrgID, req.AgentID, req.PeerAgentID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrAgentNotFound):
@@ -435,7 +435,7 @@ func (h *Handler) ensureHumanOwnedAgentLimit(w http.ResponseWriter, ownerHumanID
 	if h.isSuperAdminHumanID(ownerHumanID) {
 		return false
 	}
-	if h.store.CountActiveHumanOwnedAgents(ownerHumanID) >= 2 {
+	if h.control.CountActiveHumanOwnedAgents(ownerHumanID) >= 2 {
 		writeError(w, http.StatusConflict, "agent_limit_reached", "non-super-admin users can only own up to 2 active agents")
 		return true
 	}
@@ -453,7 +453,7 @@ func (h *Handler) handleAgentMeCapabilities(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
-	agent, err := h.store.GetAgent(agentID)
+	agent, err := h.control.GetAgent(agentID)
 	if err != nil {
 		if errors.Is(err, store.ErrAgentNotFound) {
 			writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
@@ -488,7 +488,7 @@ func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
-	agent, err := h.store.GetAgent(agentID)
+	agent, err := h.control.GetAgent(agentID)
 	if err != nil {
 		if errors.Is(err, store.ErrAgentNotFound) {
 			writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
@@ -527,7 +527,7 @@ func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (agentControlPlaneView, error) {
-	peers, err := h.store.ListTalkablePeers(agent.AgentID)
+	peers, err := h.control.ListTalkablePeers(agent.AgentID)
 	if err != nil {
 		return agentControlPlaneView{}, err
 	}
@@ -654,7 +654,7 @@ func (h *Handler) handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"snapshot": h.store.AdminSnapshot(),
+		"snapshot": h.control.AdminSnapshot(),
 	})
 }
 
@@ -691,7 +691,7 @@ func (h *Handler) handleOrgs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate org_id")
 		return
 	}
-	org, membership, err := h.store.CreateOrg(handle, displayName, actor.Human.HumanID, orgID, h.now().UTC())
+	org, membership, err := h.control.CreateOrg(handle, displayName, actor.Human.HumanID, orgID, h.now().UTC())
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrOrgHandleTaken), errors.Is(err, store.ErrOrgNameTaken):
@@ -739,7 +739,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		org, err := h.store.SetOrgVisibility(orgID, *req.IsPublic, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
+		org, err := h.control.SetOrgVisibility(orgID, *req.IsPublic, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrOrgNotFound):
@@ -765,7 +765,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		switch r.Method {
 		case http.MethodGet:
-			invites, err := h.store.ListOrgInvites(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+			invites, err := h.control.ListOrgInvites(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
 			if err != nil {
 				switch {
 				case errors.Is(err, store.ErrOrgNotFound):
@@ -815,7 +815,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			}
 			now := h.now().UTC()
 			expiresAt := now.AddDate(0, 0, expiryDays)
-			invite, err := h.store.CreateInvite(
+			invite, err := h.control.CreateInvite(
 				orgID,
 				email,
 				role,
@@ -855,7 +855,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 		if len(parts) == 4 {
 			switch r.Method {
 			case http.MethodGet:
-				keys, err := h.store.ListOrgAccessKeys(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+				keys, err := h.control.ListOrgAccessKeys(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
 				if err != nil {
 					switch {
 					case errors.Is(err, store.ErrOrgNotFound):
@@ -897,7 +897,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate key_id")
 					return
 				}
-				key, err := h.store.CreateOrgAccessKey(
+				key, err := h.control.CreateOrgAccessKey(
 					orgID,
 					req.Label,
 					req.Scopes,
@@ -941,7 +941,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			keyID := parts[4]
-			key, err := h.store.RevokeOrgAccessKey(orgID, keyID, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
+			key, err := h.control.RevokeOrgAccessKey(orgID, keyID, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
 			if err != nil {
 				switch {
 				case errors.Is(err, store.ErrOrgNotFound):
@@ -966,7 +966,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				writeMethodNotAllowed(w)
 				return
 			}
-			humans, err := h.store.ListOrgHumans(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+			humans, err := h.control.ListOrgHumans(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
 			if err != nil {
 				switch {
 				case errors.Is(err, store.ErrOrgNotFound):
@@ -995,7 +995,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_human_id", "human_id is required")
 				return
 			}
-			membership, err := h.store.RevokeMembership(orgID, targetHumanID, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
+			membership, err := h.control.RevokeMembership(orgID, targetHumanID, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
 			if err != nil {
 				switch {
 				case errors.Is(err, store.ErrOrgNotFound):
@@ -1021,7 +1021,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			writeMethodNotAllowed(w)
 			return
 		}
-		agents, err := h.store.ListOrgAgents(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+		agents, err := h.control.ListOrgAgents(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrOrgNotFound):
@@ -1040,7 +1040,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			writeMethodNotAllowed(w)
 			return
 		}
-		orgEdges, agentEdges, err := h.store.ListOrgTrustGraph(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+		orgEdges, agentEdges, err := h.control.ListOrgTrustGraph(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrOrgNotFound):
@@ -1062,7 +1062,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			writeMethodNotAllowed(w)
 			return
 		}
-		events, err := h.store.ListAudit(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+		events, err := h.control.ListAudit(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrOrgNotFound):
@@ -1081,7 +1081,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			writeMethodNotAllowed(w)
 			return
 		}
-		stats, err := h.store.GetOrgStats(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
+		stats, err := h.control.GetOrgStats(orgID, actor.Human.HumanID, actor.IsSuperAdmin)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrOrgNotFound):
@@ -1111,7 +1111,7 @@ func (h *Handler) handleOrgAccessHumans(w http.ResponseWriter, r *http.Request) 
 		h.writeOrgAccessErr(w, err)
 		return
 	}
-	humans, err := h.store.ListOrgHumans(org.OrgID, "", true)
+	humans, err := h.control.ListOrgHumans(org.OrgID, "", true)
 	if err != nil {
 		if errors.Is(err, store.ErrOrgNotFound) {
 			writeError(w, http.StatusNotFound, "unknown_org", "org_name is not registered")
@@ -1137,7 +1137,7 @@ func (h *Handler) handleOrgAccessAgents(w http.ResponseWriter, r *http.Request) 
 		h.writeOrgAccessErr(w, err)
 		return
 	}
-	agents, err := h.store.ListOrgAgents(org.OrgID, "", true)
+	agents, err := h.control.ListOrgAgents(org.OrgID, "", true)
 	if err != nil {
 		if errors.Is(err, store.ErrOrgNotFound) {
 			writeError(w, http.StatusNotFound, "unknown_org", "org_name is not registered")
@@ -1167,7 +1167,7 @@ func (h *Handler) authorizeOrgAccess(r *http.Request, requiredScope string) (mod
 	if secret == "" {
 		return model.Organization{}, model.OrgAccessKey{}, errMissingOrgAccessKey
 	}
-	return h.store.AuthorizeOrgAccessByName(orgName, auth.HashToken(secret), requiredScope, h.now().UTC())
+	return h.control.AuthorizeOrgAccessByName(orgName, auth.HashToken(secret), requiredScope, h.now().UTC())
 }
 
 func (h *Handler) writeOrgAccessErr(w http.ResponseWriter, err error) {
@@ -1204,7 +1204,7 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 			writeMethodNotAllowed(w)
 			return
 		}
-		invites := h.store.ListInvitesForHuman(actor.Human.HumanID, actor.Human.Email, actor.IsSuperAdmin)
+		invites := h.control.ListInvitesForHuman(actor.Human.HumanID, actor.Human.Email, actor.IsSuperAdmin)
 		writeJSON(w, http.StatusOK, map[string]any{"invites": invites})
 		return
 	}
@@ -1227,7 +1227,7 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_invite_code", "invite_code is required")
 			return
 		}
-		membership, err := h.store.AcceptInviteBySecretHash(auth.HashToken(inviteCode), actor.Human.HumanID, actor.Human.Email, h.now().UTC(), h.idFactory)
+		membership, err := h.control.AcceptInviteBySecretHash(auth.HashToken(inviteCode), actor.Human.HumanID, actor.Human.Email, h.now().UTC(), h.idFactory)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrInviteNotFound):
@@ -1252,7 +1252,7 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		inviteID := parts[2]
-		membership, err := h.store.AcceptInvite(inviteID, actor.Human.HumanID, actor.Human.Email, h.now().UTC(), h.idFactory)
+		membership, err := h.control.AcceptInvite(inviteID, actor.Human.HumanID, actor.Human.Email, h.now().UTC(), h.idFactory)
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrInviteNotFound):
@@ -1273,7 +1273,7 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		inviteID := parts[2]
-		invite, err := h.store.RevokeInvite(inviteID, actor.Human.HumanID, actor.Human.Email, actor.IsSuperAdmin, h.now().UTC())
+		invite, err := h.control.RevokeInvite(inviteID, actor.Human.HumanID, actor.Human.Email, actor.IsSuperAdmin, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrInviteNotFound):
@@ -1340,7 +1340,7 @@ func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	expiresAt := h.now().UTC().Add(h.bindTokenTTL)
-	bind, err := h.store.CreateBindToken(req.OrgID, req.OwnerHumanID, actor.Human.HumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC(), actor.IsSuperAdmin)
+	bind, err := h.control.CreateBindToken(req.OrgID, req.OwnerHumanID, actor.Human.HumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC(), actor.IsSuperAdmin)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
@@ -1390,13 +1390,13 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	bindTokenHash := auth.HashToken(req.BindToken)
-	bind, err := h.store.PeekBindToken(bindTokenHash)
+	bind, err := h.control.PeekBindToken(bindTokenHash)
 	if err == nil && bind.OwnerHumanID != nil {
 		if h.ensureHumanOwnedAgentLimit(w, *bind.OwnerHumanID) {
 			return
 		}
 	}
-	agent, err := h.store.RedeemBindToken(bindTokenHash, req.AgentID, auth.HashToken(agentToken), h.now().UTC())
+	agent, err := h.control.RedeemBindToken(bindTokenHash, req.AgentID, auth.HashToken(agentToken), h.now().UTC())
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrBindNotFound):
@@ -1476,7 +1476,7 @@ func (h *Handler) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate token")
 		return
 	}
-	agent, err := h.store.RegisterAgent(req.OrgID, req.AgentID, req.OwnerHumanID, auth.HashToken(token), actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+	agent, err := h.control.RegisterAgent(req.OrgID, req.AgentID, req.OwnerHumanID, auth.HashToken(token), actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
@@ -1530,7 +1530,7 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate token")
 			return
 		}
-		if err := h.store.RotateAgentToken(agentID, actor.Human.HumanID, auth.HashToken(token), h.now().UTC(), actor.IsSuperAdmin); err != nil {
+		if err := h.control.RotateAgentToken(agentID, actor.Human.HumanID, auth.HashToken(token), h.now().UTC(), actor.IsSuperAdmin); err != nil {
 			switch {
 			case errors.Is(err, store.ErrAgentNotFound):
 				writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
@@ -1552,7 +1552,7 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 	if len(parts) == 3 {
 		switch r.Method {
 		case http.MethodDelete:
-			if err := h.store.RevokeAgent(agentID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin); err != nil {
+			if err := h.control.RevokeAgent(agentID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin); err != nil {
 				switch {
 				case errors.Is(err, store.ErrAgentNotFound):
 					writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
@@ -1579,7 +1579,7 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 				writeError(w, http.StatusBadRequest, "invalid_request", "is_public is required")
 				return
 			}
-			agent, err := h.store.SetAgentVisibility(agentID, *req.IsPublic, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+			agent, err := h.control.SetAgentVisibility(agentID, *req.IsPublic, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 			if err != nil {
 				switch {
 				case errors.Is(err, store.ErrAgentNotFound):
@@ -1629,7 +1629,7 @@ func (h *Handler) handleOrgTrusts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate edge_id")
 		return
 	}
-	edge, created, err := h.store.CreateOrJoinOrgTrust(req.OrgID, req.PeerOrgID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
+	edge, created, err := h.control.CreateOrJoinOrgTrust(req.OrgID, req.PeerOrgID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
@@ -1673,7 +1673,7 @@ func (h *Handler) handleOrgTrustByID(w http.ResponseWriter, r *http.Request) {
 				writeMethodNotAllowed(w)
 				return
 			}
-			edge, err := h.store.ApproveOrgTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+			edge, err := h.control.ApproveOrgTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 			if err != nil {
 				h.writeTrustErr(w, err, "org")
 				return
@@ -1685,7 +1685,7 @@ func (h *Handler) handleOrgTrustByID(w http.ResponseWriter, r *http.Request) {
 				writeMethodNotAllowed(w)
 				return
 			}
-			edge, err := h.store.BlockOrgTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+			edge, err := h.control.BlockOrgTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 			if err != nil {
 				h.writeTrustErr(w, err, "org")
 				return
@@ -1699,7 +1699,7 @@ func (h *Handler) handleOrgTrustByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 3 && r.Method == http.MethodDelete {
-		edge, err := h.store.RevokeOrgTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+		edge, err := h.control.RevokeOrgTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 		if err != nil {
 			h.writeTrustErr(w, err, "org")
 			return
@@ -1741,7 +1741,7 @@ func (h *Handler) handleAgentTrusts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate edge_id")
 		return
 	}
-	edge, created, err := h.store.CreateOrJoinAgentTrust(req.OrgID, req.AgentID, req.PeerAgentID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
+	edge, created, err := h.control.CreateOrJoinAgentTrust(req.OrgID, req.AgentID, req.PeerAgentID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):
@@ -1785,7 +1785,7 @@ func (h *Handler) handleAgentTrustByID(w http.ResponseWriter, r *http.Request) {
 				writeMethodNotAllowed(w)
 				return
 			}
-			edge, err := h.store.ApproveAgentTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+			edge, err := h.control.ApproveAgentTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 			if err != nil {
 				h.writeTrustErr(w, err, "agent")
 				return
@@ -1797,7 +1797,7 @@ func (h *Handler) handleAgentTrustByID(w http.ResponseWriter, r *http.Request) {
 				writeMethodNotAllowed(w)
 				return
 			}
-			edge, err := h.store.BlockAgentTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+			edge, err := h.control.BlockAgentTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 			if err != nil {
 				h.writeTrustErr(w, err, "agent")
 				return
@@ -1811,7 +1811,7 @@ func (h *Handler) handleAgentTrustByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 3 && r.Method == http.MethodDelete {
-		edge, err := h.store.RevokeAgentTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+		edge, err := h.control.RevokeAgentTrust(edgeID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
 		if err != nil {
 			h.writeTrustErr(w, err, "agent")
 			return

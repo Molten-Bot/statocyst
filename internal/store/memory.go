@@ -82,6 +82,9 @@ type MemoryStore struct {
 	statsDaily map[string]map[string]model.OrgDailyStats
 }
 
+var _ ControlPlaneStore = (*MemoryStore)(nil)
+var _ MessageQueueStore = (*MemoryStore)(nil)
+
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		orgs:                   make(map[string]model.Organization),

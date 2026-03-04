@@ -54,13 +54,13 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	senderOrgID, receiverOrgID, err := h.store.CanPublish(senderAgentID, req.ToAgentID)
+	senderOrgID, receiverOrgID, err := h.control.CanPublish(senderAgentID, req.ToAgentID)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):
 			writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_id is not registered")
 		case errors.Is(err, store.ErrNoTrustPath):
-			h.store.RecordMessageDropped(senderOrgID)
+			h.control.RecordMessageDropped(senderOrgID)
 			writeJSON(w, http.StatusAccepted, map[string]string{
 				"status": "dropped",
 				"reason": "no_trust_path",
@@ -89,7 +89,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     h.now().UTC(),
 	}
 
-	if err := h.store.Enqueue(message); err != nil {
+	if err := h.queue.Enqueue(message); err != nil {
 		if errors.Is(err, store.ErrAgentNotFound) {
 			writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_id is not registered")
 			return
@@ -98,7 +98,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.store.RecordMessageQueued(senderOrgID)
+	h.control.RecordMessageQueued(senderOrgID)
 	h.waiters.Notify(req.ToAgentID)
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"message_id": messageID,
@@ -126,7 +126,7 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 
 	deadline := h.now().Add(timeout)
 	for {
-		if message, ok := h.store.PopNext(receiverAgentID); ok {
+		if message, ok := h.queue.PopNext(receiverAgentID); ok {
 			writeJSON(w, http.StatusOK, map[string]any{"message": message})
 			return
 		}
@@ -138,7 +138,7 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 		}
 
 		notifyCh, cancel := h.waiters.Register(receiverAgentID)
-		if message, ok := h.store.PopNext(receiverAgentID); ok {
+		if message, ok := h.queue.PopNext(receiverAgentID); ok {
 			cancel()
 			writeJSON(w, http.StatusOK, map[string]any{"message": message})
 			return

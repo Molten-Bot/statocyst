@@ -97,7 +97,7 @@ func (h *Handler) handleLiveSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) buildLivePageData(now time.Time) livePageData {
-	snapshot := h.store.AdminSnapshot()
+	snapshot := h.control.AdminSnapshot()
 
 	publicOrgs := make(map[string]model.Organization)
 	for _, org := range snapshot.Organizations {

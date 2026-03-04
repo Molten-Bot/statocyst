@@ -25,7 +25,8 @@ var agentIDRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 var handleRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 type Handler struct {
-	store             *store.MemoryStore
+	control           store.ControlPlaneStore
+	queue             store.MessageQueueStore
 	waiters           *longpoll.Waiters
 	humanAuth         auth.HumanAuthProvider
 	now               func() time.Time
@@ -45,7 +46,8 @@ type humanActor struct {
 }
 
 func NewHandler(
-	st *store.MemoryStore,
+	control store.ControlPlaneStore,
+	queue store.MessageQueueStore,
 	waiters *longpoll.Waiters,
 	humanAuth auth.HumanAuthProvider,
 	supabaseURL,
@@ -60,7 +62,8 @@ func NewHandler(
 		bindTokenTTL = 15 * time.Minute
 	}
 	return &Handler{
-		store:             st,
+		control:           control,
+		queue:             queue,
 		waiters:           waiters,
 		humanAuth:         humanAuth,
 		now:               time.Now,
@@ -205,7 +208,7 @@ func (h *Handler) authenticateHuman(r *http.Request) (humanActor, error) {
 	if err != nil {
 		return humanActor{}, err
 	}
-	human, err := h.store.UpsertHuman(identity.Provider, identity.Subject, identity.Email, identity.EmailVerified, h.now().UTC(), h.idFactory)
+	human, err := h.control.UpsertHuman(identity.Provider, identity.Subject, identity.Email, identity.EmailVerified, h.now().UTC(), h.idFactory)
 	if err != nil {
 		return humanActor{}, err
 	}
@@ -221,7 +224,7 @@ func (h *Handler) authenticateAgent(r *http.Request) (string, error) {
 		return "", err
 	}
 	tokenHash := auth.HashToken(token)
-	return h.store.AgentIDForTokenHash(tokenHash)
+	return h.control.AgentIDForTokenHash(tokenHash)
 }
 
 func splitPath(path string) []string {
@@ -297,7 +300,7 @@ func (h *Handler) requireHandleConfirmedForWrite(w http.ResponseWriter, actor hu
 }
 
 func (h *Handler) isSuperAdminHumanID(humanID string) bool {
-	human, err := h.store.GetHuman(humanID)
+	human, err := h.control.GetHuman(humanID)
 	if err != nil {
 		return false
 	}
