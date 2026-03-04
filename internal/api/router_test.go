@@ -694,8 +694,8 @@ func TestUIRoutes_MainPages(t *testing.T) {
 		path        string
 		contentHint string
 	}{
-		{path: "/", contentHint: "Human Login"},
-		{path: "/index.html", contentHint: "Human Login"},
+		{path: "/", contentHint: "Welcome Human."},
+		{path: "/index.html", contentHint: "Welcome Human."},
 		{path: "/profile", contentHint: "/profile"},
 		{path: "/profile/", contentHint: "/profile"},
 		{path: "/organization", contentHint: "/organization"},
