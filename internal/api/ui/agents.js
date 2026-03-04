@@ -157,7 +157,7 @@ async function runTrustAction(edgeID, action) {
 }
 
 async function init() {
-  await UI.initSessionPanel();
+  UI.initTopNav();
 
   UI.$("btnLoadOrgs").onclick = listOrgs;
   UI.$("btnListAgents").onclick = listAgents;
