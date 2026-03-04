@@ -16,8 +16,8 @@ This version provides:
 
 - `HUMAN_AUTH_PROVIDER=dev` (default): use request headers `X-Human-Id` and `X-Human-Email`.
 - `HUMAN_AUTH_PROVIDER=supabase`: use Supabase JWT bearer token.
-  - Requires `SUPABASE_JWT_SECRET`.
-  - Optional UI config values: `SUPABASE_URL`, `SUPABASE_ANON_KEY`.
+  - Requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+  - Backend validates bearer tokens via Supabase `/auth/v1/user`.
 - Super-admin identity lists:
   - `SUPER_ADMIN_EMAILS=root@molten.bot,ops@molten.bot` (recommended)
   - `SUPER_ADMIN_DOMAINS=molten.bot` (broader; optional)

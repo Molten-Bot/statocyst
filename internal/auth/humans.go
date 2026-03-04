@@ -1,15 +1,11 @@
 package auth
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -34,7 +30,10 @@ func NewHumanAuthProviderFromEnv() HumanAuthProvider {
 	name := strings.TrimSpace(strings.ToLower(os.Getenv("HUMAN_AUTH_PROVIDER")))
 	switch name {
 	case "supabase":
-		return NewSupabaseAuthProvider(os.Getenv("SUPABASE_JWT_SECRET"))
+		return NewSupabaseAuthProvider(
+			os.Getenv("SUPABASE_URL"),
+			os.Getenv("SUPABASE_ANON_KEY"),
+		)
 	default:
 		return NewDevHumanAuthProvider()
 	}
@@ -68,11 +67,19 @@ func (p *DevHumanAuthProvider) Authenticate(r *http.Request) (HumanIdentity, err
 }
 
 type SupabaseAuthProvider struct {
-	jwtSecret []byte
+	supabaseURL string
+	anonKey     string
+	httpClient  *http.Client
 }
 
-func NewSupabaseAuthProvider(secret string) *SupabaseAuthProvider {
-	return &SupabaseAuthProvider{jwtSecret: []byte(secret)}
+func NewSupabaseAuthProvider(supabaseURL, anonKey string) *SupabaseAuthProvider {
+	return &SupabaseAuthProvider{
+		supabaseURL: strings.TrimRight(strings.TrimSpace(supabaseURL), "/"),
+		anonKey:     strings.TrimSpace(anonKey),
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	}
 }
 
 func (p *SupabaseAuthProvider) Name() string {
@@ -80,93 +87,53 @@ func (p *SupabaseAuthProvider) Name() string {
 }
 
 func (p *SupabaseAuthProvider) Authenticate(r *http.Request) (HumanIdentity, error) {
-	if len(p.jwtSecret) == 0 {
+	if p.supabaseURL == "" || p.anonKey == "" {
 		return HumanIdentity{}, ErrUnauthorizedHuman
 	}
 	token, err := ExtractBearerToken(r.Header.Get("Authorization"))
 	if err != nil {
 		return HumanIdentity{}, ErrUnauthorizedHuman
 	}
-	claims, err := parseAndVerifyHS256JWT(token, p.jwtSecret)
+
+	req, err := http.NewRequest(http.MethodGet, p.supabaseURL+"/auth/v1/user", nil)
+	if err != nil {
+		return HumanIdentity{}, ErrUnauthorizedHuman
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("apikey", p.anonKey)
+	req.Header.Set("Accept", "application/json")
+
+	res, err := p.httpClient.Do(req)
+	if err != nil {
+		return HumanIdentity{}, ErrUnauthorizedHuman
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return HumanIdentity{}, ErrUnauthorizedHuman
+	}
+
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return HumanIdentity{}, ErrUnauthorizedHuman
 	}
 
-	sub, _ := claims["sub"].(string)
-	email, _ := claims["email"].(string)
-	emailVerified, _ := claims["email_verified"].(bool)
-	if strings.TrimSpace(sub) == "" {
+	var user struct {
+		ID               string `json:"id"`
+		Email            string `json:"email"`
+		EmailConfirmedAt string `json:"email_confirmed_at"`
+	}
+	if err := json.Unmarshal(body, &user); err != nil {
 		return HumanIdentity{}, ErrUnauthorizedHuman
 	}
-
-	if exp, ok := claims["exp"]; ok {
-		expUnix, convErr := toInt64(exp)
-		if convErr != nil || time.Unix(expUnix, 0).Before(time.Now()) {
-			return HumanIdentity{}, ErrUnauthorizedHuman
-		}
+	if strings.TrimSpace(user.ID) == "" {
+		return HumanIdentity{}, ErrUnauthorizedHuman
 	}
 
 	return HumanIdentity{
 		Provider:      p.Name(),
-		Subject:       sub,
-		Email:         strings.ToLower(strings.TrimSpace(email)),
-		EmailVerified: emailVerified,
+		Subject:       strings.TrimSpace(user.ID),
+		Email:         strings.ToLower(strings.TrimSpace(user.Email)),
+		EmailVerified: strings.TrimSpace(user.EmailConfirmedAt) != "",
 	}, nil
-}
-
-func parseAndVerifyHS256JWT(token string, secret []byte) (map[string]any, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return nil, errors.New("malformed token")
-	}
-
-	headerPayload := parts[0] + "." + parts[1]
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return nil, fmt.Errorf("decode signature: %w", err)
-	}
-
-	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write([]byte(headerPayload))
-	expected := mac.Sum(nil)
-	if !hmac.Equal(sig, expected) {
-		return nil, errors.New("invalid signature")
-	}
-
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return nil, fmt.Errorf("decode header: %w", err)
-	}
-	var header map[string]any
-	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return nil, fmt.Errorf("parse header: %w", err)
-	}
-	if alg, _ := header["alg"].(string); alg != "HS256" {
-		return nil, errors.New("unsupported jwt alg")
-	}
-
-	claimBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("decode claims: %w", err)
-	}
-	var claims map[string]any
-	if err := json.Unmarshal(claimBytes, &claims); err != nil {
-		return nil, fmt.Errorf("parse claims: %w", err)
-	}
-	return claims, nil
-}
-
-func toInt64(v any) (int64, error) {
-	switch t := v.(type) {
-	case float64:
-		return int64(t), nil
-	case int64:
-		return t, nil
-	case int:
-		return int64(t), nil
-	case string:
-		return strconv.ParseInt(t, 10, 64)
-	default:
-		return 0, fmt.Errorf("unsupported numeric type %T", v)
-	}
 }
