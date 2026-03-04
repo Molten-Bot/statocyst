@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"statocyst/internal/auth"
@@ -54,6 +55,9 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		"human_auth_provider":      h.humanAuth.Name(),
 		"supabase_url":             h.supabaseURL,
 		"supabase_anon_key":        h.supabaseAnonKey,
+		"dev_human_id":             strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_ID")),
+		"dev_human_email":          strings.TrimSpace(strings.ToLower(os.Getenv("DEV_LOGIN_HUMAN_EMAIL"))),
+		"dev_auto_login":           strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN_AUTO")), "true"),
 		"super_admin_emails":       setToSortedSlice(h.superAdminEmails),
 		"super_admin_domains":      setToSortedSlice(h.superAdminDomains),
 		"super_admin_review_mode":  h.superAdminReview,
