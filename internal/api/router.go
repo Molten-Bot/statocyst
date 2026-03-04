@@ -79,6 +79,8 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/v1/ui/config", handler.handleUIConfig)
 	mux.HandleFunc("/v1/me", handler.handleMe)
 	mux.HandleFunc("/v1/me/orgs", handler.handleMyOrgs)
+	mux.HandleFunc("/v1/me/agents", handler.handleMyAgents)
+	mux.HandleFunc("/v1/me/agent-trusts", handler.handleMyAgentTrusts)
 	mux.HandleFunc("/v1/admin/snapshot", handler.handleAdminSnapshot)
 	mux.HandleFunc("/v1/orgs", handler.handleOrgs)
 	mux.HandleFunc("/v1/orgs/", handler.handleOrgSubroutes)

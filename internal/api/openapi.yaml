@@ -58,6 +58,64 @@ paths:
       responses:
         '200':
           description: Membership list
+  /v1/me/agents:
+    get:
+      summary: List agents managed by current human
+      security:
+        - humanAuth: []
+      responses:
+        '200':
+          description: Agent list
+    post:
+      summary: Register agent for current human (auto personal org if org_id omitted)
+      security:
+        - humanAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id:
+                  type: string
+                org_id:
+                  type: string
+      responses:
+        '201':
+          description: Agent registered
+  /v1/me/agent-trusts:
+    get:
+      summary: List agent trust edges manageable by current human
+      security:
+        - humanAuth: []
+      responses:
+        '200':
+          description: Agent trust list
+    post:
+      summary: Create or join an agent trust request
+      security:
+        - humanAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, peer_agent_id]
+              properties:
+                org_id:
+                  type: string
+                agent_id:
+                  type: string
+                peer_agent_id:
+                  type: string
+      responses:
+        '200':
+          description: Existing trust updated
+        '201':
+          description: Trust created
   /v1/orgs:
     post:
       summary: Create organization

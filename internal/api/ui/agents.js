@@ -1,9 +1,4 @@
 const UI = StatocystUI;
-let currentHumanID = "";
-
-function selectedOrg() {
-  return UI.selectedOrg("orgSelect");
-}
 
 function setStatus(id, message, warn = false) {
   const el = UI.$(id);
@@ -12,155 +7,96 @@ function setStatus(id, message, warn = false) {
   el.className = warn ? "status warn" : "status";
 }
 
-function requireOrg(statusID, message = "Select an organization first.") {
-  const orgID = selectedOrg();
-  if (!orgID) {
-    setStatus(statusID, message, true);
-    return "";
+function setAgentInputIfEmpty(agentID) {
+  const input = UI.$("agentId");
+  if (!input) return;
+  if (!input.value.trim()) {
+    input.value = agentID;
   }
-  return orgID;
-}
-
-function setOrgPickerVisible(visible) {
-  const picker = UI.$("orgPicker");
-  const hint = UI.$("orgEmptyHint");
-  if (picker) picker.style.display = visible ? "" : "none";
-  if (hint) hint.style.display = visible ? "none" : "block";
-}
-
-function setAgentControlsEnabled(enabled) {
-  const ids = [
-    "orgSelect",
-    "agentId",
-    "ownerHumanId",
-    "btnRegisterAgent",
-    "btnRotateAgent",
-    "btnRevokeAgent",
-    "btnRefreshPending",
-  ];
-  for (const id of ids) {
-    const el = UI.$(id);
-    if (!el) continue;
-    el.disabled = !enabled;
-  }
-}
-
-async function loadCurrentHuman() {
-  const res = await UI.req("/v1/me");
-  if (res.status !== 200) return;
-  currentHumanID = String(res?.data?.human?.human_id || "").trim();
-  if (currentHumanID && !UI.$("ownerHumanId").value.trim()) {
-    UI.$("ownerHumanId").value = currentHumanID;
-  }
-}
-
-async function listOrgs(preserveCurrent = true) {
-  const res = await UI.req("/v1/me/orgs");
-  const select = UI.$("orgSelect");
-  const current = selectedOrg();
-  select.innerHTML = "";
-
-  if (res.status !== 200 || !Array.isArray(res.data.memberships)) {
-    setOrgPickerVisible(false);
-    setAgentControlsEnabled(false);
-    setStatus("agentStatus", "Could not load organizations.", true);
-    setStatus("pendingStatus", "Could not load organizations.", true);
-    UI.$("agentsList").innerHTML = "";
-    UI.$("pendingList").innerHTML = "";
-    return;
-  }
-
-  for (const membership of res.data.memberships) {
-    const opt = document.createElement("option");
-    opt.value = membership.org.org_id;
-    opt.textContent = `${membership.org.name} (${membership.membership.role})`;
-    select.appendChild(opt);
-  }
-
-  if (select.options.length === 0) {
-    setOrgPickerVisible(false);
-    setAgentControlsEnabled(false);
-    setStatus("agentStatus", "Create an organization first to add agents.");
-    setStatus("pendingStatus", "Create an organization first to view trust approvals.");
-    UI.$("agentsList").innerHTML = "";
-    UI.$("pendingList").innerHTML = "";
-    return;
-  }
-
-  setOrgPickerVisible(true);
-  setAgentControlsEnabled(true);
-
-  if (preserveCurrent && current && [...select.options].some((opt) => opt.value === current)) {
-    select.value = current;
-  } else {
-    select.value = select.options[0].value;
-  }
-
-  if (currentHumanID && !UI.$("ownerHumanId").value.trim()) {
-    UI.$("ownerHumanId").value = currentHumanID;
-  }
-
-  await loadAgents();
-  await loadPendingTrusts();
 }
 
 function renderAgents(agents) {
-  const root = UI.$("agentsList");
-  root.innerHTML = "";
+  const body = UI.$("agentsBody");
+  body.innerHTML = "";
 
   if (!Array.isArray(agents) || agents.length === 0) {
-    const li = document.createElement("li");
-    li.textContent = "No agents yet.";
-    root.appendChild(li);
-    setStatus("agentStatus", "No agents found for this organization.");
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.className = "muted";
+    td.textContent = "No agents yet.";
+    tr.appendChild(td);
+    body.appendChild(tr);
+    setStatus("agentStatus", "No agents found.");
     return;
   }
 
   for (const agent of agents) {
-    const li = document.createElement("li");
-    const owner = agent.owner_human_id ? `owner: ${agent.owner_human_id}` : "org-owned";
-    li.textContent = `${agent.agent_id} (${agent.status}, ${owner})`;
-    li.dataset.agentId = agent.agent_id || "";
-    root.appendChild(li);
+    const tr = document.createElement("tr");
+
+    const tdID = document.createElement("td");
+    tdID.textContent = agent.agent_id || "";
+    tr.appendChild(tdID);
+
+    const tdOrg = document.createElement("td");
+    tdOrg.textContent = agent.org_id || "";
+    tr.appendChild(tdOrg);
+
+    const tdStatus = document.createElement("td");
+    tdStatus.textContent = agent.status || "";
+    tr.appendChild(tdStatus);
+
+    const tdOwner = document.createElement("td");
+    tdOwner.textContent = agent.owner_human_id || "org-owned";
+    tr.appendChild(tdOwner);
+
+    const tdActions = document.createElement("td");
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "row-actions";
+
+    const rotateBtn = document.createElement("button");
+    rotateBtn.textContent = "Rotate Token";
+    rotateBtn.dataset.agentAction = "rotate";
+    rotateBtn.dataset.agentId = agent.agent_id || "";
+    rotateBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
+    actionWrap.appendChild(rotateBtn);
+
+    const revokeBtn = document.createElement("button");
+    revokeBtn.textContent = "Revoke Agent";
+    revokeBtn.dataset.agentAction = "revoke";
+    revokeBtn.dataset.agentId = agent.agent_id || "";
+    revokeBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
+    actionWrap.appendChild(revokeBtn);
+
+    tdActions.appendChild(actionWrap);
+    tr.appendChild(tdActions);
+    body.appendChild(tr);
   }
 
-  if (!UI.$("agentId").value.trim()) {
-    UI.$("agentId").value = agents[0].agent_id || "";
-  }
+  setAgentInputIfEmpty(agents[0].agent_id || "");
   setStatus("agentStatus", `${agents.length} agent(s) loaded.`);
 }
 
 async function loadAgents() {
-  const orgID = requireOrg("agentStatus");
-  if (!orgID) return;
-
   setStatus("agentStatus", "Loading agents...");
-  const result = await UI.req(`/v1/orgs/${orgID}/agents`);
-  if (result.status !== 200) {
+  const result = await UI.req("/v1/me/agents");
+  if (result.status !== 200 || !Array.isArray(result?.data?.agents)) {
     setStatus("agentStatus", "Could not load agents.", true);
     renderAgents([]);
     return;
   }
-
   renderAgents(result.data.agents || []);
 }
 
 async function registerAgent() {
-  const orgID = requireOrg("agentStatus");
-  if (!orgID) return;
-
   const agentID = UI.$("agentId").value.trim();
-  const ownerHumanID = UI.$("ownerHumanId").value.trim();
   if (!agentID) {
     setStatus("agentStatus", "agent_id required", true);
     return;
   }
 
-  const payload = { org_id: orgID, agent_id: agentID };
-  if (ownerHumanID) payload.owner_human_id = ownerHumanID;
-
   setStatus("agentStatus", "Registering agent...");
-  const result = await UI.req("/v1/agents/register", "POST", payload);
+  const result = await UI.req("/v1/me/agents", "POST", { agent_id: agentID });
   if (result.status !== 201) {
     setStatus("agentStatus", "Could not register agent.", true);
     return;
@@ -170,32 +106,29 @@ async function registerAgent() {
   await loadAgents();
 }
 
-async function rotateAgent() {
-  const agentID = UI.$("agentId").value.trim();
+async function rotateAgent(agentID) {
   if (!agentID) {
     setStatus("agentStatus", "agent_id required", true);
     return;
   }
 
-  setStatus("agentStatus", "Rotating token...");
-  const result = await UI.req(`/v1/agents/${agentID}/rotate-token`, "POST");
+  setStatus("agentStatus", `Rotating token for ${agentID}...`);
+  const result = await UI.req(`/v1/agents/${encodeURIComponent(agentID)}/rotate-token`, "POST");
   if (result.status !== 200) {
     setStatus("agentStatus", "Could not rotate token.", true);
     return;
   }
-
   setStatus("agentStatus", `Token rotated for ${agentID}.`);
 }
 
-async function revokeAgent() {
-  const agentID = UI.$("agentId").value.trim();
+async function revokeAgent(agentID) {
   if (!agentID) {
     setStatus("agentStatus", "agent_id required", true);
     return;
   }
 
-  setStatus("agentStatus", "Revoking agent...");
-  const result = await UI.req(`/v1/agents/${agentID}`, "DELETE");
+  setStatus("agentStatus", `Revoking ${agentID}...`);
+  const result = await UI.req(`/v1/agents/${encodeURIComponent(agentID)}`, "DELETE");
   if (result.status !== 200) {
     setStatus("agentStatus", "Could not revoke agent.", true);
     return;
@@ -203,26 +136,27 @@ async function revokeAgent() {
 
   setStatus("agentStatus", `Revoked ${agentID}.`);
   await loadAgents();
+  await loadPendingTrusts();
 }
 
 function renderPendingRows(edges) {
   const root = UI.$("pendingList");
   root.innerHTML = "";
 
-  if (!edges.length) {
+  if (!Array.isArray(edges) || edges.length === 0) {
     const p = document.createElement("p");
     p.className = "muted";
-    p.textContent = "No pending agent trust approvals for this organization.";
+    p.textContent = "No bonds yet.";
     root.appendChild(p);
-    setStatus("pendingStatus", "No pending requests.");
+    setStatus("pendingStatus", "No bonds found.");
     return;
   }
 
-  setStatus("pendingStatus", `${edges.length} pending request(s).`);
+  setStatus("pendingStatus", `${edges.length} bond(s) loaded.`);
 
   const table = document.createElement("table");
   const thead = document.createElement("thead");
-  thead.innerHTML = "<tr><th>Edge</th><th>Agents</th><th>State</th><th>Actions</th></tr>";
+  thead.innerHTML = "<tr><th>Edge</th><th>Agents</th><th>State</th><th>Can Talk</th><th>Actions</th></tr>";
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
@@ -238,6 +172,9 @@ function renderPendingRows(edges) {
     const tdState = document.createElement("td");
     tdState.textContent = `${edge.state || ""} | L:${edge.left_approved ? "Y" : "N"} R:${edge.right_approved ? "Y" : "N"}`;
 
+    const tdTalk = document.createElement("td");
+    tdTalk.textContent = String(edge.state || "").toLowerCase() === "active" ? "Yes" : "No";
+
     const tdActions = document.createElement("td");
     const wrap = document.createElement("div");
     wrap.className = "row-actions";
@@ -251,7 +188,7 @@ function renderPendingRows(edges) {
     for (const item of actions) {
       const btn = document.createElement("button");
       btn.textContent = item.label;
-      btn.dataset.edgeId = edge.edge_id;
+      btn.dataset.edgeId = edge.edge_id || "";
       btn.dataset.action = item.action;
       wrap.appendChild(btn);
     }
@@ -260,6 +197,7 @@ function renderPendingRows(edges) {
     tr.appendChild(tdEdge);
     tr.appendChild(tdAgents);
     tr.appendChild(tdState);
+    tr.appendChild(tdTalk);
     tr.appendChild(tdActions);
     tbody.appendChild(tr);
   }
@@ -269,29 +207,46 @@ function renderPendingRows(edges) {
 }
 
 async function loadPendingTrusts() {
-  const orgID = requireOrg("pendingStatus", "Select an organization first.");
-  if (!orgID) return;
+  setStatus("pendingStatus", "Loading bonds...");
+  const result = await UI.req("/v1/me/agent-trusts");
 
-  setStatus("pendingStatus", "Loading pending requests...");
-  const result = await UI.req(`/v1/orgs/${orgID}/trust-graph`);
-
-  if (result.status !== 200 || !Array.isArray(result.data.agent_trusts)) {
-    setStatus("pendingStatus", "Could not load pending requests.", true);
+  if (result.status !== 200 || !Array.isArray(result?.data?.agent_trusts)) {
+    setStatus("pendingStatus", "Could not load bonds.", true);
     renderPendingRows([]);
     return;
   }
 
-  const pending = result.data.agent_trusts.filter((edge) => edge.state === "pending");
-  renderPendingRows(pending);
+  renderPendingRows(result.data.agent_trusts || []);
+}
+
+async function createTrust() {
+  const agentID = UI.$("trustAgentId").value.trim();
+  const peerAgentID = UI.$("trustPeerAgentId").value.trim();
+  if (!agentID || !peerAgentID) {
+    setStatus("pendingStatus", "agent_id and peer_agent_id are required.", true);
+    return;
+  }
+
+  setStatus("pendingStatus", "Creating bond...");
+  const result = await UI.req("/v1/me/agent-trusts", "POST", {
+    agent_id: agentID,
+    peer_agent_id: peerAgentID,
+  });
+  if (result.status !== 200 && result.status !== 201) {
+    setStatus("pendingStatus", "Could not create bond.", true);
+    return;
+  }
+
+  await loadPendingTrusts();
 }
 
 async function runTrustAction(edgeID, action) {
   let method = "POST";
-  let path = `/v1/agent-trusts/${edgeID}/${action}`;
+  let path = `/v1/agent-trusts/${encodeURIComponent(edgeID)}/${action}`;
 
   if (action === "revoke") {
     method = "DELETE";
-    path = `/v1/agent-trusts/${edgeID}`;
+    path = `/v1/agent-trusts/${encodeURIComponent(edgeID)}`;
   }
 
   setStatus("pendingStatus", `${action} in progress...`);
@@ -305,21 +260,27 @@ async function runTrustAction(edgeID, action) {
 
 async function init() {
   UI.initTopNav();
-  await loadCurrentHuman();
 
   UI.$("btnRegisterAgent").onclick = registerAgent;
-  UI.$("btnRotateAgent").onclick = rotateAgent;
-  UI.$("btnRevokeAgent").onclick = revokeAgent;
-  UI.$("btnRefreshPending").onclick = loadPendingTrusts;
-  UI.$("orgSelect").onchange = async () => {
-    await loadAgents();
-    await loadPendingTrusts();
-  };
+  UI.$("btnRefreshTrusts").onclick = loadPendingTrusts;
+  UI.$("btnCreateTrust").onclick = createTrust;
 
-  UI.$("agentsList").addEventListener("click", (event) => {
-    const li = event.target.closest("li[data-agent-id]");
-    if (!li) return;
-    UI.$("agentId").value = li.dataset.agentId || "";
+  UI.$("agentsBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-agent-action]");
+    if (!button) return;
+
+    const action = button.dataset.agentAction || "";
+    const agentID = button.dataset.agentId || "";
+    if (!action || !agentID) return;
+
+    if (action === "rotate") {
+      await rotateAgent(agentID);
+      return;
+    }
+    if (action === "revoke") {
+      await revokeAgent(agentID);
+      return;
+    }
   });
 
   UI.$("pendingList").addEventListener("click", async (event) => {
@@ -333,7 +294,8 @@ async function init() {
     await runTrustAction(edgeID, action);
   });
 
-  await listOrgs(false);
+  await loadAgents();
+  await loadPendingTrusts();
 }
 
 init().catch((err) => {

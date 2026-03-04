@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Statocyst Agents</title>
+    <title>{{APP_NAME}} Agents</title>
     <style>
       :root {
         --bg: #f6f7f9;
@@ -139,7 +139,7 @@
     <header>
       <div class="topbar">
         <div>
-          <strong data-app-name>Statocyst</strong>
+          <strong>{{APP_NAME}}</strong>
           <nav style="margin-top: 6px">
             <a href="/agents">Agents</a>
             <a href="/organization">Organization</a>
@@ -152,36 +152,35 @@
     </header>
 
     <main>
-      <div class="banner">
-        <strong>/agents</strong> focuses on agent lifecycle and pending agent-trust approvals.
-      </div>
-
       <div class="grid">
         <section class="panel">
           <h2>Agents</h2>
-          <div id="orgPicker">
-            <label class="muted" for="orgSelect">Organization</label>
-            <select id="orgSelect"></select>
-          </div>
-          <div id="orgEmptyHint" class="muted" style="display: none">
-            No organizations yet. Create one on <a href="/organization">/organization</a>.
-          </div>
-
           <div id="agentStatus" class="status">Loading agents...</div>
-          <ul id="agentsList" class="list"></ul>
+          <table>
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Organization</th>
+                <th>Status</th>
+                <th>Owner</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="agentsBody"></tbody>
+          </table>
 
-          <input id="agentId" placeholder="agent_id" />
-          <input id="ownerHumanId" placeholder="owner_human_id (optional for register)" />
-          <button id="btnRegisterAgent">Register Agent</button>
-          <button id="btnRotateAgent">Rotate Token</button>
-          <button id="btnRevokeAgent">Revoke Agent</button>
+          <input id="agentId" placeholder="agent_id (e.g. planner-1)" />
+          <button id="btnRegisterAgent">Add Agent</button>
         </section>
 
         <section class="panel">
-          <h2>Pending Agent Trust Approvals</h2>
-          <p class="muted">Approve, block, or revoke pending trust requests for the selected organization.</p>
-          <button id="btnRefreshPending">Refresh Pending Requests</button>
-          <div id="pendingStatus" class="status">No pending-trust action yet.</div>
+          <h2>Agent Bonds</h2>
+          <p class="muted">Bond agents, see which links are active, and approve/block/revoke per bond.</p>
+          <input id="trustAgentId" placeholder="agent_id" />
+          <input id="trustPeerAgentId" placeholder="peer_agent_id" />
+          <button id="btnCreateTrust">Bond Agents</button>
+          <button id="btnRefreshTrusts">Refresh Bonds</button>
+          <div id="pendingStatus" class="status">Loading bonds...</div>
           <div id="pendingList"></div>
         </section>
       </div>

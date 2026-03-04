@@ -3,7 +3,6 @@ const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "statocyst_access_token";
 const DEV_ID_KEY = "statocyst_dev_human_id";
 const DEV_EMAIL_KEY = "statocyst_dev_human_email";
-const DEFAULT_APP_NAME = "Statocyst";
 
 function readStorage(key) {
   return localStorage.getItem(key) || "";
@@ -53,19 +52,6 @@ async function req(path, method = "GET", body = null) {
 function out(el, obj) {
   if (!$(el)) return;
   $(el).textContent = JSON.stringify(obj, null, 2);
-}
-
-async function applyAppName() {
-  let appName = DEFAULT_APP_NAME;
-  try {
-    const cfg = await req("/v1/ui/config");
-    appName = String(cfg?.data?.app_name || "").trim() || DEFAULT_APP_NAME;
-  } catch (_) {}
-
-  const nodes = document.querySelectorAll("[data-app-name]");
-  for (const node of nodes) {
-    node.textContent = appName;
-  }
 }
 
 async function listOrgs() {
@@ -143,8 +129,6 @@ function bindReadActions() {
 }
 
 async function init() {
-  await applyAppName();
-
   if ($("authToken")) $("authToken").value = loadSavedToken();
   if ($("humanId")) $("humanId").value = readStorage(DEV_ID_KEY);
   if ($("humanEmail")) $("humanEmail").value = readStorage(DEV_EMAIL_KEY);

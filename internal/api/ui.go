@@ -102,6 +102,9 @@ func writeUIAsset(w http.ResponseWriter, r *http.Request, contentType string, em
 		}
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	if strings.HasPrefix(contentType, "text/html") {
+		body = []byte(strings.ReplaceAll(string(body), "{{APP_NAME}}", uiAppName()))
+	}
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)

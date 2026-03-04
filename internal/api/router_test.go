@@ -151,6 +151,26 @@ func registerAgent(t *testing.T, router http.Handler, humanID, email, orgID, age
 	return token
 }
 
+func registerMyAgent(t *testing.T, router http.Handler, humanID, email, agentID string) (string, string) {
+	t.Helper()
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents", map[string]any{
+		"agent_id": agentID,
+	}, humanHeaders(humanID, email))
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("register my agent failed: %d %s", resp.Code, resp.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode register my agent: %v", err)
+	}
+	token, _ := payload["token"].(string)
+	orgID, _ := payload["org_id"].(string)
+	if token == "" || orgID == "" {
+		t.Fatalf("missing token or org_id")
+	}
+	return token, orgID
+}
+
 func createOrgAccessKey(t *testing.T, router http.Handler, humanID, email, orgID, label string, scopes []string) (string, string) {
 	t.Helper()
 	body := map[string]any{
@@ -426,6 +446,63 @@ func TestAgentRegisterHumanAndOrgOwned(t *testing.T) {
 	registerAgent(t, router, "alice", "alice@a.test", orgID, "a-org", "")
 }
 
+func TestMyAgentsAndImmediateSelfBond(t *testing.T) {
+	router := newTestRouter()
+	tokenA, orgA := registerMyAgent(t, router, "alice", "alice@a.test", "alice-agent-a")
+	_, orgB := registerMyAgent(t, router, "alice", "alice@a.test", "alice-agent-b")
+	if orgA != orgB {
+		t.Fatalf("expected personal org reuse, got %q and %q", orgA, orgB)
+	}
+
+	listResp := doJSONRequest(t, router, http.MethodGet, "/v1/me/agents", nil, humanHeaders("alice", "alice@a.test"))
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list my agents failed: %d %s", listResp.Code, listResp.Body.String())
+	}
+	listPayload := decodeJSONMap(t, listResp.Body.Bytes())
+	agents, ok := listPayload["agents"].([]any)
+	if !ok || len(agents) < 2 {
+		t.Fatalf("expected at least 2 managed agents, got %v", listPayload["agents"])
+	}
+
+	bondResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agent-trusts", map[string]any{
+		"agent_id":      "alice-agent-a",
+		"peer_agent_id": "alice-agent-b",
+	}, humanHeaders("alice", "alice@a.test"))
+	if bondResp.Code != http.StatusCreated {
+		t.Fatalf("create self bond failed: %d %s", bondResp.Code, bondResp.Body.String())
+	}
+	bondPayload := decodeJSONMap(t, bondResp.Body.Bytes())
+	trust, ok := bondPayload["trust"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing trust payload: %v", bondPayload)
+	}
+	if trust["state"] != "active" {
+		t.Fatalf("expected immediate active trust, got %v", trust["state"])
+	}
+	if trust["left_approved"] != true || trust["right_approved"] != true {
+		t.Fatalf("expected bilateral approvals true, got left=%v right=%v", trust["left_approved"], trust["right_approved"])
+	}
+
+	graphResp := doJSONRequest(t, router, http.MethodGet, "/v1/me/agent-trusts", nil, humanHeaders("alice", "alice@a.test"))
+	if graphResp.Code != http.StatusOK {
+		t.Fatalf("list my agent trusts failed: %d %s", graphResp.Code, graphResp.Body.String())
+	}
+	graphPayload := decodeJSONMap(t, graphResp.Body.Bytes())
+	edges, ok := graphPayload["agent_trusts"].([]any)
+	if !ok || len(edges) == 0 {
+		t.Fatalf("expected non-empty agent_trusts list, got %v", graphPayload["agent_trusts"])
+	}
+
+	pubResp := publish(t, router, tokenA, "alice-agent-b", "hello-self-bond")
+	if pubResp.Code != http.StatusAccepted {
+		t.Fatalf("publish should be accepted after self-bond: %d %s", pubResp.Code, pubResp.Body.String())
+	}
+	pubPayload := decodeJSONMap(t, pubResp.Body.Bytes())
+	if pubPayload["status"] != "queued" {
+		t.Fatalf("expected queued message, got %v", pubPayload["status"])
+	}
+}
+
 func TestTrustLifecycleAndBlockPrecedence(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, orgTrustID, _ := setupTrustedAgents(t, router)
@@ -694,8 +771,8 @@ func TestUIRoutes_MainPages(t *testing.T) {
 		path        string
 		contentHint string
 	}{
-		{path: "/", contentHint: "Welcome Human."},
-		{path: "/index.html", contentHint: "Welcome Human."},
+		{path: "/", contentHint: "Welcome Human"},
+		{path: "/index.html", contentHint: "Welcome Human"},
 		{path: "/profile", contentHint: "/profile"},
 		{path: "/profile/", contentHint: "/profile"},
 		{path: "/organization", contentHint: "/organization"},
