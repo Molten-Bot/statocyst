@@ -48,6 +48,11 @@
         font-weight: 600;
         cursor: pointer;
       }
+      .topActions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
       main {
         max-width: 1240px;
         margin: 16px auto;
@@ -203,11 +208,13 @@
           <nav style="margin-top: 6px">
             <a href="/agents">Agents</a>
             <a href="/organization">Organization</a>
-            <a href="/profile">Profile</a>
             <a href="/domains" data-super-admin-only style="display: none">Domains (Legacy)</a>
           </nav>
         </div>
-        <button id="btnLogout" class="navButton" type="button">Logout</button>
+        <div class="topActions">
+          <button id="btnProfile" class="navButton" type="button">Profile</button>
+          <button id="btnLogout" class="navButton" type="button">Logout</button>
+        </div>
       </div>
     </header>
 

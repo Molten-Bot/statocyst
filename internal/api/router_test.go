@@ -503,6 +503,49 @@ func TestMyAgentsAndImmediateSelfBond(t *testing.T) {
 	}
 }
 
+func TestMyAgentBindTokenRedeemWithAgentChosenName(t *testing.T) {
+	router := newTestRouter()
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create my bind token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	createPayload := decodeJSONMap(t, createResp.Body.Bytes())
+	bindToken, _ := createPayload["bind_token"].(string)
+	if bindToken == "" {
+		t.Fatalf("bind_token missing")
+	}
+
+	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind/redeem", map[string]string{
+		"bind_token": bindToken,
+		"agent_id":   "alice-agent-picked-name",
+	}, nil)
+	if redeemResp.Code != http.StatusCreated {
+		t.Fatalf("redeem bind token failed: %d %s", redeemResp.Code, redeemResp.Body.String())
+	}
+
+	listResp := doJSONRequest(t, router, http.MethodGet, "/v1/me/agents", nil, humanHeaders("alice", "alice@a.test"))
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list my agents failed: %d %s", listResp.Code, listResp.Body.String())
+	}
+	listPayload := decodeJSONMap(t, listResp.Body.Bytes())
+	agents, ok := listPayload["agents"].([]any)
+	if !ok || len(agents) == 0 {
+		t.Fatalf("expected at least one agent in my list, got %v", listPayload["agents"])
+	}
+	found := false
+	for _, item := range agents {
+		agent, _ := item.(map[string]any)
+		if agent["agent_id"] == "alice-agent-picked-name" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected agent created via bind redeem to appear in /v1/me/agents")
+	}
+}
+
 func TestTrustLifecycleAndBlockPrecedence(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, orgTrustID, _ := setupTrustedAgents(t, router)
@@ -654,6 +697,27 @@ func TestBindTokenRedeemSingleUse(t *testing.T) {
 	if redeemPayload["status"] != "ok" {
 		t.Fatalf("expected status ok, got %v", redeemPayload["status"])
 	}
+	controlPlane, ok := redeemPayload["control_plane"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected control_plane in bind redeem response, got %v", redeemPayload["control_plane"])
+	}
+	if controlPlane["api_base"] == "" {
+		t.Fatalf("expected control_plane.api_base")
+	}
+	if _, ok := controlPlane["can_talk_to"].([]any); !ok {
+		t.Fatalf("expected control_plane.can_talk_to array, got %T", controlPlane["can_talk_to"])
+	}
+	skill, ok := redeemPayload["skill"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected skill in bind redeem response, got %v", redeemPayload["skill"])
+	}
+	if skill["format"] != "markdown" {
+		t.Fatalf("expected markdown skill format, got %v", skill["format"])
+	}
+	content, _ := skill["content"].(string)
+	if !strings.Contains(content, "SKILL: Statocyst Agent Control Plane") {
+		t.Fatalf("expected skill markdown header, got %q", content)
+	}
 
 	redeemAgain := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind/redeem", map[string]string{
 		"bind_token": bindToken,
@@ -727,6 +791,61 @@ func TestBindTokenExpires(t *testing.T) {
 	redeemPayload := decodeJSONMap(t, redeemResp.Body.Bytes())
 	if redeemPayload["error"] != "bind_expired" {
 		t.Fatalf("expected bind_expired, got %v", redeemPayload["error"])
+	}
+}
+
+func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _ := setupTrustedAgents(t, router)
+
+	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
+		"Authorization": "Bearer " + tokenA,
+	})
+	if capsResp.Code != http.StatusOK {
+		t.Fatalf("agent capabilities failed: %d %s", capsResp.Code, capsResp.Body.String())
+	}
+	capsPayload := decodeJSONMap(t, capsResp.Body.Bytes())
+	controlPlane, ok := capsPayload["control_plane"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing control_plane: %v", capsPayload)
+	}
+	peers, ok := controlPlane["can_talk_to"].([]any)
+	if !ok {
+		t.Fatalf("missing can_talk_to array: %v", controlPlane["can_talk_to"])
+	}
+	if len(peers) == 0 {
+		t.Fatalf("expected at least one talkable peer")
+	}
+
+	skillJSONResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/skill", nil, map[string]string{
+		"Authorization": "Bearer " + tokenA,
+	})
+	if skillJSONResp.Code != http.StatusOK {
+		t.Fatalf("agent skill json failed: %d %s", skillJSONResp.Code, skillJSONResp.Body.String())
+	}
+	skillJSON := decodeJSONMap(t, skillJSONResp.Body.Bytes())
+	skillObj, ok := skillJSON["skill"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing skill object: %v", skillJSON)
+	}
+	skillContent, _ := skillObj["content"].(string)
+	if !strings.Contains(skillContent, "SKILL: Statocyst Agent Control Plane") {
+		t.Fatalf("expected skill header, got %q", skillContent)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/agents/me/skill?format=markdown", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenA)
+	req.Header.Set("Accept", "text/markdown")
+	mdResp := httptest.NewRecorder()
+	router.ServeHTTP(mdResp, req)
+	if mdResp.Code != http.StatusOK {
+		t.Fatalf("agent skill markdown failed: %d %s", mdResp.Code, mdResp.Body.String())
+	}
+	if !strings.HasPrefix(mdResp.Header().Get("Content-Type"), "text/markdown") {
+		t.Fatalf("expected markdown content type, got %q", mdResp.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(mdResp.Body.String(), "You can currently talk to") {
+		t.Fatalf("expected communication section in markdown skill, got %q", mdResp.Body.String())
 	}
 }
 

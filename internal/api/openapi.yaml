@@ -85,6 +85,23 @@ paths:
       responses:
         '201':
           description: Agent registered
+  /v1/me/agents/bind-tokens:
+    post:
+      summary: Create short-lived one-time agent bind token for current human
+      security:
+        - humanAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                org_id:
+                  type: string
+      responses:
+        '201':
+          description: Bind token created
   /v1/me/agent-trusts:
     get:
       summary: List agent trust edges manageable by current human
@@ -458,7 +475,7 @@ paths:
           description: Bind token created
   /v1/agents/bind/redeem:
     post:
-      summary: Redeem bind token and mint long-lived agent token
+      summary: Redeem bind token and mint long-lived agent token (+ control plane + skill)
       requestBody:
         required: true
         content:
@@ -473,9 +490,35 @@ paths:
                   type: string
       responses:
         '201':
-          description: Agent onboarded
+          description: Agent onboarded with token, control_plane, and skill markdown
         '409':
           description: Bind already used or agent id exists
+  /v1/agents/me/capabilities:
+    get:
+      summary: Agent control-plane capabilities and current talk graph
+      security:
+        - agentAuth: []
+      responses:
+        '200':
+          description: Agent capabilities
+        '401':
+          description: Unauthorized
+  /v1/agents/me/skill:
+    get:
+      summary: Agent skill document (JSON or markdown)
+      security:
+        - agentAuth: []
+      parameters:
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [markdown, md]
+      responses:
+        '200':
+          description: Skill content
+        '401':
+          description: Unauthorized
   /v1/agents/{agent_id}/rotate-token:
     post:
       summary: Rotate token

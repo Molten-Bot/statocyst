@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -57,6 +58,15 @@ type createOrgAccessKeyRequest struct {
 	Label         string   `json:"label"`
 	Scopes        []string `json:"scopes"`
 	ExpiresInDays *int     `json:"expires_in_days,omitempty"`
+}
+
+type agentControlPlaneView struct {
+	APIBase      string
+	AgentID      string
+	OrgID        string
+	OwnerHumanID string
+	CanTalkTo    []string
+	Capabilities []string
 }
 
 var (
@@ -206,6 +216,72 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	actor, err := h.authenticateHuman(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
+		return
+	}
+	if h.denySuperAdminWrite(w, actor) {
+		return
+	}
+
+	var req createBindTokenRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+		return
+	}
+	req.OrgID = strings.TrimSpace(req.OrgID)
+
+	orgID := req.OrgID
+	if orgID == "" {
+		org, err := h.store.EnsurePersonalOrg(actor.Human.HumanID, h.now().UTC(), h.idFactory)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to provision personal organization")
+			return
+		}
+		orgID = org.OrgID
+	}
+
+	ownerHumanID := actor.Human.HumanID
+	bindSecret, err := auth.GenerateToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate bind token")
+		return
+	}
+	bindID, err := h.idFactory()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate bind id")
+		return
+	}
+	expiresAt := h.now().UTC().Add(h.bindTokenTTL)
+	bind, err := h.store.CreateBindToken(orgID, &ownerHumanID, actor.Human.HumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC())
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrOrgNotFound):
+			writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+		case errors.Is(err, store.ErrUnauthorizedRole):
+			writeError(w, http.StatusForbidden, "forbidden", "membership in org required")
+		case errors.Is(err, store.ErrMembershipNotFound):
+			writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id must be active in org")
+		default:
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to create bind token")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"bind_id":        bind.BindID,
+		"bind_token":     bindSecret,
+		"org_id":         bind.OrgID,
+		"owner_human_id": bind.OwnerHumanID,
+		"expires_at":     bind.ExpiresAt,
+	})
+}
+
 func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
 	actor, err := h.authenticateHuman(r)
 	if err != nil {
@@ -276,6 +352,203 @@ func normalizeOptionalHumanID(value *string) *string {
 		return nil
 	}
 	return &v
+}
+
+func (h *Handler) handleAgentMeCapabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	agentID, err := h.authenticateAgent(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
+	}
+	agent, err := h.store.GetAgent(agentID)
+	if err != nil {
+		if errors.Is(err, store.ErrAgentNotFound) {
+			writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent")
+		return
+	}
+	cp, err := h.buildAgentControlPlane(r, agent)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent capabilities")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agent": map[string]any{
+			"agent_id":       cp.AgentID,
+			"org_id":         cp.OrgID,
+			"owner_human_id": cp.OwnerHumanID,
+		},
+		"control_plane": h.agentControlPlanePayload(cp),
+	})
+}
+
+func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	agentID, err := h.authenticateAgent(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
+	}
+	agent, err := h.store.GetAgent(agentID)
+	if err != nil {
+		if errors.Is(err, store.ErrAgentNotFound) {
+			writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent")
+		return
+	}
+	cp, err := h.buildAgentControlPlane(r, agent)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent skill")
+		return
+	}
+	skill := buildAgentSkillMarkdown(cp)
+
+	if wantsMarkdownSkill(r) {
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(skill))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agent": map[string]any{
+			"agent_id":       cp.AgentID,
+			"org_id":         cp.OrgID,
+			"owner_human_id": cp.OwnerHumanID,
+		},
+		"control_plane": h.agentControlPlanePayload(cp),
+		"skill": map[string]any{
+			"schema_version": "1",
+			"format":         "markdown",
+			"content":        skill,
+		},
+	})
+}
+
+func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (agentControlPlaneView, error) {
+	peers, err := h.store.ListTalkablePeers(agent.AgentID)
+	if err != nil {
+		return agentControlPlaneView{}, err
+	}
+	ownerHumanID := ""
+	if agent.OwnerHumanID != nil {
+		ownerHumanID = *agent.OwnerHumanID
+	}
+	return agentControlPlaneView{
+		APIBase:      apiBaseURL(r),
+		AgentID:      agent.AgentID,
+		OrgID:        agent.OrgID,
+		OwnerHumanID: ownerHumanID,
+		CanTalkTo:    peers,
+		Capabilities: []string{"publish_messages", "pull_messages", "read_capabilities", "read_skill"},
+	}, nil
+}
+
+func (h *Handler) agentControlPlanePayload(cp agentControlPlaneView) map[string]any {
+	return map[string]any{
+		"api_base": cp.APIBase,
+		"agent_id": cp.AgentID,
+		"org_id":   cp.OrgID,
+		"owner_human_id": func() any {
+			if cp.OwnerHumanID == "" {
+				return nil
+			}
+			return cp.OwnerHumanID
+		}(),
+		"can_talk_to":     cp.CanTalkTo,
+		"capabilities":    cp.Capabilities,
+		"can_communicate": len(cp.CanTalkTo) > 0,
+		"endpoints": map[string]string{
+			"publish":      cp.APIBase + "/messages/publish",
+			"pull":         cp.APIBase + "/messages/pull",
+			"capabilities": cp.APIBase + "/agents/me/capabilities",
+			"skill":        cp.APIBase + "/agents/me/skill",
+		},
+	}
+}
+
+func apiBaseURL(r *http.Request) string {
+	scheme := "http"
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		candidate := strings.ToLower(strings.TrimSpace(parts[0]))
+		if candidate == "http" || candidate == "https" {
+			scheme = candidate
+		}
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		host = "localhost:8080"
+	}
+	return fmt.Sprintf("%s://%s/v1", scheme, host)
+}
+
+func wantsMarkdownSkill(r *http.Request) bool {
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "md" || format == "markdown" {
+		return true
+	}
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	return strings.Contains(accept, "text/markdown")
+}
+
+func buildAgentSkillMarkdown(cp agentControlPlaneView) string {
+	var b strings.Builder
+	b.WriteString("# SKILL: Statocyst Agent Control Plane\n\n")
+	b.WriteString("## Connected To\n")
+	b.WriteString("- Service: Statocyst\n")
+	b.WriteString("- API Base: " + cp.APIBase + "\n")
+	b.WriteString("- Agent ID: " + cp.AgentID + "\n")
+	b.WriteString("- Organization ID: " + cp.OrgID + "\n")
+	if cp.OwnerHumanID != "" {
+		b.WriteString("- Owner Human ID: " + cp.OwnerHumanID + "\n")
+	}
+	b.WriteString("\n## What You Can Do\n")
+	b.WriteString("- Pull inbound messages.\n")
+	b.WriteString("- Publish outbound messages to trusted peers.\n")
+	b.WriteString("- Discover capabilities and communication graph.\n")
+	b.WriteString("- Retrieve this skill doc anytime.\n")
+
+	b.WriteString("\n## Communication Graph\n")
+	if len(cp.CanTalkTo) == 0 {
+		b.WriteString("- No active talk paths yet. You are connected, but cannot deliver messages until bonded.\n")
+	} else {
+		b.WriteString("- You can currently talk to:\n")
+		for _, peer := range cp.CanTalkTo {
+			b.WriteString("  - " + peer + "\n")
+		}
+	}
+
+	b.WriteString("\n## API Quickstart\n")
+	b.WriteString("```bash\n")
+	b.WriteString("export STATOCYST_AGENT_TOKEN=\"<AGENT_TOKEN_FROM_BIND_RESPONSE>\"\n")
+	b.WriteString("curl -sS \"" + cp.APIBase + "/agents/me/capabilities\" \\\n")
+	b.WriteString("  -H \"Authorization: Bearer $STATOCYST_AGENT_TOKEN\"\n\n")
+	b.WriteString("curl -sS \"" + cp.APIBase + "/messages/pull?timeout_ms=5000\" \\\n")
+	b.WriteString("  -H \"Authorization: Bearer $STATOCYST_AGENT_TOKEN\"\n\n")
+	b.WriteString("curl -sS -X POST \"" + cp.APIBase + "/messages/publish\" \\\n")
+	b.WriteString("  -H \"Authorization: Bearer $STATOCYST_AGENT_TOKEN\" \\\n")
+	b.WriteString("  -H \"Content-Type: application/json\" \\\n")
+	b.WriteString("  -d '{\"to_agent_id\":\"<peer_agent_id>\",\"content_type\":\"text/plain\",\"payload\":\"hello\"}'\n")
+	b.WriteString("```\n")
+
+	return b.String()
 }
 
 func (h *Handler) handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -999,12 +1272,24 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
+	cp, err := h.buildAgentControlPlane(r, agent)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to build agent control plane")
+		return
+	}
+	skill := buildAgentSkillMarkdown(cp)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"status":         "ok",
 		"agent_id":       agent.AgentID,
 		"org_id":         agent.OrgID,
 		"owner_human_id": agent.OwnerHumanID,
 		"token":          agentToken,
+		"control_plane":  h.agentControlPlanePayload(cp),
+		"skill": map[string]any{
+			"schema_version": "1",
+			"format":         "markdown",
+			"content":        skill,
+		},
 	})
 }
 

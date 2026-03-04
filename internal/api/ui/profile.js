@@ -26,12 +26,10 @@ function renderOrgs(memberships) {
   target.innerHTML = "";
 
   function renderEmpty() {
-    target.append("No organizations yet. ");
     const link = document.createElement("a");
     link.href = "/organization";
     link.textContent = "Create one on /organization";
     target.append(link);
-    target.append(".");
   }
 
   if (!Array.isArray(memberships) || memberships.length === 0) {

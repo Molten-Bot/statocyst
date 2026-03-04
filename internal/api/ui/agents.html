@@ -48,6 +48,11 @@
         font-weight: 600;
         cursor: pointer;
       }
+      .topActions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
       main {
         max-width: 1200px;
         margin: 16px auto;
@@ -133,6 +138,11 @@
       .row-actions button {
         margin: 0;
       }
+      .code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break: break-all;
+        white-space: pre-wrap;
+      }
     </style>
   </head>
   <body>
@@ -143,11 +153,13 @@
           <nav style="margin-top: 6px">
             <a href="/agents">Agents</a>
             <a href="/organization">Organization</a>
-            <a href="/profile">Profile</a>
             <a href="/domains" data-super-admin-only style="display: none">Domains (Legacy)</a>
           </nav>
         </div>
-        <button id="btnLogout" class="navButton" type="button">Logout</button>
+        <div class="topActions">
+          <button id="btnProfile" class="navButton" type="button">Profile</button>
+          <button id="btnLogout" class="navButton" type="button">Logout</button>
+        </div>
       </div>
     </header>
 
@@ -169,17 +181,19 @@
             <tbody id="agentsBody"></tbody>
           </table>
 
-          <input id="agentId" placeholder="agent_id (e.g. planner-1)" />
-          <button id="btnRegisterAgent">Add Agent</button>
+          <p class="muted">Create a short-lived one-time bind code. Agents choose their own name when redeeming.</p>
+          <button id="btnCreateBindCode">Add Agent (Generate Agent Prompt)</button>
+          <div id="bindCodeStatus" class="status code">No bind code issued yet.</div>
         </section>
 
         <section class="panel">
           <h2>Agent Bonds</h2>
           <p class="muted">Bond agents, see which links are active, and approve/block/revoke per bond.</p>
-          <input id="trustAgentId" placeholder="agent_id" />
-          <input id="trustPeerAgentId" placeholder="peer_agent_id" />
+          <label class="muted" for="trustAgentId">Agent</label>
+          <select id="trustAgentId"></select>
+          <label class="muted" for="trustPeerAgentId">Peer Agent</label>
+          <select id="trustPeerAgentId"></select>
           <button id="btnCreateTrust">Bond Agents</button>
-          <button id="btnRefreshTrusts">Refresh Bonds</button>
           <div id="pendingStatus" class="status">Loading bonds...</div>
           <div id="pendingList"></div>
         </section>

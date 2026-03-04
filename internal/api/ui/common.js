@@ -66,6 +66,13 @@ const StatocystUI = (() => {
   }
 
   function initTopNav() {
+    const profileBtn = $("btnProfile");
+    if (profileBtn) {
+      profileBtn.onclick = () => {
+        window.location.assign("/profile");
+      };
+    }
+
     const logoutBtn = $("btnLogout");
     if (logoutBtn) {
       logoutBtn.onclick = () => {

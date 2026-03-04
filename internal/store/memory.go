@@ -874,6 +874,39 @@ func (s *MemoryStore) AgentIDForTokenHash(tokenHash string) (string, error) {
 	return agentID, nil
 }
 
+func (s *MemoryStore) GetAgent(agentID string) (model.Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agent, ok := s.agents[agentID]
+	if !ok || agent.Status == model.StatusRevoked {
+		return model.Agent{}, ErrAgentNotFound
+	}
+	return agent, nil
+}
+
+func (s *MemoryStore) ListTalkablePeers(agentID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agent, ok := s.agents[agentID]
+	if !ok || agent.Status == model.StatusRevoked {
+		return nil, ErrAgentNotFound
+	}
+
+	out := make([]string, 0)
+	for peerID, peer := range s.agents {
+		if peerID == agentID || peer.Status == model.StatusRevoked {
+			continue
+		}
+		if s.canPublishLocked(agent, peer) {
+			out = append(out, peerID)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (s *MemoryStore) CreateOrJoinOrgTrust(orgID, peerOrgID, actorHumanID, edgeID string, now time.Time) (model.TrustEdge, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1112,28 +1145,34 @@ func (s *MemoryStore) CanPublish(senderAgentID, receiverAgentID string) (string,
 	}
 	senderOrgID := sender.OrgID
 	receiverOrgID := receiver.OrgID
-
-	if senderOrgID != receiverOrgID {
-		orgEdgeID, ok := s.orgTrustByPair[pairKey(senderOrgID, receiverOrgID)]
-		if !ok {
-			return senderOrgID, receiverOrgID, ErrNoTrustPath
-		}
-		orgEdge := s.orgTrusts[orgEdgeID]
-		if orgEdge.State != model.StatusActive {
-			return senderOrgID, receiverOrgID, ErrNoTrustPath
-		}
-	}
-
-	agentEdgeID, ok := s.agentTrustByPair[pairKey(senderAgentID, receiverAgentID)]
-	if !ok {
-		return senderOrgID, receiverOrgID, ErrNoTrustPath
-	}
-	agentEdge := s.agentTrusts[agentEdgeID]
-	if agentEdge.State != model.StatusActive {
+	if !s.canPublishLocked(sender, receiver) {
 		return senderOrgID, receiverOrgID, ErrNoTrustPath
 	}
 
 	return senderOrgID, receiverOrgID, nil
+}
+
+func (s *MemoryStore) canPublishLocked(sender, receiver model.Agent) bool {
+	if sender.OrgID != receiver.OrgID {
+		orgEdgeID, ok := s.orgTrustByPair[pairKey(sender.OrgID, receiver.OrgID)]
+		if !ok {
+			return false
+		}
+		orgEdge, ok := s.orgTrusts[orgEdgeID]
+		if !ok || orgEdge.State != model.StatusActive {
+			return false
+		}
+	}
+
+	agentEdgeID, ok := s.agentTrustByPair[pairKey(sender.AgentID, receiver.AgentID)]
+	if !ok {
+		return false
+	}
+	agentEdge, ok := s.agentTrusts[agentEdgeID]
+	if !ok || agentEdge.State != model.StatusActive {
+		return false
+	}
+	return true
 }
 
 func (s *MemoryStore) RecordMessageQueued(orgID string) {

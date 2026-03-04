@@ -7,11 +7,104 @@ function setStatus(id, message, warn = false) {
   el.className = warn ? "status warn" : "status";
 }
 
-function setAgentInputIfEmpty(agentID) {
-  const input = UI.$("agentId");
-  if (!input) return;
-  if (!input.value.trim()) {
-    input.value = agentID;
+function setBindCodeStatus(message, warn = false) {
+  const el = UI.$("bindCodeStatus");
+  if (!el) return;
+  el.textContent = message;
+  el.className = warn ? "status warn code" : "status code";
+}
+
+function formatDateTime(raw) {
+  if (!raw) return "unknown";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return String(raw);
+  return d.toLocaleString();
+}
+
+function buildAgentBindPrompt(bindToken, expiresAt, redeemURL) {
+  return [
+    "Agent Onboarding Prompt",
+    "",
+    "Goal: Bind this agent to Statocyst and return your new agent token.",
+    "",
+    `Bind code: ${bindToken}`,
+    `Expires: ${expiresAt}`,
+    `Bind API URL: ${redeemURL}`,
+    "",
+    "Instructions for agent:",
+    "1. Pick your stable agent_id (letters, numbers, ., _, :, -).",
+    "2. Redeem the bind code with this command (replace <agent_id>):",
+    "",
+    `curl -sS -X POST "${redeemURL}" \\`,
+    "  -H 'Content-Type: application/json' \\",
+    `  -d '{"bind_token":"${bindToken}","agent_id":"<agent_id>"}'`,
+    "",
+    "3. Parse JSON response and return:",
+    "- agent_id",
+    "- org_id",
+    "- token",
+    "",
+    "4. Keep token secret and use it as Bearer auth for message APIs.",
+  ].join("\n");
+}
+
+function syncBondSelectors(agents) {
+  const left = UI.$("trustAgentId");
+  const right = UI.$("trustPeerAgentId");
+  if (!left || !right) return;
+
+  const leftCurrent = left.value;
+  const rightCurrent = right.value;
+  left.innerHTML = "";
+  right.innerHTML = "";
+
+  const activeAgents = (Array.isArray(agents) ? agents : []).filter((agent) => String(agent?.status || "").toLowerCase() !== "revoked");
+  if (activeAgents.length === 0) {
+    const optLeft = document.createElement("option");
+    optLeft.value = "";
+    optLeft.textContent = "No active agents available";
+    left.appendChild(optLeft);
+
+    const optRight = document.createElement("option");
+    optRight.value = "";
+    optRight.textContent = "No active agents available";
+    right.appendChild(optRight);
+
+    left.disabled = true;
+    right.disabled = true;
+    return;
+  }
+
+  left.disabled = false;
+  right.disabled = false;
+
+  for (const agent of activeAgents) {
+    const text = `${agent.agent_id || ""} (${agent.owner_human_id || "org-owned"})`;
+
+    const leftOpt = document.createElement("option");
+    leftOpt.value = agent.agent_id || "";
+    leftOpt.textContent = text;
+    left.appendChild(leftOpt);
+
+    const rightOpt = document.createElement("option");
+    rightOpt.value = agent.agent_id || "";
+    rightOpt.textContent = text;
+    right.appendChild(rightOpt);
+  }
+
+  if (leftCurrent && [...left.options].some((opt) => opt.value === leftCurrent)) {
+    left.value = leftCurrent;
+  }
+  if (rightCurrent && [...right.options].some((opt) => opt.value === rightCurrent)) {
+    right.value = rightCurrent;
+  }
+  if (!left.value && left.options.length > 0) {
+    left.value = left.options[0].value;
+  }
+  if (!right.value && right.options.length > 1) {
+    right.value = right.options[1].value;
+  } else if (!right.value && right.options.length > 0) {
+    right.value = right.options[0].value;
   }
 }
 
@@ -28,6 +121,7 @@ function renderAgents(agents) {
     tr.appendChild(td);
     body.appendChild(tr);
     setStatus("agentStatus", "No agents found.");
+    syncBondSelectors([]);
     return;
   }
 
@@ -73,8 +167,8 @@ function renderAgents(agents) {
     body.appendChild(tr);
   }
 
-  setAgentInputIfEmpty(agents[0].agent_id || "");
   setStatus("agentStatus", `${agents.length} agent(s) loaded.`);
+  syncBondSelectors(agents);
 }
 
 async function loadAgents() {
@@ -88,22 +182,23 @@ async function loadAgents() {
   renderAgents(result.data.agents || []);
 }
 
-async function registerAgent() {
-  const agentID = UI.$("agentId").value.trim();
-  if (!agentID) {
-    setStatus("agentStatus", "agent_id required", true);
-    return;
-  }
-
-  setStatus("agentStatus", "Registering agent...");
-  const result = await UI.req("/v1/me/agents", "POST", { agent_id: agentID });
+async function createBindCode() {
+  setBindCodeStatus("Creating one-time bind code...");
+  const result = await UI.req("/v1/me/agents/bind-tokens", "POST", {});
   if (result.status !== 201) {
-    setStatus("agentStatus", "Could not register agent.", true);
+    setBindCodeStatus("Could not create bind code.", true);
     return;
   }
 
-  setStatus("agentStatus", `Registered ${agentID}.`);
-  await loadAgents();
+  const token = String(result?.data?.bind_token || "").trim();
+  const expiresAt = formatDateTime(result?.data?.expires_at);
+  const redeemURL = `${window.location.origin}/v1/agents/bind/redeem`;
+  if (!token) {
+    setBindCodeStatus("Bind code was not returned.", true);
+    return;
+  }
+
+  setBindCodeStatus(buildAgentBindPrompt(token, expiresAt, redeemURL));
 }
 
 async function rotateAgent(agentID) {
@@ -223,7 +318,11 @@ async function createTrust() {
   const agentID = UI.$("trustAgentId").value.trim();
   const peerAgentID = UI.$("trustPeerAgentId").value.trim();
   if (!agentID || !peerAgentID) {
-    setStatus("pendingStatus", "agent_id and peer_agent_id are required.", true);
+    setStatus("pendingStatus", "Select both agents.", true);
+    return;
+  }
+  if (agentID === peerAgentID) {
+    setStatus("pendingStatus", "Choose two different agents.", true);
     return;
   }
 
@@ -261,8 +360,7 @@ async function runTrustAction(edgeID, action) {
 async function init() {
   UI.initTopNav();
 
-  UI.$("btnRegisterAgent").onclick = registerAgent;
-  UI.$("btnRefreshTrusts").onclick = loadPendingTrusts;
+  UI.$("btnCreateBindCode").onclick = createBindCode;
   UI.$("btnCreateTrust").onclick = createTrust;
 
   UI.$("agentsBody").addEventListener("click", async (event) => {
