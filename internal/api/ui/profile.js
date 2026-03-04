@@ -1,5 +1,6 @@
 const UI = StatocystUI;
 const PENDING_INVITE_CODE_KEY = "statocyst_pending_invite_code";
+let currentHuman = null;
 
 function setStatus(message, warn = false) {
   const el = UI.$("profileStatus");
@@ -59,8 +60,12 @@ function renderOrgs(memberships) {
 
 function renderProfile(me, orgs) {
   const human = me?.data?.human;
+  currentHuman = human || null;
   UI.$("profileEmail").textContent = human?.email || "-";
+  UI.$("profileHandle").textContent = human?.handle || "-";
   UI.$("profileJoined").textContent = daysAgoLabel(human?.created_at);
+  UI.$("profileHandleInput").value = human?.handle || "";
+  UI.$("profileIsPublic").checked = Boolean(human?.is_public);
   renderOrgs(orgs?.data?.memberships);
 
   const isSuperAdmin = Boolean(me?.data?.is_super_admin);
@@ -215,6 +220,36 @@ async function runInviteAction(inviteID, action) {
   await loadProfileData();
 }
 
+async function saveProfile() {
+  const handle = String(UI.$("profileHandleInput").value || "").trim();
+  const isPublic = Boolean(UI.$("profileIsPublic").checked);
+  if (!handle) {
+    setStatus("Handle is required.", true);
+    return;
+  }
+
+  setStatus("Saving profile...");
+  const res = await UI.req("/v1/me", "PATCH", {
+    handle,
+    is_public: isPublic,
+  });
+  if (res.status !== 200) {
+    const err = String(res?.data?.error || "");
+    if (err === "human_handle_exists") {
+      setStatus("Handle already exists. Choose another.", true);
+      return;
+    }
+    if (err === "invalid_handle") {
+      setStatus("Handle must be URL-safe (a-z, 0-9, ., _, -).", true);
+      return;
+    }
+    setStatus("Could not update profile.", true);
+    return;
+  }
+  setStatus("Profile updated.");
+  await loadProfileData();
+}
+
 async function autoRedeemPendingInvite() {
   const inviteCode = readPendingInviteCode();
   if (!inviteCode) return false;
@@ -253,6 +288,7 @@ async function init() {
     if (!button) return;
     await runInviteAction(button.dataset.inviteId || "", button.dataset.action || "");
   });
+  UI.$("btnSaveProfile").onclick = saveProfile;
 
   const loaded = await loadProfileData();
   if (!loaded) return;

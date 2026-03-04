@@ -32,7 +32,7 @@ function buildAgentBindPrompt(bindToken, expiresAt, redeemURL) {
     `Bind API URL: ${redeemURL}`,
     "",
     "Instructions for agent:",
-    "1. Pick your stable agent_id (letters, numbers, ., _, :, -).",
+    "1. Pick your stable agent_id (URL-safe: a-z, 0-9, ., _, -).",
     "2. Redeem the bind code with this command (replace <agent_id>):",
     "",
     `curl -sS -X POST "${redeemURL}" \\`,
@@ -115,7 +115,7 @@ function renderAgents(agents) {
   if (!Array.isArray(agents) || agents.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 5;
+    td.colSpan = 6;
     td.className = "muted";
     td.textContent = "No agents yet.";
     tr.appendChild(td);
@@ -144,6 +144,10 @@ function renderAgents(agents) {
     tdOwner.textContent = agent.owner_human_id || "org-owned";
     tr.appendChild(tdOwner);
 
+    const tdPublic = document.createElement("td");
+    tdPublic.textContent = agent.is_public ? "public" : "private";
+    tr.appendChild(tdPublic);
+
     const tdActions = document.createElement("td");
     const actionWrap = document.createElement("div");
     actionWrap.className = "row-actions";
@@ -161,6 +165,14 @@ function renderAgents(agents) {
     revokeBtn.dataset.agentId = agent.agent_id || "";
     revokeBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
     actionWrap.appendChild(revokeBtn);
+
+    const visibilityBtn = document.createElement("button");
+    visibilityBtn.textContent = agent.is_public ? "Make Private" : "Make Public";
+    visibilityBtn.dataset.agentAction = "visibility";
+    visibilityBtn.dataset.agentId = agent.agent_id || "";
+    visibilityBtn.dataset.makePublic = agent.is_public ? "false" : "true";
+    visibilityBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
+    actionWrap.appendChild(visibilityBtn);
 
     tdActions.appendChild(actionWrap);
     tr.appendChild(tdActions);
@@ -232,6 +244,23 @@ async function revokeAgent(agentID) {
   setStatus("agentStatus", `Revoked ${agentID}.`);
   await loadAgents();
   await loadPendingTrusts();
+}
+
+async function setAgentVisibility(agentID, makePublic) {
+  if (!agentID) {
+    setStatus("agentStatus", "agent_id required", true);
+    return;
+  }
+  setStatus("agentStatus", `Updating visibility for ${agentID}...`);
+  const result = await UI.req(`/v1/agents/${encodeURIComponent(agentID)}`, "PATCH", {
+    is_public: makePublic,
+  });
+  if (result.status !== 200) {
+    setStatus("agentStatus", "Could not update agent visibility.", true);
+    return;
+  }
+  setStatus("agentStatus", `Visibility updated for ${agentID}.`);
+  await loadAgents();
 }
 
 function renderPendingRows(edges) {
@@ -377,6 +406,11 @@ async function init() {
     }
     if (action === "revoke") {
       await revokeAgent(agentID);
+      return;
+    }
+    if (action === "visibility") {
+      const makePublic = String(button.dataset.makePublic || "false") === "true";
+      await setAgentVisibility(agentID, makePublic);
       return;
     }
   });

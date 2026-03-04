@@ -1,6 +1,7 @@
 const UI = StatocystUI;
 
 let currentHumanID = "";
+let orgByID = {};
 
 function selectedOrg() {
   return UI.selectedOrg("orgSelect");
@@ -43,13 +44,18 @@ function requireOrg(statusID, message = "Select an organization first.") {
 }
 
 function orgNameByID(orgID) {
-  const select = UI.$("orgSelect");
-  const option = [...(select?.options || [])].find((opt) => opt.value === orgID);
-  if (!option) return orgID;
-  const label = option.textContent || orgID;
-  const idx = label.lastIndexOf(" (");
-  if (idx > 0) return label.slice(0, idx);
-  return label;
+  const org = orgByID[orgID];
+  if (org && org.name) return org.name;
+  return orgID;
+}
+
+function syncOrgVisibilityUI() {
+  const orgID = selectedOrg();
+  const org = orgByID[orgID];
+  const checkbox = UI.$("orgIsPublic");
+  if (!checkbox) return;
+  checkbox.disabled = !org;
+  checkbox.checked = org ? Boolean(org.is_public) : true;
 }
 
 function escapeHTML(input) {
@@ -95,6 +101,12 @@ async function listOrgs(preserveCurrent = true) {
 
   const current = selectedOrg();
   const memberships = res.data.memberships;
+  orgByID = {};
+  for (const item of memberships) {
+    if (item?.org?.org_id) {
+      orgByID[item.org.org_id] = item.org;
+    }
+  }
 
   const orgList = UI.$("orgList");
   orgList.innerHTML = "";
@@ -128,6 +140,7 @@ async function listOrgs(preserveCurrent = true) {
       select.value = memberships[0].org.org_id;
     }
     UI.$("partnerOrgName").value = orgNameByID(select.value);
+    syncOrgVisibilityUI();
     await refreshOrgData();
   } else {
     renderHumans([]);
@@ -137,6 +150,7 @@ async function listOrgs(preserveCurrent = true) {
     renderStats(null);
     renderAccessKeys([]);
     setInviteCodeStatus("");
+    syncOrgVisibilityUI();
   }
 }
 
@@ -155,12 +169,34 @@ async function createOrg() {
       setStatus("orgStatus", "Organization name already exists. Choose a different name.", true);
       return;
     }
+    if (err === "invalid_name") {
+      setStatus("orgStatus", "Organization handle must be URL-safe (a-z, 0-9, ., _, -).", true);
+      return;
+    }
     setStatus("orgStatus", "Could not create organization.", true);
     return;
   }
 
   UI.$("orgName").value = "";
   await listOrgs(false);
+}
+
+async function saveOrgVisibility() {
+  const orgID = requireOrg("orgStatus");
+  if (!orgID) return;
+
+  const isPublic = Boolean(UI.$("orgIsPublic").checked);
+  setStatus("orgStatus", "Saving organization visibility...");
+  const res = await UI.req(`/v1/orgs/${orgID}`, "PATCH", { is_public: isPublic });
+  if (res.status !== 200) {
+    setStatus("orgStatus", "Could not update organization visibility.", true);
+    return;
+  }
+  if (res.data?.organization?.org_id) {
+    orgByID[res.data.organization.org_id] = res.data.organization;
+  }
+  syncOrgVisibilityUI();
+  setStatus("orgStatus", "Organization visibility updated.");
 }
 
 async function inviteHuman() {
@@ -280,11 +316,12 @@ function renderHumans(humans) {
 
     const title = document.createElement("div");
     title.className = "rowTitle";
-    title.textContent = h.email || h.human_id || "unknown";
+    title.textContent = h.handle || h.email || h.human_id || "unknown";
 
     const meta = document.createElement("div");
     meta.className = "rowMeta";
-    meta.textContent = `${h.role || "unknown"} • ${h.status || "unknown"} • ${h.auth_provider || "unknown provider"}`;
+    const visibility = h.is_public ? "public" : "private";
+    meta.textContent = `${h.role || "unknown"} • ${h.status || "unknown"} • ${h.auth_provider || "unknown provider"} • ${visibility}`;
 
     card.appendChild(title);
     card.appendChild(meta);
@@ -492,7 +529,7 @@ function renderPartnerList(kind, payload) {
   for (const item of items) {
     const li = document.createElement("li");
     if (kind === "humans") {
-      li.textContent = `${item.email || item.human_id} (${item.role || "unknown"})`;
+      li.textContent = `${item.handle || item.email || item.human_id} (${item.role || "unknown"})`;
     } else {
       li.textContent = `${item.agent_id || "agent"} (${item.status || "unknown"})`;
     }
@@ -682,6 +719,7 @@ async function init() {
   await loadCurrentHuman();
 
   UI.$("btnCreateOrg").onclick = createOrg;
+  UI.$("btnSaveOrgVisibility").onclick = saveOrgVisibility;
   UI.$("btnInvite").onclick = inviteHuman;
   UI.$("btnRefreshMetrics").onclick = refreshMetrics;
   UI.$("btnCreateAccessKey").onclick = createAccessKey;
@@ -689,6 +727,7 @@ async function init() {
   UI.$("btnPartnerAgents").onclick = () => runPartnerQuery("agents");
   UI.$("orgSelect").onchange = async () => {
     UI.$("partnerOrgName").value = orgNameByID(selectedOrg());
+    syncOrgVisibilityUI();
     setInviteCodeStatus("");
     await refreshOrgData();
   };

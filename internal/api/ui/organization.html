@@ -208,6 +208,7 @@
           <nav style="margin-top: 6px">
             <a href="/agents">Agents</a>
             <a href="/organization">Organization</a>
+            <a href="/live">Live</a>
             <a href="/domains" data-super-admin-only style="display: none">Domains (Legacy)</a>
           </nav>
         </div>
@@ -222,13 +223,15 @@
       <div class="grid">
         <section class="panel">
           <h2>Organizations</h2>
-          <input id="orgName" placeholder="New organization name" />
+          <input id="orgName" placeholder="New organization handle (e.g. acme-labs)" />
           <button id="btnCreateOrg">Create Organization</button>
           <div id="orgStatus" class="status">Loading organizations...</div>
           <h3>Your Organizations</h3>
           <ul id="orgList" class="list"></ul>
           <h3>Selected Organization</h3>
           <select id="orgSelect"></select>
+          <label><input id="orgIsPublic" type="checkbox" checked /> public organization</label>
+          <button id="btnSaveOrgVisibility">Save Organization Visibility</button>
         </section>
 
         <section class="panel">

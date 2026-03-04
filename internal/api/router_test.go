@@ -774,13 +774,48 @@ func TestOrganizationNameUniqueCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestHumanNamesCanonicalizedAsUnique(t *testing.T) {
+func TestHumanCanSetHandleAndVisibility(t *testing.T) {
 	router := newTestRouter()
 
-	firstID := currentHumanID(t, router, "Alice", "alice@a.test")
-	secondID := currentHumanID(t, router, "  alice  ", "alice+alt@a.test")
-	if firstID != secondID {
-		t.Fatalf("expected canonical human name to map to same human, got %q vs %q", firstID, secondID)
+	_ = currentHumanID(t, router, "alice", "alice@a.test")
+	update := doJSONRequest(t, router, http.MethodPatch, "/v1/me", map[string]any{
+		"handle":    "Alice Main",
+		"is_public": false,
+	}, humanHeaders("alice", "alice@a.test"))
+	if update.Code != http.StatusOK {
+		t.Fatalf("expected profile patch 200, got %d %s", update.Code, update.Body.String())
+	}
+	payload := decodeJSONMap(t, update.Body.Bytes())
+	human, _ := payload["human"].(map[string]any)
+	if human["handle"] != "alice-main" {
+		t.Fatalf("expected normalized handle alice-main, got %v", human["handle"])
+	}
+	if human["is_public"] != false {
+		t.Fatalf("expected is_public false, got %v", human["is_public"])
+	}
+}
+
+func TestHumanHandleMustBeUnique(t *testing.T) {
+	router := newTestRouter()
+
+	_ = currentHumanID(t, router, "alice", "alice@a.test")
+	_ = currentHumanID(t, router, "bob", "bob@b.test")
+	first := doJSONRequest(t, router, http.MethodPatch, "/v1/me", map[string]any{
+		"handle": "shared",
+	}, humanHeaders("alice", "alice@a.test"))
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected first handle update 200, got %d %s", first.Code, first.Body.String())
+	}
+
+	dup := doJSONRequest(t, router, http.MethodPatch, "/v1/me", map[string]any{
+		"handle": "SHARED",
+	}, humanHeaders("bob", "bob@b.test"))
+	if dup.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate handle conflict 409, got %d %s", dup.Code, dup.Body.String())
+	}
+	body := decodeJSONMap(t, dup.Body.Bytes())
+	if body["error"] != "human_handle_exists" {
+		t.Fatalf("expected human_handle_exists, got %v", body["error"])
 	}
 }
 
@@ -824,6 +859,62 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	body := decodeJSONMap(t, dup.Body.Bytes())
 	if body["error"] != "agent_exists" {
 		t.Fatalf("expected agent_exists for duplicate org-bound name, got %v", body["error"])
+	}
+}
+
+func TestLiveShowsOnlyPublicEntities(t *testing.T) {
+	router := newTestRouter()
+
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Live Org")
+	registerAgent(t, router, "alice", "alice@a.test", orgID, "live-agent", aliceHumanID)
+
+	live := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
+	if live.Code != http.StatusOK {
+		t.Fatalf("expected /live 200, got %d %s", live.Code, live.Body.String())
+	}
+	liveBody := live.Body.String()
+	if !strings.Contains(liveBody, "live-org") {
+		t.Fatalf("expected live page to include org handle, got %q", liveBody)
+	}
+	if !strings.Contains(liveBody, "alice") {
+		t.Fatalf("expected live page to include human handle, got %q", liveBody)
+	}
+	if !strings.Contains(liveBody, "live-agent") {
+		t.Fatalf("expected live page to include agent handle, got %q", liveBody)
+	}
+
+	hideAgent := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/live-agent", map[string]any{
+		"is_public": false,
+	}, humanHeaders("alice", "alice@a.test"))
+	if hideAgent.Code != http.StatusOK {
+		t.Fatalf("expected agent hide 200, got %d %s", hideAgent.Code, hideAgent.Body.String())
+	}
+	liveAfterAgentHide := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
+	if strings.Contains(liveAfterAgentHide.Body.String(), "live-agent") {
+		t.Fatalf("expected hidden agent to be absent from /live")
+	}
+
+	hideHuman := doJSONRequest(t, router, http.MethodPatch, "/v1/me", map[string]any{
+		"is_public": false,
+	}, humanHeaders("alice", "alice@a.test"))
+	if hideHuman.Code != http.StatusOK {
+		t.Fatalf("expected human hide 200, got %d %s", hideHuman.Code, hideHuman.Body.String())
+	}
+	liveAfterHumanHide := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
+	if strings.Contains(liveAfterHumanHide.Body.String(), "alice") {
+		t.Fatalf("expected hidden human to be absent from /live")
+	}
+
+	hideOrg := doJSONRequest(t, router, http.MethodPatch, "/v1/orgs/"+orgID, map[string]any{
+		"is_public": false,
+	}, humanHeaders("alice", "alice@a.test"))
+	if hideOrg.Code != http.StatusOK {
+		t.Fatalf("expected org hide 200, got %d %s", hideOrg.Code, hideOrg.Body.String())
+	}
+	liveAfterOrgHide := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
+	if strings.Contains(liveAfterOrgHide.Body.String(), "live-org") {
+		t.Fatalf("expected hidden org to be absent from /live")
 	}
 }
 

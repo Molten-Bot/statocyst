@@ -21,7 +21,7 @@ const (
 	defaultPullTimeoutMS = 5000
 )
 
-var agentIDRegex = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+var agentIDRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 var handleRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 type Handler struct {

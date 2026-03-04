@@ -42,11 +42,11 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.ToAgentID = strings.TrimSpace(req.ToAgentID)
+	req.ToAgentID = normalizeHandle(req.ToAgentID)
 	req.ContentType = strings.TrimSpace(req.ContentType)
 
 	if !validateAgentID(req.ToAgentID) {
-		writeError(w, http.StatusBadRequest, "invalid_to_agent_id", "to_agent_id must match [A-Za-z0-9._:-]{1,128}")
+		writeError(w, http.StatusBadRequest, "invalid_to_agent_id", "to_agent_id must be URL-safe (a-z, 0-9, ., _, -)")
 		return
 	}
 	if _, ok := allowedContentTypes[req.ContentType]; !ok {

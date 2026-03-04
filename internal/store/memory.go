@@ -125,9 +125,6 @@ func (s *MemoryStore) UpsertHuman(provider, subject, email string, emailVerified
 		if h.Handle == "" {
 			h.Handle = s.claimUniqueHumanHandleLocked(normalizeHumanHandleCandidate(subject), humanID)
 		}
-		if !h.IsPublic {
-			h.IsPublic = true
-		}
 		s.humans[humanID] = h
 		s.humanByHandle[h.Handle] = h.HumanID
 		return h, nil

@@ -77,6 +77,9 @@ func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
 	case "/agents.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiAgentsJS, "agents.js")
 		return
+	case "/live", "/live/", "/live/index.html":
+		h.handleLive(w, r)
+		return
 	case "/domains", "/domains/", "/domains/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiIndexHTML, "index.html")
 		return

@@ -98,6 +98,27 @@
         display: grid;
         gap: 8px;
       }
+      main input,
+      main button {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 5px 0;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+      }
+      main button {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      main input[type="checkbox"] {
+        width: auto;
+        margin-right: 6px;
+      }
       .row {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -167,6 +188,7 @@
           <nav style="margin-top: 6px">
             <a href="/agents">Agents</a>
             <a href="/organization">Organization</a>
+            <a href="/live">Live</a>
             <a href="/domains" data-super-admin-only style="display: none">Domains (Legacy)</a>
           </nav>
         </div>
@@ -188,8 +210,18 @@
               <div class="value" id="profileEmail">-</div>
             </div>
             <div class="row">
+              <span class="label">Handle</span>
+              <div class="value" id="profileHandle">-</div>
+            </div>
+            <div class="row">
               <span class="label">Joined On</span>
               <div class="value" id="profileJoined">-</div>
+            </div>
+            <div class="row">
+              <span class="label">Profile Visibility</span>
+              <input id="profileHandleInput" placeholder="your-handle" />
+              <label><input id="profileIsPublic" type="checkbox" checked /> public profile</label>
+              <button id="btnSaveProfile" type="button">Save Profile</button>
             </div>
             <div class="row">
               <span class="label">Organizations</span>

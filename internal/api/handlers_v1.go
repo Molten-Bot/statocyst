@@ -17,6 +17,11 @@ type createOrgRequest struct {
 	Name string `json:"name"`
 }
 
+type updateMyProfileRequest struct {
+	Handle   *string `json:"handle,omitempty"`
+	IsPublic *bool   `json:"is_public,omitempty"`
+}
+
 type createInviteRequest struct {
 	Email         string `json:"email"`
 	Role          string `json:"role"`
@@ -41,6 +46,10 @@ type registerAgentRequest struct {
 	OrgID        string  `json:"org_id"`
 	AgentID      string  `json:"agent_id"`
 	OwnerHumanID *string `json:"owner_human_id,omitempty"`
+}
+
+type updateVisibilityRequest struct {
+	IsPublic *bool `json:"is_public,omitempty"`
 }
 
 type trustOrgRequest struct {
@@ -109,19 +118,61 @@ func uiAppName() string {
 }
 
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
 	actor, err := h.authenticateHuman(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"human":          actor.Human,
-		"is_super_admin": actor.IsSuperAdmin,
-	})
+
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"human":          actor.Human,
+			"is_super_admin": actor.IsSuperAdmin,
+		})
+		return
+	case http.MethodPatch:
+		if h.denySuperAdminWrite(w, actor) {
+			return
+		}
+		var req updateMyProfileRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+			return
+		}
+
+		handle := ""
+		if req.Handle != nil {
+			handle = normalizeHandle(*req.Handle)
+			if !validateHandle(handle) {
+				writeError(w, http.StatusBadRequest, "invalid_handle", "handle must be URL-safe (a-z, 0-9, ., _, -)")
+				return
+			}
+		}
+
+		human, err := h.store.UpdateHumanProfile(actor.Human.HumanID, handle, req.IsPublic)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrHumanNotFound):
+				writeError(w, http.StatusNotFound, "unknown_human", "human not found")
+			case errors.Is(err, store.ErrHumanHandleTaken):
+				writeError(w, http.StatusConflict, "human_handle_exists", "handle is already taken")
+			case errors.Is(err, store.ErrInvalidHandle):
+				writeError(w, http.StatusBadRequest, "invalid_handle", "handle must be URL-safe (a-z, 0-9, ., _, -)")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to update profile")
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"human":          human,
+			"is_super_admin": actor.IsSuperAdmin,
+		})
+		return
+	default:
+		writeMethodNotAllowed(w)
+		return
+	}
 }
 
 func (h *Handler) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
@@ -163,9 +214,9 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 		}
 
 		req.OrgID = strings.TrimSpace(req.OrgID)
-		req.AgentID = strings.TrimSpace(req.AgentID)
+		req.AgentID = normalizeHandle(req.AgentID)
 		if !validateAgentID(req.AgentID) {
-			writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must match [A-Za-z0-9._:-]{1,128}")
+			writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be URL-safe (a-z, 0-9, ., _, -)")
 			return
 		}
 
@@ -305,10 +356,10 @@ func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.OrgID = strings.TrimSpace(req.OrgID)
-		req.AgentID = strings.TrimSpace(req.AgentID)
-		req.PeerAgentID = strings.TrimSpace(req.PeerAgentID)
+		req.AgentID = normalizeHandle(req.AgentID)
+		req.PeerAgentID = normalizeHandle(req.PeerAgentID)
 		if !validateAgentID(req.AgentID) || !validateAgentID(req.PeerAgentID) {
-			writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent ids must match [A-Za-z0-9._:-]{1,128}")
+			writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent ids must be URL-safe (a-z, 0-9, ., _, -)")
 			return
 		}
 
@@ -589,9 +640,9 @@ func (h *Handler) handleOrgs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "invalid_name", "name is required")
+	name := normalizeHandle(req.Name)
+	if !validateHandle(name) {
+		writeError(w, http.StatusBadRequest, "invalid_name", "name must be a URL-safe handle")
 		return
 	}
 	orgID, err := h.idFactory()
@@ -617,17 +668,51 @@ func (h *Handler) handleOrgs(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 	parts := splitPath(r.URL.Path)
-	if len(parts) < 4 || parts[0] != "v1" || parts[1] != "orgs" {
+	if len(parts) < 3 || parts[0] != "v1" || parts[1] != "orgs" {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
 	orgID := parts[2]
-	sub := parts[3]
 	actor, err := h.authenticateHuman(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
 		return
 	}
+	if len(parts) == 3 {
+		if r.Method != http.MethodPatch {
+			writeMethodNotAllowed(w)
+			return
+		}
+		if h.denySuperAdminWrite(w, actor) {
+			return
+		}
+		var req updateVisibilityRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+			return
+		}
+		if req.IsPublic == nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "is_public is required")
+			return
+		}
+
+		org, err := h.store.SetOrgVisibility(orgID, *req.IsPublic, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrOrgNotFound):
+				writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+			case errors.Is(err, store.ErrUnauthorizedRole):
+				writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to update organization visibility")
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"organization": org})
+		return
+	}
+
+	sub := parts[3]
 
 	switch sub {
 	case "invites":
@@ -1024,7 +1109,7 @@ func (h *Handler) handleOrgAccessAgents(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) authorizeOrgAccess(r *http.Request, requiredScope string) (model.Organization, model.OrgAccessKey, error) {
-	orgName := strings.TrimSpace(r.URL.Query().Get("org_name"))
+	orgName := normalizeHandle(r.URL.Query().Get("org_name"))
 	if orgName == "" {
 		return model.Organization{}, model.OrgAccessKey{}, errMissingOrgName
 	}
@@ -1239,13 +1324,13 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	req.BindToken = strings.TrimSpace(req.BindToken)
-	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.AgentID = normalizeHandle(req.AgentID)
 	if req.BindToken == "" {
 		writeError(w, http.StatusBadRequest, "invalid_bind_token", "bind_token is required")
 		return
 	}
 	if !validateAgentID(req.AgentID) {
-		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must match [A-Za-z0-9._:-]{1,128}")
+		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be URL-safe (a-z, 0-9, ., _, -)")
 		return
 	}
 
@@ -1314,14 +1399,14 @@ func (h *Handler) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.OrgID = strings.TrimSpace(req.OrgID)
-	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.AgentID = normalizeHandle(req.AgentID)
 	req.OwnerHumanID = normalizeOptionalHumanID(req.OwnerHumanID)
 	if req.OrgID == "" {
 		writeError(w, http.StatusBadRequest, "invalid_org_id", "org_id is required")
 		return
 	}
 	if !validateAgentID(req.AgentID) {
-		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must match [A-Za-z0-9._:-]{1,128}")
+		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be URL-safe (a-z, 0-9, ., _, -)")
 		return
 	}
 	token, err := auth.GenerateToken()
@@ -1401,27 +1486,55 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(parts) == 3 {
-		if r.Method != http.MethodDelete {
+		switch r.Method {
+		case http.MethodDelete:
+			if err := h.store.RevokeAgent(agentID, actor.Human.HumanID, h.now().UTC()); err != nil {
+				switch {
+				case errors.Is(err, store.ErrAgentNotFound):
+					writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
+				case errors.Is(err, store.ErrUnauthorizedRole):
+					writeError(w, http.StatusForbidden, "forbidden", "admin/owner required")
+				default:
+					writeError(w, http.StatusInternalServerError, "store_error", "failed to revoke agent")
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":   "ok",
+				"agent_id": agentID,
+				"result":   "revoked",
+			})
+			return
+		case http.MethodPatch:
+			var req updateVisibilityRequest
+			if err := decodeJSON(r, &req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+				return
+			}
+			if req.IsPublic == nil {
+				writeError(w, http.StatusBadRequest, "invalid_request", "is_public is required")
+				return
+			}
+			agent, err := h.store.SetAgentVisibility(agentID, *req.IsPublic, actor.Human.HumanID, h.now().UTC())
+			if err != nil {
+				switch {
+				case errors.Is(err, store.ErrAgentNotFound):
+					writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
+				case errors.Is(err, store.ErrUnauthorizedRole):
+					writeError(w, http.StatusForbidden, "forbidden", "admin/owner required")
+				default:
+					writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent visibility")
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"agent": agent,
+			})
+			return
+		default:
 			writeMethodNotAllowed(w)
 			return
 		}
-		if err := h.store.RevokeAgent(agentID, actor.Human.HumanID, h.now().UTC()); err != nil {
-			switch {
-			case errors.Is(err, store.ErrAgentNotFound):
-				writeError(w, http.StatusNotFound, "unknown_agent", "agent_id is not registered")
-			case errors.Is(err, store.ErrUnauthorizedRole):
-				writeError(w, http.StatusForbidden, "forbidden", "admin/owner required")
-			default:
-				writeError(w, http.StatusInternalServerError, "store_error", "failed to revoke agent")
-			}
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":   "ok",
-			"agent_id": agentID,
-			"result":   "revoked",
-		})
-		return
 	}
 
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
@@ -1553,10 +1666,10 @@ func (h *Handler) handleAgentTrusts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.OrgID = strings.TrimSpace(req.OrgID)
-	req.AgentID = strings.TrimSpace(req.AgentID)
-	req.PeerAgentID = strings.TrimSpace(req.PeerAgentID)
+	req.AgentID = normalizeHandle(req.AgentID)
+	req.PeerAgentID = normalizeHandle(req.PeerAgentID)
 	if !validateAgentID(req.AgentID) || !validateAgentID(req.PeerAgentID) {
-		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent ids must match [A-Za-z0-9._:-]{1,128}")
+		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent ids must be URL-safe (a-z, 0-9, ., _, -)")
 		return
 	}
 	edgeID, err := h.idFactory()
