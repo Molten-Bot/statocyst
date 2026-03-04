@@ -56,9 +56,10 @@ type MemoryStore struct {
 	orgAccessKeys      map[string]model.OrgAccessKey
 	orgAccessKeyByHash map[string]string
 
-	agents                 map[string]model.Agent
-	agentTokenIdx          map[string]string
-	orgOwnedAgentNameIdx   map[string]string
+	agents               map[string]model.Agent
+	agentTokenIdx        map[string]string
+	orgOwnedAgentNameIdx map[string]string
+	// humanOwnedAgentNameIdx enforces unique human-owned agent names across all humans.
 	humanOwnedAgentNameIdx map[string]string
 	queues                 map[string][]model.Message
 
@@ -146,7 +147,7 @@ func (s *MemoryStore) CreateOrg(name string, creatorHumanID string, orgID string
 		return model.Organization{}, model.Membership{}, ErrHumanNotFound
 	}
 
-	nameKey := strings.ToLower(strings.TrimSpace(name))
+	nameKey := normalizeOrgNameKey(name)
 	if existingOrgID, ok := s.orgByName[nameKey]; ok && existingOrgID != "" {
 		return model.Organization{}, model.Membership{}, ErrOrgNameTaken
 	}
@@ -195,7 +196,7 @@ func (s *MemoryStore) ensurePersonalOrgLocked(humanID string, now time.Time, idF
 	baseName := fmt.Sprintf("Personal %s", humanID)
 	name := baseName
 	for i := 2; ; i++ {
-		nameKey := strings.ToLower(strings.TrimSpace(name))
+		nameKey := normalizeOrgNameKey(name)
 		if existingOrgID, exists := s.orgByName[nameKey]; !exists || existingOrgID == "" {
 			break
 		}
@@ -213,7 +214,7 @@ func (s *MemoryStore) ensurePersonalOrgLocked(humanID string, now time.Time, idF
 		CreatedBy: humanID,
 	}
 	s.orgs[org.OrgID] = org
-	s.orgByName[strings.ToLower(strings.TrimSpace(name))] = org.OrgID
+	s.orgByName[normalizeOrgNameKey(name)] = org.OrgID
 	s.personalOrgByHuman[humanID] = org.OrgID
 
 	memID := fmt.Sprintf("m-%s", orgID)
@@ -601,7 +602,7 @@ func (s *MemoryStore) AuthorizeOrgAccessByName(orgName, accessKeyHash, requiredS
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	orgID, ok := s.orgByName[strings.ToLower(strings.TrimSpace(orgName))]
+	orgID, ok := s.orgByName[normalizeOrgNameKey(orgName)]
 	if !ok || orgID == "" {
 		return model.Organization{}, model.OrgAccessKey{}, ErrOrgNotFound
 	}
@@ -683,7 +684,7 @@ func (s *MemoryStore) RegisterAgent(orgID, agentID string, ownerHumanID *string,
 		if s.membershipRoleLocked(orgID, *ownerHumanID) == "" {
 			return model.Agent{}, ErrMembershipNotFound
 		}
-		key := humanOwnedAgentNameKey(orgID, *ownerHumanID, agentID)
+		key := humanOwnedAgentNameKey(agentID)
 		if _, exists := s.humanOwnedAgentNameIdx[key]; exists {
 			return model.Agent{}, ErrAgentExists
 		}
@@ -706,7 +707,7 @@ func (s *MemoryStore) RegisterAgent(orgID, agentID string, ownerHumanID *string,
 	s.agents[agentID] = agent
 	s.agentTokenIdx[tokenHash] = agentID
 	if ownerHumanID != nil {
-		s.humanOwnedAgentNameIdx[humanOwnedAgentNameKey(orgID, *ownerHumanID, agentID)] = agentID
+		s.humanOwnedAgentNameIdx[humanOwnedAgentNameKey(agentID)] = agentID
 	} else {
 		s.orgOwnedAgentNameIdx[orgOwnedAgentNameKey(orgID, agentID)] = agentID
 	}
@@ -777,7 +778,7 @@ func (s *MemoryStore) RedeemBindToken(bindTokenHash, agentID, agentTokenHash str
 		if s.membershipRoleLocked(bind.OrgID, *bind.OwnerHumanID) == "" {
 			return model.Agent{}, ErrMembershipNotFound
 		}
-		if _, exists := s.humanOwnedAgentNameIdx[humanOwnedAgentNameKey(bind.OrgID, *bind.OwnerHumanID, agentID)]; exists {
+		if _, exists := s.humanOwnedAgentNameIdx[humanOwnedAgentNameKey(agentID)]; exists {
 			return model.Agent{}, ErrAgentExists
 		}
 	} else {
@@ -798,7 +799,7 @@ func (s *MemoryStore) RedeemBindToken(bindTokenHash, agentID, agentTokenHash str
 	s.agents[agent.AgentID] = agent
 	s.agentTokenIdx[agentTokenHash] = agent.AgentID
 	if bind.OwnerHumanID != nil {
-		s.humanOwnedAgentNameIdx[humanOwnedAgentNameKey(bind.OrgID, *bind.OwnerHumanID, agent.AgentID)] = agent.AgentID
+		s.humanOwnedAgentNameIdx[humanOwnedAgentNameKey(agent.AgentID)] = agent.AgentID
 	} else {
 		s.orgOwnedAgentNameIdx[orgOwnedAgentNameKey(bind.OrgID, agent.AgentID)] = agent.AgentID
 	}
@@ -847,7 +848,7 @@ func (s *MemoryStore) RevokeAgent(agentID, actorHumanID string, now time.Time) e
 	}
 	delete(s.agentTokenIdx, agent.TokenHash)
 	if agent.OwnerHumanID != nil {
-		delete(s.humanOwnedAgentNameIdx, humanOwnedAgentNameKey(agent.OrgID, *agent.OwnerHumanID, agent.AgentID))
+		delete(s.humanOwnedAgentNameIdx, humanOwnedAgentNameKey(agent.AgentID))
 	} else {
 		delete(s.orgOwnedAgentNameIdx, orgOwnedAgentNameKey(agent.OrgID, agent.AgentID))
 	}
@@ -1585,6 +1586,11 @@ func normalizeOrgAccessScopes(scopes []string) []string {
 	return out
 }
 
+func normalizeOrgNameKey(name string) string {
+	parts := strings.Fields(strings.TrimSpace(name))
+	return strings.ToLower(strings.Join(parts, " "))
+}
+
 func orgAccessScopeAllowed(scopes []string, required string) bool {
 	for _, scope := range scopes {
 		if scope == required {
@@ -1623,7 +1629,7 @@ func roleRank(role string) int {
 }
 
 func authKey(provider, subject string) string {
-	return provider + "\x00" + subject
+	return strings.TrimSpace(strings.ToLower(provider)) + "\x00" + normalizeHumanNameKey(subject)
 }
 
 func orgHumanKey(orgID, humanID string) string {
@@ -1634,8 +1640,17 @@ func orgOwnedAgentNameKey(orgID, agentID string) string {
 	return orgID + "\x00" + strings.ToLower(agentID)
 }
 
-func humanOwnedAgentNameKey(orgID, humanID, agentID string) string {
-	return orgID + "\x00" + humanID + "\x00" + strings.ToLower(agentID)
+func humanOwnedAgentNameKey(agentID string) string {
+	return normalizeAgentNameKey(agentID)
+}
+
+func normalizeHumanNameKey(name string) string {
+	parts := strings.Fields(strings.TrimSpace(name))
+	return strings.ToLower(strings.Join(parts, " "))
+}
+
+func normalizeAgentNameKey(agentID string) string {
+	return strings.ToLower(strings.TrimSpace(agentID))
 }
 
 func canonicalPair(a, b string) (string, string) {

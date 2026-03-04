@@ -150,6 +150,11 @@ async function createOrg() {
   setStatus("orgStatus", "Creating organization...");
   const res = await UI.req("/v1/orgs", "POST", { name });
   if (res.status !== 201) {
+    const err = String(res?.data?.error || "");
+    if (res.status === 409 || err === "org_name_exists") {
+      setStatus("orgStatus", "Organization name already exists. Choose a different name.", true);
+      return;
+    }
     setStatus("orgStatus", "Could not create organization.", true);
     return;
   }
@@ -183,7 +188,8 @@ async function inviteHuman() {
   const inviteCode = String(res.data?.invite_code || "");
   setStatus("inviteStatus", `Invite created for ${email}.`);
   if (inviteCode) {
-    setInviteCodeStatus(`Share this code with ${email}: ${inviteCode} (expires ${formatDateTime(invite.expires_at)}).`);
+    const inviteLink = `${window.location.origin}/?invite=${encodeURIComponent(inviteCode)}`;
+    setInviteCodeStatus(`Share this invite link with ${email}: ${inviteLink} (expires ${formatDateTime(invite.expires_at)}).`);
   }
   await Promise.all([loadOrgInvites(), loadHumans()]);
 }

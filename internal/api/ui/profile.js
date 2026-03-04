@@ -1,4 +1,5 @@
 const UI = StatocystUI;
+const PENDING_INVITE_CODE_KEY = "statocyst_pending_invite_code";
 
 function setStatus(message, warn = false) {
   const el = UI.$("profileStatus");
@@ -77,6 +78,37 @@ function titleCaseStatus(status) {
   if (status === "active") return "Accepted";
   if (status === "revoked") return "Revoked";
   return status || "Unknown";
+}
+
+function normalizeInviteCode(raw) {
+  return String(raw || "").trim();
+}
+
+function savePendingInviteCode(inviteCode) {
+  const value = normalizeInviteCode(inviteCode);
+  if (!value) {
+    localStorage.removeItem(PENDING_INVITE_CODE_KEY);
+    return "";
+  }
+  localStorage.setItem(PENDING_INVITE_CODE_KEY, value);
+  return value;
+}
+
+function readPendingInviteCode() {
+  return normalizeInviteCode(localStorage.getItem(PENDING_INVITE_CODE_KEY));
+}
+
+function captureInviteCodeFromURL() {
+  const url = new URL(window.location.href);
+  const inviteCode = normalizeInviteCode(url.searchParams.get("invite") || url.searchParams.get("invite_code"));
+  if (!inviteCode) return "";
+
+  savePendingInviteCode(inviteCode);
+  url.searchParams.delete("invite");
+  url.searchParams.delete("invite_code");
+  const nextURL = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, "", nextURL);
+  return inviteCode;
 }
 
 function renderInvites(invites) {
@@ -183,7 +215,35 @@ async function runInviteAction(inviteID, action) {
   await loadProfileData();
 }
 
+async function autoRedeemPendingInvite() {
+  const inviteCode = readPendingInviteCode();
+  if (!inviteCode) return false;
+
+  setInviteStatus("Redeeming invite link...");
+  const res = await UI.req("/v1/org-invites/redeem", "POST", { invite_code: inviteCode });
+  if (res.status === 200) {
+    localStorage.removeItem(PENDING_INVITE_CODE_KEY);
+    setInviteStatus("Invite link redeemed. You were added to the organization.");
+    return true;
+  }
+
+  const err = String(res?.data?.error || "");
+  if (err === "unknown_invite_code") {
+    localStorage.removeItem(PENDING_INVITE_CODE_KEY);
+    setInviteStatus("Stored invite code is no longer valid.", true);
+    return false;
+  }
+  if (err === "invalid_invite_code") {
+    setInviteStatus("Stored invite code does not match this account email. Login with the invited email to redeem.", true);
+    return false;
+  }
+
+  setInviteStatus("Could not redeem stored invite link.", true);
+  return false;
+}
+
 async function init() {
+  captureInviteCodeFromURL();
   UI.initTopNav();
   setStatus("Loading profile...");
   setInviteStatus("Loading invites...");
@@ -194,7 +254,13 @@ async function init() {
     await runInviteAction(button.dataset.inviteId || "", button.dataset.action || "");
   });
 
-  await loadProfileData();
+  const loaded = await loadProfileData();
+  if (!loaded) return;
+
+  const redeemed = await autoRedeemPendingInvite();
+  if (redeemed) {
+    await loadProfileData();
+  }
 }
 
 init().catch((err) => {

@@ -757,6 +757,74 @@ func TestOrganizationNameUniqueCaseInsensitive(t *testing.T) {
 	if body["error"] != "org_name_exists" {
 		t.Fatalf("expected org_name_exists error, got %v", body["error"])
 	}
+
+	dupSpacing := doJSONRequest(t, router, http.MethodPost, "/v1/orgs", map[string]string{
+		"name": "acme   ",
+	}, humanHeaders("carol", "carol@c.test"))
+	if dupSpacing.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate org name with spacing variance, got %d %s", dupSpacing.Code, dupSpacing.Body.String())
+	}
+
+	_ = createOrg(t, router, "dan", "dan@d.test", "Acme Labs")
+	dupInternalSpacing := doJSONRequest(t, router, http.MethodPost, "/v1/orgs", map[string]string{
+		"name": "  acme    labs  ",
+	}, humanHeaders("erin", "erin@e.test"))
+	if dupInternalSpacing.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate org name with internal spacing variance, got %d %s", dupInternalSpacing.Code, dupInternalSpacing.Body.String())
+	}
+}
+
+func TestHumanNamesCanonicalizedAsUnique(t *testing.T) {
+	router := newTestRouter()
+
+	firstID := currentHumanID(t, router, "Alice", "alice@a.test")
+	secondID := currentHumanID(t, router, "  alice  ", "alice+alt@a.test")
+	if firstID != secondID {
+		t.Fatalf("expected canonical human name to map to same human, got %q vs %q", firstID, secondID)
+	}
+}
+
+func TestHumanBoundAgentNameUniqueAcrossHumans(t *testing.T) {
+	router := newTestRouter()
+
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	bobHumanID := currentHumanID(t, router, "bob", "bob@b.test")
+
+	orgA := createOrg(t, router, "alice", "alice@a.test", "Org Human Agent A")
+	orgB := createOrg(t, router, "bob", "bob@b.test", "Org Human Agent B")
+
+	registerAgent(t, router, "alice", "alice@a.test", orgA, "alpha-agent", aliceHumanID)
+	dup := doJSONRequest(t, router, http.MethodPost, "/v1/agents/register", map[string]any{
+		"org_id":         orgB,
+		"agent_id":       "ALPHA-AGENT",
+		"owner_human_id": bobHumanID,
+	}, humanHeaders("bob", "bob@b.test"))
+	if dup.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate human-bound agent name, got %d %s", dup.Code, dup.Body.String())
+	}
+	body := decodeJSONMap(t, dup.Body.Bytes())
+	if body["error"] != "agent_exists" {
+		t.Fatalf("expected agent_exists for duplicate human-bound name, got %v", body["error"])
+	}
+}
+
+func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
+	router := newTestRouter()
+
+	orgA := createOrg(t, router, "alice", "alice@a.test", "Org Agents Unique")
+	registerAgent(t, router, "alice", "alice@a.test", orgA, "org-agent", "")
+
+	dup := doJSONRequest(t, router, http.MethodPost, "/v1/agents/register", map[string]any{
+		"org_id":   orgA,
+		"agent_id": "ORG-AGENT",
+	}, humanHeaders("alice", "alice@a.test"))
+	if dup.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate org-bound agent name in same org, got %d %s", dup.Code, dup.Body.String())
+	}
+	body := decodeJSONMap(t, dup.Body.Bytes())
+	if body["error"] != "agent_exists" {
+		t.Fatalf("expected agent_exists for duplicate org-bound name, got %v", body["error"])
+	}
 }
 
 func TestBindTokenExpires(t *testing.T) {

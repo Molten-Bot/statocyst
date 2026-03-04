@@ -1,6 +1,7 @@
 const TOKEN_KEY = "statocyst_access_token";
 const DEV_ID_KEY = "statocyst_dev_human_id";
 const DEV_EMAIL_KEY = "statocyst_dev_human_email";
+const PENDING_INVITE_CODE_KEY = "statocyst_pending_invite_code";
 
 const $ = (id) => document.getElementById(id);
 
@@ -43,6 +44,34 @@ function saveDevIdentity(humanID, humanEmail) {
 
 function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
+}
+
+function normalizeInviteCode(raw) {
+  return String(raw || "").trim();
+}
+
+function savePendingInviteCode(inviteCode) {
+  const value = normalizeInviteCode(inviteCode);
+  if (!value) {
+    localStorage.removeItem(PENDING_INVITE_CODE_KEY);
+    return;
+  }
+  localStorage.setItem(PENDING_INVITE_CODE_KEY, value);
+}
+
+function captureInviteCodeFromURL() {
+  const url = new URL(window.location.href);
+  const inviteCode = normalizeInviteCode(url.searchParams.get("invite") || url.searchParams.get("invite_code"));
+  if (!inviteCode) {
+    return "";
+  }
+
+  savePendingInviteCode(inviteCode);
+  url.searchParams.delete("invite");
+  url.searchParams.delete("invite_code");
+  const nextURL = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, "", nextURL);
+  return inviteCode;
 }
 
 async function fetchJSON(path, token = "") {
@@ -116,6 +145,7 @@ async function init() {
   let devHumanID = "";
   let devHumanEmail = "";
   let devAutoLogin = false;
+  const inviteCode = captureInviteCodeFromURL();
 
   $("loginBtn").onclick = async () => {
     if (oauthEnabled) {
@@ -140,6 +170,10 @@ async function init() {
     .trim()
     .toLowerCase();
   devAutoLogin = Boolean(cfg.data.dev_auto_login);
+
+  if (inviteCode) {
+    setStatus("Invite link detected. Login to join the organization.");
+  }
 
   if (await trySavedSession()) {
     return;
