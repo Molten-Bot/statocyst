@@ -16,6 +16,8 @@ var (
 	ErrOrgNotFound          = errors.New("organization not found")
 	ErrOrgNameTaken         = errors.New("organization name already exists")
 	ErrHumanNotFound        = errors.New("human not found")
+	ErrHumanHandleTaken     = errors.New("human handle already exists")
+	ErrInvalidHandle        = errors.New("invalid handle")
 	ErrMembershipNotFound   = errors.New("membership not found")
 	ErrInviteNotFound       = errors.New("invite not found")
 	ErrInviteInvalid        = errors.New("invite invalid")
@@ -47,6 +49,7 @@ type MemoryStore struct {
 
 	humans         map[string]model.Human
 	humanByAuthKey map[string]string
+	humanByHandle  map[string]string
 
 	memberships         map[string]model.Membership
 	membershipByOrgUser map[string]string
@@ -84,6 +87,7 @@ func NewMemoryStore() *MemoryStore {
 		personalOrgByHuman:     make(map[string]string),
 		humans:                 make(map[string]model.Human),
 		humanByAuthKey:         make(map[string]string),
+		humanByHandle:          make(map[string]string),
 		memberships:            make(map[string]model.Membership),
 		membershipByOrgUser:    make(map[string]string),
 		invites:                make(map[string]model.Invite),
@@ -118,7 +122,14 @@ func (s *MemoryStore) UpsertHuman(provider, subject, email string, emailVerified
 			h.Email = email
 		}
 		h.EmailVerified = emailVerified
+		if h.Handle == "" {
+			h.Handle = s.claimUniqueHumanHandleLocked(normalizeHumanHandleCandidate(subject), humanID)
+		}
+		if !h.IsPublic {
+			h.IsPublic = true
+		}
 		s.humans[humanID] = h
+		s.humanByHandle[h.Handle] = h.HumanID
 		return h, nil
 	}
 
@@ -128,14 +139,46 @@ func (s *MemoryStore) UpsertHuman(provider, subject, email string, emailVerified
 	}
 	h := model.Human{
 		HumanID:       humanID,
+		Handle:        s.claimUniqueHumanHandleLocked(normalizeHumanHandleCandidate(subject), ""),
 		AuthProvider:  provider,
 		AuthSubject:   subject,
 		Email:         email,
 		EmailVerified: emailVerified,
+		IsPublic:      true,
 		CreatedAt:     now,
 	}
 	s.humans[humanID] = h
 	s.humanByAuthKey[key] = humanID
+	s.humanByHandle[h.Handle] = h.HumanID
+	return h, nil
+}
+
+func (s *MemoryStore) UpdateHumanProfile(humanID, handle string, isPublic *bool) (model.Human, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	h, ok := s.humans[humanID]
+	if !ok {
+		return model.Human{}, ErrHumanNotFound
+	}
+	if handle != "" {
+		nextHandle := normalizeHumanHandleCandidate(handle)
+		if nextHandle == "" {
+			return model.Human{}, ErrInvalidHandle
+		}
+		if ownerID, exists := s.humanByHandle[nextHandle]; exists && ownerID != humanID {
+			return model.Human{}, ErrHumanHandleTaken
+		}
+		if h.Handle != "" && h.Handle != nextHandle {
+			delete(s.humanByHandle, h.Handle)
+		}
+		h.Handle = nextHandle
+		s.humanByHandle[h.Handle] = humanID
+	}
+	if isPublic != nil {
+		h.IsPublic = *isPublic
+	}
+	s.humans[humanID] = h
 	return h, nil
 }
 
@@ -155,6 +198,7 @@ func (s *MemoryStore) CreateOrg(name string, creatorHumanID string, orgID string
 	org := model.Organization{
 		OrgID:     orgID,
 		Name:      name,
+		IsPublic:  true,
 		CreatedAt: now,
 		CreatedBy: creatorHumanID,
 	}
@@ -193,7 +237,10 @@ func (s *MemoryStore) ensurePersonalOrgLocked(humanID string, now time.Time, idF
 		}
 	}
 
-	baseName := fmt.Sprintf("Personal %s", humanID)
+	baseName := fmt.Sprintf("personal-%s", s.humans[humanID].Handle)
+	if strings.TrimSpace(baseName) == "" || baseName == "personal-" {
+		baseName = fmt.Sprintf("personal-%s", humanID)
+	}
 	name := baseName
 	for i := 2; ; i++ {
 		nameKey := normalizeOrgNameKey(name)
@@ -210,6 +257,7 @@ func (s *MemoryStore) ensurePersonalOrgLocked(humanID string, now time.Time, idF
 	org := model.Organization{
 		OrgID:     orgID,
 		Name:      name,
+		IsPublic:  true,
 		CreatedAt: now,
 		CreatedBy: humanID,
 	}
@@ -658,10 +706,12 @@ func (s *MemoryStore) ListOrgHumans(orgID, requesterHumanID string, isSuperAdmin
 		}
 		out = append(out, model.OrgHumanView{
 			HumanID:      h.HumanID,
+			Handle:       h.Handle,
 			Email:        h.Email,
 			Role:         m.Role,
 			Status:       m.Status,
 			AuthProvider: h.AuthProvider,
+			IsPublic:     h.IsPublic,
 		})
 	}
 	return out, nil
@@ -701,6 +751,7 @@ func (s *MemoryStore) RegisterAgent(orgID, agentID string, ownerHumanID *string,
 		OwnerHumanID: ownerHumanID,
 		TokenHash:    tokenHash,
 		Status:       model.StatusActive,
+		IsPublic:     true,
 		CreatedBy:    actorHumanID,
 		CreatedAt:    now,
 	}
@@ -793,6 +844,7 @@ func (s *MemoryStore) RedeemBindToken(bindTokenHash, agentID, agentTokenHash str
 		OwnerHumanID: bind.OwnerHumanID,
 		TokenHash:    agentTokenHash,
 		Status:       model.StatusActive,
+		IsPublic:     true,
 		CreatedBy:    bind.CreatedBy,
 		CreatedAt:    now,
 	}
@@ -858,6 +910,40 @@ func (s *MemoryStore) RevokeAgent(agentID, actorHumanID string, now time.Time) e
 	s.agents[agentID] = agent
 	s.appendAuditLocked(agent.OrgID, actorHumanID, "agent", "revoke", agentID, nil, now)
 	return nil
+}
+
+func (s *MemoryStore) SetOrgVisibility(orgID string, isPublic bool, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	org, ok := s.orgs[orgID]
+	if !ok {
+		return model.Organization{}, ErrOrgNotFound
+	}
+	if !isSuperAdmin && !hasRoleAtLeast(s.membershipRoleLocked(orgID, actorHumanID), model.RoleAdmin) {
+		return model.Organization{}, ErrUnauthorizedRole
+	}
+	org.IsPublic = isPublic
+	s.orgs[orgID] = org
+	s.appendAuditLocked(orgID, actorHumanID, "org", "set_visibility", orgID, map[string]any{"is_public": isPublic}, now)
+	return org, nil
+}
+
+func (s *MemoryStore) SetAgentVisibility(agentID string, isPublic bool, actorHumanID string, now time.Time) (model.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agents[agentID]
+	if !ok {
+		return model.Agent{}, ErrAgentNotFound
+	}
+	if !s.canManageAgentLocked(agent, actorHumanID) {
+		return model.Agent{}, ErrUnauthorizedRole
+	}
+	agent.IsPublic = isPublic
+	s.agents[agentID] = agent
+	s.appendAuditLocked(agent.OrgID, actorHumanID, "agent", "set_visibility", agentID, map[string]any{"is_public": isPublic}, now)
+	return agent, nil
 }
 
 func (s *MemoryStore) AgentIDForTokenHash(tokenHash string) (string, error) {
@@ -1587,8 +1673,7 @@ func normalizeOrgAccessScopes(scopes []string) []string {
 }
 
 func normalizeOrgNameKey(name string) string {
-	parts := strings.Fields(strings.TrimSpace(name))
-	return strings.ToLower(strings.Join(parts, " "))
+	return normalizeHumanHandleCandidate(name)
 }
 
 func orgAccessScopeAllowed(scopes []string, required string) bool {
@@ -1629,7 +1714,7 @@ func roleRank(role string) int {
 }
 
 func authKey(provider, subject string) string {
-	return strings.TrimSpace(strings.ToLower(provider)) + "\x00" + normalizeHumanNameKey(subject)
+	return provider + "\x00" + subject
 }
 
 func orgHumanKey(orgID, humanID string) string {
@@ -1644,13 +1729,71 @@ func humanOwnedAgentNameKey(agentID string) string {
 	return normalizeAgentNameKey(agentID)
 }
 
-func normalizeHumanNameKey(name string) string {
-	parts := strings.Fields(strings.TrimSpace(name))
-	return strings.ToLower(strings.Join(parts, " "))
-}
-
 func normalizeAgentNameKey(agentID string) string {
 	return strings.ToLower(strings.TrimSpace(agentID))
+}
+
+func normalizeHumanHandleCandidate(input string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(input))
+	if trimmed == "" {
+		return ""
+	}
+	var b strings.Builder
+	prevSep := false
+	for _, r := range trimmed {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevSep = false
+			continue
+		}
+		switch r {
+		case '-', '_', '.':
+			if b.Len() == 0 || prevSep {
+				continue
+			}
+			b.WriteRune(r)
+			prevSep = true
+		default:
+			if b.Len() == 0 || prevSep {
+				continue
+			}
+			b.WriteRune('-')
+			prevSep = true
+		}
+	}
+	out := strings.Trim(b.String(), "._-")
+	if len(out) > 64 {
+		out = strings.Trim(out[:64], "._-")
+	}
+	return out
+}
+
+func (s *MemoryStore) claimUniqueHumanHandleLocked(base string, humanID string) string {
+	candidate := normalizeHumanHandleCandidate(base)
+	if candidate == "" {
+		candidate = "human"
+	}
+	if existingID, exists := s.humanByHandle[candidate]; !exists || existingID == humanID {
+		return candidate
+	}
+	for i := 2; ; i++ {
+		suffix := fmt.Sprintf("-%d", i)
+		prefixMax := 64 - len(suffix)
+		if prefixMax < 1 {
+			prefixMax = 1
+		}
+		prefix := candidate
+		if len(prefix) > prefixMax {
+			prefix = strings.Trim(prefix[:prefixMax], "._-")
+			if prefix == "" {
+				prefix = "human"
+			}
+		}
+		next := prefix + suffix
+		if existingID, exists := s.humanByHandle[next]; !exists || existingID == humanID {
+			return next
+		}
+	}
 }
 
 func canonicalPair(a, b string) (string, string) {

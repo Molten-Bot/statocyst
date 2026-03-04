@@ -21,16 +21,19 @@ const (
 type Organization struct {
 	OrgID     string    `json:"org_id"`
 	Name      string    `json:"name"`
+	IsPublic  bool      `json:"is_public"`
 	CreatedAt time.Time `json:"created_at"`
 	CreatedBy string    `json:"created_by"`
 }
 
 type Human struct {
 	HumanID       string    `json:"human_id"`
+	Handle        string    `json:"handle"`
 	AuthProvider  string    `json:"auth_provider"`
 	AuthSubject   string    `json:"auth_subject"`
 	Email         string    `json:"email"`
 	EmailVerified bool      `json:"email_verified"`
+	IsPublic      bool      `json:"is_public"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -63,6 +66,7 @@ type Agent struct {
 	OwnerHumanID *string    `json:"owner_human_id,omitempty"`
 	TokenHash    string     `json:"-"`
 	Status       string     `json:"status"`
+	IsPublic     bool       `json:"is_public"`
 	CreatedBy    string     `json:"created_by"`
 	CreatedAt    time.Time  `json:"created_at"`
 	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
@@ -106,10 +110,12 @@ type Message struct {
 
 type OrgHumanView struct {
 	HumanID      string `json:"human_id"`
+	Handle       string `json:"handle"`
 	Email        string `json:"email"`
 	Role         string `json:"role"`
 	Status       string `json:"status"`
 	AuthProvider string `json:"auth_provider"`
+	IsPublic     bool   `json:"is_public"`
 }
 
 type OrgStats struct {

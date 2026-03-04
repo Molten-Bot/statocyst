@@ -22,6 +22,7 @@ const (
 )
 
 var agentIDRegex = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+var handleRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 type Handler struct {
 	store             *store.MemoryStore
@@ -139,6 +140,45 @@ func decodeJSON(r *http.Request, out any) error {
 
 func validateAgentID(agentID string) bool {
 	return agentIDRegex.MatchString(agentID)
+}
+
+func validateHandle(handle string) bool {
+	return handleRegex.MatchString(handle)
+}
+
+func normalizeHandle(raw string) string {
+	in := strings.TrimSpace(strings.ToLower(raw))
+	if in == "" {
+		return ""
+	}
+	var b strings.Builder
+	prevSep := false
+	for _, r := range in {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevSep = false
+			continue
+		}
+		switch r {
+		case '-', '_', '.':
+			if b.Len() == 0 || prevSep {
+				continue
+			}
+			b.WriteRune(r)
+			prevSep = true
+		default:
+			if b.Len() == 0 || prevSep {
+				continue
+			}
+			b.WriteRune('-')
+			prevSep = true
+		}
+	}
+	out := strings.Trim(b.String(), "._-")
+	if len(out) > 64 {
+		out = strings.Trim(out[:64], "._-")
+	}
+	return out
 }
 
 func parsePullTimeout(r *http.Request) (time.Duration, error) {
