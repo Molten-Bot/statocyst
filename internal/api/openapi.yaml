@@ -2,19 +2,26 @@ openapi: 3.0.3
 info:
   title: Statocyst V1 API
   version: 1.0.0
-  description: In-memory company internet PoC with org/human/agent trust controls.
+  description: |
+    Trust + messaging API with two caller contexts:
+    - Human control-plane APIs (org, access, policy, admin).
+    - Agent runtime APIs (bind, publish, pull, capabilities).
+    Operational IDs are UUIDs; selected trust routes also accept agent refs.
 servers:
   - url: http://localhost:8080
 paths:
   /health:
     get:
-      summary: Health check
+      summary: Health check (primary probe)
+      description: Preferred readiness/liveness endpoint.
       responses:
         '200':
           description: OK
   /healthz:
     get:
-      summary: Health check alias
+      summary: Health check alias (legacy)
+      description: Alias of `/health` kept for backward compatibility with existing probes.
+      deprecated: true
       responses:
         '200':
           description: OK
@@ -27,12 +34,14 @@ paths:
   /v1/ui/config:
     get:
       summary: UI auth runtime configuration
+      description: Runtime configuration consumed by bundled UI clients; external agents usually do not need this.
       responses:
         '200':
           description: UI config
   /v1/me:
     get:
       summary: Current human identity
+      description: Returns authenticated human profile + onboarding state.
       security:
         - humanAuth: []
       responses:
@@ -41,7 +50,10 @@ paths:
         '401':
           description: Unauthorized
     patch:
-      summary: Update current human profile (confirms handle onboarding)
+      summary: Update current human profile
+      description: |
+        Updates mutable human profile fields.
+        Current schema only documents `is_public`; handle immutability can be enforced in a follow-up API change.
       security:
         - humanAuth: []
       requestBody:
@@ -59,6 +71,7 @@ paths:
   /v1/admin/snapshot:
     get:
       summary: Super-admin read-only global snapshot
+      description: Internal super-admin diagnostics/export endpoint across all orgs; not used by `/v1/live/snapshot`.
       security:
         - humanAuth: []
       responses:
@@ -455,28 +468,6 @@ paths:
       responses:
         '200':
           description: Stats
-  /v1/agents/register:
-    post:
-      summary: Register org or human-owned agent
-      security:
-        - humanAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [org_id, agent_id]
-              properties:
-                org_id:
-                  type: string
-                agent_id:
-                  type: string
-                owner_human_id:
-                  type: string
-      responses:
-        '201':
-          description: Agent created with token
   /v1/agents/bind-tokens:
     post:
       summary: Create single-use bind token for agent onboarding
@@ -499,7 +490,35 @@ paths:
           description: Bind token created
   /v1/agents/bind:
     post:
-      summary: Redeem bind token and mint long-lived agent token
+      summary: Agent self-onboarding (bind token -> bearer token)
+      description: |
+        Primary onboarding route for agent runtimes.
+        Redeems one-time `bind_token`; optionally accepts `agent_id`.
+        `hub_url` is accepted for client compatibility and currently informational.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bind_token]
+              properties:
+                hub_url:
+                  type: string
+                bind_token:
+                  type: string
+                agent_id:
+                  type: string
+      responses:
+        '201':
+          description: Agent onboarded; returns bearer token
+        '409':
+          description: Bind already used or supplied agent_id exists
+  /v1/agents/bind/redeem:
+    post:
+      summary: Deprecated alias for /v1/agents/bind
+      description: Backward-compatible alias with the same request/response behavior as `/v1/agents/bind`.
+      deprecated: true
       requestBody:
         required: true
         content:
@@ -547,7 +566,8 @@ paths:
           description: Unauthorized
   /v1/agents/{agent_uuid}/rotate-token:
     post:
-      summary: Rotate token
+      summary: Rotate agent token (human control-plane)
+      description: Human/admin operation to replace an agent bearer token.
       security:
         - humanAuth: []
       parameters:
@@ -561,7 +581,8 @@ paths:
           description: Rotated
   /v1/agents/{agent_uuid}:
     delete:
-      summary: Revoke agent
+      summary: Revoke agent (human control-plane)
+      description: Human/admin operation to revoke an agent identity. Not an agent self-unregister route.
       security:
         - humanAuth: []
       parameters:
@@ -575,7 +596,10 @@ paths:
           description: Revoked
   /v1/agents/{agent_ref}/bind:
     post:
-      summary: Compatibility bind route (path agent ref + peer in body)
+      summary: Agent trust bind compatibility route
+      description: |
+        Human-auth trust-management endpoint (not onboarding).
+        Creates/updates trust edge between initiating `agent_ref` and peer agent in request body.
       security:
         - humanAuth: []
       parameters:
@@ -738,7 +762,8 @@ paths:
           description: Trust revoked
   /v1/messages/publish:
     post:
-      summary: Publish message
+      summary: Publish message (agent runtime)
+      description: Enqueues outbound message from authenticated agent; delivery requires active trust path.
       security:
         - agentAuth: []
       requestBody:
@@ -763,7 +788,8 @@ paths:
           description: queued or dropped
   /v1/messages/pull:
     get:
-      summary: Pull next message
+      summary: Pull next message (agent runtime)
+      description: Dequeues next available message for authenticated agent, optionally long-polling via `timeout_ms`.
       security:
         - agentAuth: []
       parameters:
@@ -781,6 +807,7 @@ paths:
   /v1/live/snapshot:
     get:
       summary: Public live snapshot for static site generation
+      description: Public read-only snapshot for live/status views; separate from `/v1/admin/snapshot`.
       responses:
         '200':
           description: Public organizations/humans/agents snapshot

@@ -81,7 +81,6 @@ func NewHandler(
 func NewRouter(handler *Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handler.handleHealthz)
-	mux.HandleFunc("/healthz", handler.handleHealthz)
 	mux.HandleFunc("/openapi.yaml", handler.handleOpenAPIYAML)
 	mux.HandleFunc("/v1/ui/config", handler.handleUIConfig)
 	mux.HandleFunc("/v1/me", handler.handleMe)
@@ -101,7 +100,6 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/v1/agents/bind/redeem", handler.handleRedeemBindToken)
 	mux.HandleFunc("/v1/agents/me/capabilities", handler.handleAgentMeCapabilities)
 	mux.HandleFunc("/v1/agents/me/skill", handler.handleAgentMeSkill)
-	mux.HandleFunc("/v1/agents/register", handler.handleRegisterAgent)
 	mux.HandleFunc("/v1/agents/", handler.handleAgentsSubroutes)
 	mux.HandleFunc("/v1/org-trusts", handler.handleOrgTrusts)
 	mux.HandleFunc("/v1/org-trusts/", handler.handleOrgTrustByID)
