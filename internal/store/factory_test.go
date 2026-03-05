@@ -99,6 +99,38 @@ func TestNewStoresFromEnv_S3StateConfigured(t *testing.T) {
 	}
 }
 
+func TestNewStoresFromEnv_S3StateAuthRequiredEndpointFailsStartup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "state-bucket" && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidArgument</Code><Message>Authorization</Message></Error>`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	t.Setenv("STATOCYST_STATE_BACKEND", "s3")
+	t.Setenv("STATOCYST_QUEUE_BACKEND", "memory")
+	t.Setenv("STATOCYST_STATE_S3_ENDPOINT", server.URL)
+	t.Setenv("STATOCYST_STATE_S3_BUCKET", "state-bucket")
+	t.Setenv("STATOCYST_STATE_S3_PREFIX", "statocyst-state")
+	t.Setenv("STATOCYST_STATE_S3_PATH_STYLE", "true")
+
+	_, _, err := NewStoresFromEnv()
+	if err == nil {
+		t.Fatalf("expected startup to fail when s3 state endpoint requires authorization")
+	}
+	if !strings.Contains(err.Error(), "list objects status 400") {
+		t.Fatalf("expected list objects status error, got %v", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "authorization") {
+		t.Fatalf("expected authorization error context, got %v", err)
+	}
+}
+
 func newFakeS3StoreServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	type obj struct {
