@@ -51,8 +51,6 @@ paths:
             schema:
               type: object
               properties:
-                handle:
-                  type: string
                 is_public:
                   type: boolean
       responses:
@@ -521,28 +519,6 @@ paths:
           description: Agent onboarded; returns bearer token
         '409':
           description: Bind already used or supplied agent_id exists
-  /v1/agents/bind/redeem:
-    post:
-      summary: Deprecated alias for /v1/agents/bind
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [bind_token]
-              properties:
-                hub_url:
-                  type: string
-                bind_token:
-                  type: string
-                agent_id:
-                  type: string
-      responses:
-        '201':
-          description: Agent onboarded; returns bearer token
-        '409':
-          description: Bind already used or agent id exists
   /v1/agents/me/capabilities:
     get:
       summary: Agent control-plane capabilities and current talk graph
