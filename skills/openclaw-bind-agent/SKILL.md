@@ -7,19 +7,19 @@ description: Redeem a single-use Statocyst bind token so an OpenClaw agent self-
 
 ## Workflow
 
-1. Prefer minimal inputs: `agent_id` and `bind_token`.
+1. Prefer minimal inputs: `bind_token` (optionally `agent_id`).
 2. Default `base_url` from `STATOCYST_BASE_URL` or fallback `http://statocyst:8080`.
-3. Default token path to `/tmp/<agent_id>.token`.
-4. Redeem bind token with `POST /v1/agents/bind/redeem`.
+3. Default token path to `/tmp/agent.token` (or `/tmp/<agent_id>.token` when `agent_id` is provided).
+4. Redeem bind token with `POST /v1/agents/bind`.
 5. Capture the returned long-lived agent token.
 6. Stop immediately on non-2xx responses and surface status/body excerpt.
 
 ## Required Inputs (Minimal)
 
-- `agent_id`
 - `bind_token`
 
 Optional:
+- `agent_id`
 - `base_url`
 - `token_output_file`
 
@@ -28,13 +28,13 @@ Optional:
 Use this short form in agent chat:
 
 ```text
-Use $openclaw-bind-agent to redeem bind_token=<secret> as agent_id=crab.
+Use $openclaw-bind-agent to redeem bind_token=<secret>.
 ```
 
 If needed, include explicit URL:
 
 ```text
-Use $openclaw-bind-agent with base_url=http://statocyst:8080, agent_id=crab, bind_token=<secret>.
+Use $openclaw-bind-agent with base_url=http://statocyst:8080, bind_token=<secret>.
 ```
 
 ## Script
@@ -42,7 +42,7 @@ Use $openclaw-bind-agent with base_url=http://statocyst:8080, agent_id=crab, bin
 Preferred short command:
 
 ```bash
-scripts/bind_agent.sh <agent_id> <bind_token> [token_output_file]
+scripts/bind_agent.sh <bind_token> [token_output_file]
 ```
 
 Backward-compatible command:

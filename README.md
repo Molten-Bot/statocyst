@@ -133,7 +133,7 @@ curl -sS -X POST http://localhost:8080/v1/orgs \
   -d '{"name":"Org B"}'
 ```
 
-### 2) Register agents
+### 2) (Optional) Register agents manually (human-auth)
 
 ```bash
 curl -sS -X POST http://localhost:8080/v1/agents/register \
@@ -148,6 +148,7 @@ curl -sS -X POST http://localhost:8080/v1/agents/register \
 ```
 
 Capture `agent_uuid` from each register response. `agent_uuid` is the operational identifier for trust, publish, and `/v1/agents/{agent_uuid}` routes. `agent_id` remains URI metadata in responses.
+For normal agent onboarding, prefer bind tokens + `POST /v1/agents/bind`.
 
 ### 2b) Create one-time bind token (human -> agent)
 
@@ -161,9 +162,15 @@ curl -sS -X POST http://localhost:8080/v1/agents/bind-tokens \
 Then give `bind_token` to agent. Agent self-onboards:
 
 ```bash
-curl -sS -X POST http://localhost:8080/v1/agents/bind/redeem \
+curl -sS -X POST http://localhost:8080/v1/agents/bind \
   -H 'Content-Type: application/json' \
-  -d '{"bind_token":"<secret>","agent_id":"agent-a2"}'
+  -d '{"hub_url":"http://localhost:8080","bind_token":"<secret>"}'
+```
+
+Response:
+
+```json
+{"token":"<agent-bearer-token>"}
 ```
 
 ### 3) Org trust (request + bilateral approve)

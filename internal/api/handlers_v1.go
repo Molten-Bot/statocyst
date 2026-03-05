@@ -40,7 +40,8 @@ type createBindTokenRequest struct {
 
 type redeemBindTokenRequest struct {
 	BindToken string `json:"bind_token"`
-	AgentID   string `json:"agent_id"`
+	AgentID   string `json:"agent_id,omitempty"`
+	HubURL    string `json:"hub_url,omitempty"`
 }
 
 type registerAgentRequest struct {
@@ -1480,7 +1481,7 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_bind_token", "bind_token is required")
 		return
 	}
-	if !validateAgentID(req.AgentID) {
+	if req.AgentID != "" && !validateAgentID(req.AgentID) {
 		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
 		return
 	}
@@ -1497,8 +1498,29 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	agent, err := h.control.RedeemBindToken(bindTokenHash, req.AgentID, auth.HashToken(agentToken), h.now().UTC())
-	if err != nil {
+	agentID := req.AgentID
+	for attempt := 0; attempt < 8; attempt++ {
+		if agentID == "" {
+			var generated string
+			generated, err = h.generateDefaultAgentID()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate agent_id")
+				return
+			}
+			agentID = generated
+		}
+
+		_, err = h.control.RedeemBindToken(bindTokenHash, agentID, auth.HashToken(agentToken), h.now().UTC())
+		if err == nil {
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"token": agentToken,
+			})
+			return
+		}
+		if errors.Is(err, store.ErrAgentExists) && req.AgentID == "" {
+			agentID = ""
+			continue
+		}
 		switch {
 		case errors.Is(err, store.ErrBindNotFound):
 			writeError(w, http.StatusNotFound, "bind_not_found", "bind token not found")
@@ -1517,27 +1539,26 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
-	cp, err := h.buildAgentControlPlane(r, agent)
+	writeError(w, http.StatusConflict, "agent_id_generation_failed", "failed to allocate a unique agent_id")
+}
+
+func (h *Handler) generateDefaultAgentID() (string, error) {
+	id, err := h.idFactory()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to build agent control plane")
-		return
+		return "", err
 	}
-	skill := buildAgentSkillMarkdown(cp)
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"status":         "ok",
-		"agent_uuid":     agent.AgentUUID,
-		"agent_id":       agent.AgentID,
-		"handle":         agent.Handle,
-		"org_id":         agent.OrgID,
-		"owner_human_id": agent.OwnerHumanID,
-		"token":          agentToken,
-		"control_plane":  h.agentControlPlanePayload(cp),
-		"skill": map[string]any{
-			"schema_version": "1",
-			"format":         "markdown",
-			"content":        skill,
-		},
-	})
+	clean := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(id), "-", ""))
+	if clean == "" {
+		return "", errors.New("empty generated id")
+	}
+	if len(clean) > 12 {
+		clean = clean[:12]
+	}
+	agentID := "agent-" + clean
+	if !validateAgentID(agentID) {
+		return "", errors.New("invalid generated agent_id")
+	}
+	return agentID, nil
 }
 
 func (h *Handler) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {

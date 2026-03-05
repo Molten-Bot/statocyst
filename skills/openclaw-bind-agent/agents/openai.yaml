@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenClaw Bind Agent"
   short_description: "Redeem a one-time bind token and store long-lived agent token"
-  default_prompt: "Use $openclaw-bind-agent to redeem bind_token=<secret> as agent_id=crab and write token_output_file=/tmp/crab.token."
+  default_prompt: "Use $openclaw-bind-agent to redeem bind_token=<secret> and write token_output_file=/tmp/agent.token."

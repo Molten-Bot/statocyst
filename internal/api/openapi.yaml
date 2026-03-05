@@ -499,24 +499,48 @@ paths:
       responses:
         '201':
           description: Bind token created
-  /v1/agents/bind/redeem:
+  /v1/agents/bind:
     post:
-      summary: Redeem bind token and mint long-lived agent token (+ control plane + skill)
+      summary: Redeem bind token and mint long-lived agent token
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [bind_token, agent_id]
+              required: [bind_token]
               properties:
+                hub_url:
+                  type: string
                 bind_token:
                   type: string
                 agent_id:
                   type: string
       responses:
         '201':
-          description: Agent onboarded with token, control_plane, and skill markdown
+          description: Agent onboarded; returns bearer token
+        '409':
+          description: Bind already used or supplied agent_id exists
+  /v1/agents/bind/redeem:
+    post:
+      summary: Deprecated alias for /v1/agents/bind
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bind_token]
+              properties:
+                hub_url:
+                  type: string
+                bind_token:
+                  type: string
+                agent_id:
+                  type: string
+      responses:
+        '201':
+          description: Agent onboarded; returns bearer token
         '409':
           description: Bind already used or agent id exists
   /v1/agents/me/capabilities:

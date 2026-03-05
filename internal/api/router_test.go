@@ -566,12 +566,17 @@ func TestMyAgentBindTokenRedeemWithAgentChosenName(t *testing.T) {
 		t.Fatalf("bind_token missing")
 	}
 
-	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind/redeem", map[string]string{
+	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]string{
+		"hub_url":    "https://hub.molten-qa.site",
 		"bind_token": bindToken,
 		"agent_id":   "alice-agent-picked-name",
 	}, nil)
 	if redeemResp.Code != http.StatusCreated {
 		t.Fatalf("redeem bind token failed: %d %s", redeemResp.Code, redeemResp.Body.String())
+	}
+	redeemPayload := decodeJSONMap(t, redeemResp.Body.Bytes())
+	if redeemPayload["token"] == "" {
+		t.Fatalf("expected bind response token")
 	}
 
 	listResp := doJSONRequest(t, router, http.MethodGet, "/v1/me/agents", nil, humanHeaders("alice", "alice@a.test"))
@@ -740,42 +745,29 @@ func TestBindTokenRedeemSingleUse(t *testing.T) {
 		t.Fatalf("bind_token missing in create response")
 	}
 
-	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind/redeem", map[string]string{
+	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]string{
+		"hub_url":    "https://hub.molten-qa.site",
 		"bind_token": bindToken,
-		"agent_id":   "bound-agent",
 	}, nil)
 	if redeemResp.Code != http.StatusCreated {
 		t.Fatalf("redeem bind token failed: %d %s", redeemResp.Code, redeemResp.Body.String())
 	}
 	redeemPayload := decodeJSONMap(t, redeemResp.Body.Bytes())
-	if redeemPayload["status"] != "ok" {
-		t.Fatalf("expected status ok, got %v", redeemPayload["status"])
-	}
-	controlPlane, ok := redeemPayload["control_plane"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected control_plane in bind redeem response, got %v", redeemPayload["control_plane"])
-	}
-	if controlPlane["api_base"] == "" {
-		t.Fatalf("expected control_plane.api_base")
-	}
-	if _, ok := controlPlane["can_talk_to"].([]any); !ok {
-		t.Fatalf("expected control_plane.can_talk_to array, got %T", controlPlane["can_talk_to"])
-	}
-	skill, ok := redeemPayload["skill"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected skill in bind redeem response, got %v", redeemPayload["skill"])
-	}
-	if skill["format"] != "markdown" {
-		t.Fatalf("expected markdown skill format, got %v", skill["format"])
-	}
-	content, _ := skill["content"].(string)
-	if !strings.Contains(content, "SKILL: Statocyst Agent Control Plane") {
-		t.Fatalf("expected skill markdown header, got %q", content)
+	token, _ := redeemPayload["token"].(string)
+	if token == "" {
+		t.Fatalf("expected token in bind response")
 	}
 
-	redeemAgain := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind/redeem", map[string]string{
+	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if capsResp.Code != http.StatusOK {
+		t.Fatalf("expected capabilities call with issued token to succeed: %d %s", capsResp.Code, capsResp.Body.String())
+	}
+
+	redeemAgain := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]string{
+		"hub_url":    "https://hub.molten-qa.site",
 		"bind_token": bindToken,
-		"agent_id":   "bound-agent-2",
 	}, nil)
 	if redeemAgain.Code != http.StatusConflict {
 		t.Fatalf("expected second redeem to fail with 409, got %d %s", redeemAgain.Code, redeemAgain.Body.String())
@@ -1004,9 +996,9 @@ func TestBindTokenExpires(t *testing.T) {
 	}
 
 	now = now.Add(16 * time.Minute)
-	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind/redeem", map[string]string{
+	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]string{
+		"hub_url":    "https://hub.molten-qa.site",
 		"bind_token": bindToken,
-		"agent_id":   "expired-agent",
 	}, nil)
 	if redeemResp.Code != http.StatusBadRequest {
 		t.Fatalf("expected expired bind token 400, got %d %s", redeemResp.Code, redeemResp.Body.String())
