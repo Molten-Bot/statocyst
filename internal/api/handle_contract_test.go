@@ -199,3 +199,101 @@ func TestAgentTrustRequiresAgentUUIDRefs(t *testing.T) {
 		t.Fatalf("expected invalid_agent_uuid error")
 	}
 }
+
+func TestAgentTrustAcceptsAgentIDRefs(t *testing.T) {
+	router := newTestRouter()
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	orgA := createOrg(t, router, "alice", "alice@a.test", "Trust IDs")
+
+	_, _, initiatorID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "initiator", aliceHumanID)
+	_, _, peerID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "peer", aliceHumanID)
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts", map[string]any{
+		"org_id":        orgA,
+		"agent_id":      initiatorID,
+		"peer_agent_id": peerID,
+	}, humanHeaders("alice", "alice@a.test"))
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected agent-trust create with agent_id refs to return 201, got %d %s", resp.Code, resp.Body.String())
+	}
+	if decodeJSONMap(t, resp.Body.Bytes())["trust"] == nil {
+		t.Fatalf("expected trust payload")
+	}
+}
+
+func TestAgentBindPathSupportsAgentRef(t *testing.T) {
+	router := newTestRouter()
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	orgA := createOrg(t, router, "alice", "alice@a.test", "Trust Path")
+
+	_, _, initiatorID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "initiator", aliceHumanID)
+	_, _, peerID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "peer", aliceHumanID)
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/"+initiatorID+"/bind", map[string]any{
+		"org_id":        orgA,
+		"peer_agent_id": peerID,
+	}, humanHeaders("alice", "alice@a.test"))
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected /v1/agents/{agent_ref}/bind to return 201, got %d %s", resp.Code, resp.Body.String())
+	}
+	if decodeJSONMap(t, resp.Body.Bytes())["trust"] == nil {
+		t.Fatalf("expected trust payload from bind route")
+	}
+}
+
+func TestAgentTrustRejectsMismatchedAgentUUIDAndAgentID(t *testing.T) {
+	router := newTestRouter()
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	orgA := createOrg(t, router, "alice", "alice@a.test", "Trust Mismatch")
+
+	_, initiatorUUID, initiatorID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "initiator", aliceHumanID)
+	_, peerUUID, peerID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "peer", aliceHumanID)
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts", map[string]any{
+		"org_id":          orgA,
+		"agent_uuid":      initiatorUUID,
+		"agent_id":        peerID,
+		"peer_agent_uuid": peerUUID,
+		"peer_agent_id":   peerID,
+	}, humanHeaders("alice", "alice@a.test"))
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected mismatched uuid/id to return 400, got %d %s", resp.Code, resp.Body.String())
+	}
+	if decodeJSONMap(t, resp.Body.Bytes())["error"] != "agent_ref_mismatch" {
+		t.Fatalf("expected agent_ref_mismatch error")
+	}
+
+	checkAligned := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts", map[string]any{
+		"org_id":          orgA,
+		"agent_uuid":      initiatorUUID,
+		"agent_id":        initiatorID,
+		"peer_agent_uuid": peerUUID,
+		"peer_agent_id":   peerID,
+	}, humanHeaders("alice", "alice@a.test"))
+	if checkAligned.Code != http.StatusCreated {
+		t.Fatalf("expected aligned uuid/id refs to succeed, got %d %s", checkAligned.Code, checkAligned.Body.String())
+	}
+}
+
+func TestAgentTrustRejectsAmbiguousAgentID(t *testing.T) {
+	router := newTestRouter()
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	orgA := createOrg(t, router, "alice", "alice@a.test", "Trust Ambiguous A")
+	orgB := createOrg(t, router, "bob", "bob@b.test", "Trust Ambiguous B")
+
+	_, _, _, _ = registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "shared", aliceHumanID)
+	_, _, peerID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "peer", aliceHumanID)
+	_, _, _, _ = registerAgentWithDetails(t, router, "bob", "bob@b.test", orgB, "shared", "")
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts", map[string]any{
+		"org_id":        orgA,
+		"agent_id":      "shared",
+		"peer_agent_id": peerID,
+	}, humanHeaders("alice", "alice@a.test"))
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("expected ambiguous agent_id to return 409, got %d %s", resp.Code, resp.Body.String())
+	}
+	if decodeJSONMap(t, resp.Body.Bytes())["error"] != "ambiguous_agent_id" {
+		t.Fatalf("expected ambiguous_agent_id error")
+	}
+}

@@ -62,6 +62,8 @@ type trustAgentRequest struct {
 	OrgID         string `json:"org_id"`
 	AgentUUID     string `json:"agent_uuid"`
 	PeerAgentUUID string `json:"peer_agent_uuid"`
+	AgentID       string `json:"agent_id,omitempty"`
+	PeerAgentID   string `json:"peer_agent_id,omitempty"`
 }
 
 type createOrgAccessKeyRequest struct {
@@ -383,43 +385,132 @@ func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 			return
 		}
-		req.OrgID = strings.TrimSpace(req.OrgID)
-		req.AgentUUID = normalizeUUID(req.AgentUUID)
-		req.PeerAgentUUID = normalizeUUID(req.PeerAgentUUID)
-		if !validateUUID(req.AgentUUID) || !validateUUID(req.PeerAgentUUID) {
-			writeError(w, http.StatusBadRequest, "invalid_agent_uuid", "agent_uuid and peer_agent_uuid must be valid UUIDs")
-			return
-		}
-
-		edgeID, err := h.idFactory()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate edge_id")
-			return
-		}
-		edge, created, err := h.control.CreateOrJoinAgentTrust(req.OrgID, req.AgentUUID, req.PeerAgentUUID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
-		if err != nil {
-			switch {
-			case errors.Is(err, store.ErrAgentNotFound):
-				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid or peer_agent_uuid is not registered")
-			case errors.Is(err, store.ErrUnauthorizedRole):
-				writeError(w, http.StatusForbidden, "forbidden", "owner/admin required for initiating agent")
-			case errors.Is(err, store.ErrSelfTrust):
-				writeError(w, http.StatusBadRequest, "invalid_peer_agent_uuid", "peer_agent_uuid cannot equal agent_uuid")
-			default:
-				writeError(w, http.StatusInternalServerError, "store_error", "failed to create agent trust")
-			}
-			return
-		}
-		status := http.StatusOK
-		if created {
-			status = http.StatusCreated
-		}
-		writeJSON(w, status, map[string]any{"trust": edge, "created": created})
+		h.handleAgentTrustCreate(w, actor, req, "owner/admin required for initiating agent")
 		return
 	default:
 		writeMethodNotAllowed(w)
 		return
 	}
+}
+
+type handlerError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (h *Handler) handleAgentTrustCreate(w http.ResponseWriter, actor humanActor, req trustAgentRequest, unauthorizedMessage string) {
+	req.OrgID = strings.TrimSpace(req.OrgID)
+	agentUUID, herr := h.resolveTrustAgentUUID(req.AgentUUID, req.AgentID, "agent_uuid", "agent_id")
+	if herr != nil {
+		writeError(w, herr.status, herr.code, herr.message)
+		return
+	}
+	peerAgentUUID, herr := h.resolveTrustAgentUUID(req.PeerAgentUUID, req.PeerAgentID, "peer_agent_uuid", "peer_agent_id")
+	if herr != nil {
+		writeError(w, herr.status, herr.code, herr.message)
+		return
+	}
+
+	edgeID, err := h.idFactory()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate edge_id")
+		return
+	}
+	edge, created, err := h.control.CreateOrJoinAgentTrust(req.OrgID, agentUUID, peerAgentUUID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrAgentNotFound):
+			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid or peer_agent_uuid is not registered")
+		case errors.Is(err, store.ErrUnauthorizedRole):
+			writeError(w, http.StatusForbidden, "forbidden", unauthorizedMessage)
+		case errors.Is(err, store.ErrSelfTrust):
+			writeError(w, http.StatusBadRequest, "invalid_peer_agent_uuid", "peer_agent_uuid cannot equal agent_uuid")
+		default:
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to create agent trust")
+		}
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, map[string]any{"trust": edge, "created": created})
+}
+
+func (h *Handler) resolveTrustAgentUUID(rawUUID, rawID, uuidField, idField string) (string, *handlerError) {
+	uuidValue := normalizeUUID(rawUUID)
+	idValue := strings.TrimSpace(rawID)
+
+	if uuidValue != "" && !validateUUID(uuidValue) && idValue == "" {
+		return "", &handlerError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_agent_uuid",
+			message: fmt.Sprintf("%s must be a valid UUID", uuidField),
+		}
+	}
+
+	if idValue == "" {
+		if uuidValue == "" {
+			return "", &handlerError{
+				status:  http.StatusBadRequest,
+				code:    "invalid_agent_uuid",
+				message: "agent_uuid and peer_agent_uuid must be valid UUIDs",
+			}
+		}
+		return uuidValue, nil
+	}
+
+	if uuidFromID := normalizeUUID(idValue); validateUUID(uuidFromID) {
+		if uuidValue != "" && validateUUID(uuidValue) && uuidValue != uuidFromID {
+			return "", &handlerError{
+				status:  http.StatusBadRequest,
+				code:    "agent_ref_mismatch",
+				message: fmt.Sprintf("%s and %s refer to different agents", uuidField, idField),
+			}
+		}
+		return uuidFromID, nil
+	}
+
+	idRef := normalizeAgentRef(idValue)
+	if !validateAgentRef(idRef) {
+		return "", &handlerError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_agent_id",
+			message: fmt.Sprintf("%s must be a valid agent reference", idField),
+		}
+	}
+	resolvedUUID, err := h.control.ResolveAgentUUID(idRef)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrAgentNotFound):
+			return "", &handlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_agent",
+				message: fmt.Sprintf("%s is not registered", idField),
+			}
+		case errors.Is(err, store.ErrAgentAmbiguous):
+			return "", &handlerError{
+				status:  http.StatusConflict,
+				code:    "ambiguous_agent_id",
+				message: fmt.Sprintf("%s is ambiguous; provide %s", idField, uuidField),
+			}
+		default:
+			return "", &handlerError{
+				status:  http.StatusInternalServerError,
+				code:    "store_error",
+				message: "failed to resolve agent reference",
+			}
+		}
+	}
+	if uuidValue != "" && validateUUID(uuidValue) && uuidValue != resolvedUUID {
+		return "", &handlerError{
+			status:  http.StatusBadRequest,
+			code:    "agent_ref_mismatch",
+			message: fmt.Sprintf("%s and %s refer to different agents", uuidField, idField),
+		}
+	}
+	return resolvedUUID, nil
 }
 
 func normalizeOptionalHumanID(value *string) *string {
@@ -1534,19 +1625,24 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
-	agentUUID := tail
+	agentRef := tail
 	action := ""
 	if r.Method == http.MethodPost && strings.HasSuffix(tail, "/rotate-token") {
 		action = "rotate-token"
-		agentUUID = strings.Trim(strings.TrimSuffix(tail, "/rotate-token"), "/")
+		agentRef = strings.Trim(strings.TrimSuffix(tail, "/rotate-token"), "/")
 	}
-	agentUUID = normalizeUUID(agentUUID)
-	if !validateUUID(agentUUID) {
-		writeError(w, http.StatusBadRequest, "invalid_agent_uuid", "agent_uuid must be a valid UUID")
+	if r.Method == http.MethodPost && strings.HasSuffix(tail, "/bind") {
+		action = "bind"
+		agentRef = strings.Trim(strings.TrimSuffix(tail, "/bind"), "/")
+	}
+	agentRef = strings.TrimSpace(agentRef)
+	if agentRef == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
-	if agentUUID == "" {
-		writeError(w, http.StatusNotFound, "not_found", "route not found")
+	agentUUID := normalizeUUID(agentRef)
+	if action != "bind" && !validateUUID(agentUUID) {
+		writeError(w, http.StatusBadRequest, "invalid_agent_uuid", "agent_uuid must be a valid UUID")
 		return
 	}
 
@@ -1556,6 +1652,21 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if h.requireHandleConfirmedForWrite(w, actor) {
+		return
+	}
+
+	if action == "bind" {
+		var req trustAgentRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+			return
+		}
+		if validateUUID(normalizeUUID(agentRef)) {
+			req.AgentUUID = agentRef
+		} else {
+			req.AgentID = agentRef
+		}
+		h.handleAgentTrustCreate(w, actor, req, "owner/admin required for initiating agent")
 		return
 	}
 
@@ -1764,37 +1875,7 @@ func (h *Handler) handleAgentTrusts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 		return
 	}
-	req.OrgID = strings.TrimSpace(req.OrgID)
-	req.AgentUUID = normalizeUUID(req.AgentUUID)
-	req.PeerAgentUUID = normalizeUUID(req.PeerAgentUUID)
-	if !validateUUID(req.AgentUUID) || !validateUUID(req.PeerAgentUUID) {
-		writeError(w, http.StatusBadRequest, "invalid_agent_uuid", "agent_uuid and peer_agent_uuid must be valid UUIDs")
-		return
-	}
-	edgeID, err := h.idFactory()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate edge_id")
-		return
-	}
-	edge, created, err := h.control.CreateOrJoinAgentTrust(req.OrgID, req.AgentUUID, req.PeerAgentUUID, actor.Human.HumanID, edgeID, h.now().UTC(), actor.IsSuperAdmin)
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrAgentNotFound):
-			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid or peer_agent_uuid is not registered")
-		case errors.Is(err, store.ErrUnauthorizedRole):
-			writeError(w, http.StatusForbidden, "forbidden", "owner/admin required in org")
-		case errors.Is(err, store.ErrSelfTrust):
-			writeError(w, http.StatusBadRequest, "invalid_peer_agent_uuid", "peer_agent_uuid cannot equal agent_uuid")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to create agent trust")
-		}
-		return
-	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
-	}
-	writeJSON(w, status, map[string]any{"trust": edge, "created": created})
+	h.handleAgentTrustCreate(w, actor, req, "owner/admin required in org")
 }
 
 func (h *Handler) handleAgentTrustByID(w http.ResponseWriter, r *http.Request) {

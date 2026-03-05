@@ -1079,6 +1079,12 @@ func (s *MemoryStore) GetAgentURI(agentUUID string) (string, error) {
 	return agent.AgentID, nil
 }
 
+func (s *MemoryStore) ResolveAgentUUID(agentRef string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.resolveAgentRefLocked(agentRef)
+}
+
 func (s *MemoryStore) CountActiveHumanOwnedAgents(humanID string) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1713,8 +1719,13 @@ func (s *MemoryStore) resolveAgentRefLocked(agentRef string) (string, error) {
 		return "", ErrAgentNotFound
 	}
 
-	if _, ok := s.agents[ref]; ok {
+	if agent, ok := s.agents[ref]; ok && agent.Status != model.StatusRevoked {
 		return ref, nil
+	}
+	if agentUUID, ok := s.agentByURI[ref]; ok {
+		if agent, exists := s.agents[agentUUID]; exists && agent.Status != model.StatusRevoked {
+			return agentUUID, nil
+		}
 	}
 	if strings.Contains(ref, "/") {
 		return "", ErrAgentNotFound

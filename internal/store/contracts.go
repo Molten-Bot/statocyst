@@ -44,6 +44,7 @@ type ControlPlaneStore interface {
 	GetHuman(humanID string) (model.Human, error)
 	GetAgentByUUID(agentUUID string) (model.Agent, error)
 	GetAgentURI(agentUUID string) (string, error)
+	ResolveAgentUUID(agentRef string) (string, error)
 	CountActiveHumanOwnedAgents(humanID string) int
 	PeekBindToken(bindTokenHash string) (model.BindToken, error)
 	ListTalkablePeers(agentUUID string) ([]string, error)

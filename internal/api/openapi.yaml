@@ -129,7 +129,7 @@ paths:
         '200':
           description: Agent trust list
     post:
-      summary: Create or join an agent trust request
+      summary: Create or join an agent trust request (UUIDs or agent refs)
       security:
         - humanAuth: []
       requestBody:
@@ -138,13 +138,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [agent_uuid, peer_agent_uuid]
+              required: [org_id]
               properties:
                 org_id:
                   type: string
                 agent_uuid:
                   type: string
+                agent_id:
+                  type: string
                 peer_agent_uuid:
+                  type: string
+                peer_agent_id:
                   type: string
       responses:
         '200':
@@ -569,6 +573,35 @@ paths:
       responses:
         '200':
           description: Revoked
+  /v1/agents/{agent_ref}/bind:
+    post:
+      summary: Compatibility bind route (path agent ref + peer in body)
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: agent_ref
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                org_id:
+                  type: string
+                peer_agent_uuid:
+                  type: string
+                peer_agent_id:
+                  type: string
+      responses:
+        '201':
+          description: Trust edge created
+        '200':
+          description: Trust edge updated
   /v1/org-trusts:
     post:
       summary: Create or join org trust request
@@ -635,7 +668,7 @@ paths:
           description: Trust revoked
   /v1/agent-trusts:
     post:
-      summary: Create or join agent trust request
+      summary: Create or join agent trust request (UUIDs or agent refs)
       security:
         - humanAuth: []
       requestBody:
@@ -644,13 +677,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [org_id, agent_uuid, peer_agent_uuid]
+              required: [org_id]
               properties:
                 org_id:
                   type: string
                 agent_uuid:
                   type: string
+                agent_id:
+                  type: string
                 peer_agent_uuid:
+                  type: string
+                peer_agent_id:
                   type: string
       responses:
         '201':

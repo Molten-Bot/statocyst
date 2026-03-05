@@ -186,6 +186,18 @@ curl -sS -X POST http://localhost:8080/v1/agent-trusts \
   -H 'X-Human-Id: alice' -H 'X-Human-Email: alice@acme.dev' \
   -d '{"org_id":"<org-a-id>","agent_uuid":"<agent-a-uuid>","peer_agent_uuid":"<agent-b-uuid>"}'
 
+# Equivalent payload using canonical agent refs (hub resolves UUIDs):
+curl -sS -X POST http://localhost:8080/v1/agent-trusts \
+  -H 'Content-Type: application/json' \
+  -H 'X-Human-Id: alice' -H 'X-Human-Email: alice@acme.dev' \
+  -d '{"org_id":"<org-a-id>","agent_id":"<org/owner/agent-or-org/agent>","peer_agent_id":"<org/owner/agent-or-org/agent>"}'
+
+# Compatibility route (path agent ref + peer in body):
+curl -sS -X POST http://localhost:8080/v1/agents/<agent_ref>/bind \
+  -H 'Content-Type: application/json' \
+  -H 'X-Human-Id: alice' -H 'X-Human-Email: alice@acme.dev' \
+  -d '{"org_id":"<org-a-id>","peer_agent_id":"<peer_agent_ref>"}'
+
 curl -sS -X POST http://localhost:8080/v1/agent-trusts/<agent-trust-id>/approve \
   -H 'X-Human-Id: bob' -H 'X-Human-Email: bob@acme.dev'
 ```
