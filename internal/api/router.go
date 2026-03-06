@@ -38,6 +38,7 @@ type Handler struct {
 	superAdminReview  bool
 	bindTokenTTL      time.Duration
 	headlessMode      bool
+	storageHealth     store.StorageHealthStatus
 }
 
 type humanActor struct {
@@ -75,6 +76,7 @@ func NewHandler(
 		superAdminReview:  superAdminReview,
 		bindTokenTTL:      bindTokenTTL,
 		headlessMode:      headlessMode,
+		storageHealth:     store.DefaultStorageHealthStatus(),
 	}
 }
 
@@ -117,7 +119,43 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	health := h.storageHealth
+	if health.StartupMode == "" {
+		health = store.DefaultStorageHealthStatus()
+	}
+
+	statePayload := map[string]any{
+		"backend": health.State.Backend,
+		"healthy": health.State.Healthy,
+	}
+	if strings.TrimSpace(health.State.Error) != "" {
+		statePayload["error"] = health.State.Error
+	}
+
+	queuePayload := map[string]any{
+		"backend": health.Queue.Backend,
+		"healthy": health.Queue.Healthy,
+	}
+	if strings.TrimSpace(health.Queue.Error) != "" {
+		queuePayload["error"] = health.Queue.Error
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": health.OverallStatus(),
+		"storage": map[string]any{
+			"startup_mode": health.StartupMode,
+			"state":        statePayload,
+			"queue":        queuePayload,
+		},
+	})
+}
+
+func (h *Handler) SetStorageHealth(health store.StorageHealthStatus) {
+	if health.StartupMode == "" {
+		h.storageHealth = store.DefaultStorageHealthStatus()
+		return
+	}
+	h.storageHealth = health
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

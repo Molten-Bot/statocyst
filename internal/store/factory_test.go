@@ -44,6 +44,44 @@ func TestNewStoresFromEnv_RejectsUnsupportedBackends(t *testing.T) {
 	}
 }
 
+func TestParseStorageStartupMode(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name    string
+		raw     string
+		want    StorageStartupMode
+		wantErr bool
+	}{
+		{name: "default_empty", raw: "", want: StorageStartupModeStrict},
+		{name: "strict", raw: "strict", want: StorageStartupModeStrict},
+		{name: "degraded", raw: "degraded", want: StorageStartupModeDegraded},
+		{name: "fallback_hyphen", raw: "fallback-memory", want: StorageStartupModeDegraded},
+		{name: "fallback_underscore", raw: "fallback_memory", want: StorageStartupModeDegraded},
+		{name: "fallback_compact", raw: "fallbackmemory", want: StorageStartupModeDegraded},
+		{name: "invalid", raw: "unsafe", wantErr: true},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseStorageStartupMode(tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected parse error for %q", tc.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected parse error for %q: %v", tc.raw, err)
+			}
+			if got != tc.want {
+				t.Fatalf("parse %q: got %q want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewStoresFromEnv_S3QueueConfigured(t *testing.T) {
 	t.Setenv("STATOCYST_STATE_BACKEND", "memory")
 	t.Setenv("STATOCYST_QUEUE_BACKEND", "s3")
@@ -128,6 +166,88 @@ func TestNewStoresFromEnv_S3StateAuthRequiredEndpointFailsStartup(t *testing.T) 
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "authorization") {
 		t.Fatalf("expected authorization error context, got %v", err)
+	}
+}
+
+func TestNewStoresFromEnvWithMode_DegradedFallbackForS3State(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "state-bucket" && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidArgument</Code><Message>Authorization</Message></Error>`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	t.Setenv("STATOCYST_STATE_BACKEND", "s3")
+	t.Setenv("STATOCYST_QUEUE_BACKEND", "memory")
+	t.Setenv("STATOCYST_STATE_S3_ENDPOINT", server.URL)
+	t.Setenv("STATOCYST_STATE_S3_BUCKET", "state-bucket")
+	t.Setenv("STATOCYST_STATE_S3_PREFIX", "statocyst-state")
+	t.Setenv("STATOCYST_STATE_S3_PATH_STYLE", "true")
+
+	control, queue, health, err := NewStoresFromEnvWithMode(StorageStartupModeDegraded)
+	if err != nil {
+		t.Fatalf("expected degraded mode to continue startup, got error: %v", err)
+	}
+	controlMem, ok := control.(*MemoryStore)
+	if !ok {
+		t.Fatalf("expected memory fallback control store, got %T", control)
+	}
+	queueMem, ok := queue.(*MemoryStore)
+	if !ok {
+		t.Fatalf("expected memory fallback queue store, got %T", queue)
+	}
+	if controlMem != queueMem {
+		t.Fatalf("expected shared memory fallback store for state+queue")
+	}
+	if health.StartupMode != StorageStartupModeDegraded {
+		t.Fatalf("expected startup mode degraded, got %q", health.StartupMode)
+	}
+	if health.State.Healthy {
+		t.Fatalf("expected state backend to be unhealthy in degraded mode")
+	}
+	if !strings.Contains(strings.ToLower(health.State.Error), "authorization") {
+		t.Fatalf("expected state health error to include authorization context, got %q", health.State.Error)
+	}
+	if !health.Queue.Healthy {
+		t.Fatalf("expected queue backend to be healthy for memory mode")
+	}
+	if got := health.OverallStatus(); got != "degraded" {
+		t.Fatalf("expected overall status degraded, got %q", got)
+	}
+}
+
+func TestNewStoresFromEnvWithMode_DegradedFallbackForS3Queue(t *testing.T) {
+	t.Setenv("STATOCYST_STATE_BACKEND", "memory")
+	t.Setenv("STATOCYST_QUEUE_BACKEND", "s3")
+	t.Setenv("STATOCYST_QUEUE_S3_ENDPOINT", "")
+	t.Setenv("STATOCYST_QUEUE_S3_BUCKET", "")
+
+	control, queue, health, err := NewStoresFromEnvWithMode(StorageStartupModeDegraded)
+	if err != nil {
+		t.Fatalf("expected degraded mode to continue startup on queue failure, got: %v", err)
+	}
+	if _, ok := control.(*MemoryStore); !ok {
+		t.Fatalf("expected memory control store, got %T", control)
+	}
+	if _, ok := queue.(*MemoryStore); !ok {
+		t.Fatalf("expected memory queue fallback, got %T", queue)
+	}
+	if !health.State.Healthy {
+		t.Fatalf("expected state backend healthy for memory mode")
+	}
+	if health.Queue.Healthy {
+		t.Fatalf("expected queue backend unhealthy in degraded mode")
+	}
+	if !strings.Contains(strings.ToLower(health.Queue.Error), "required") {
+		t.Fatalf("expected queue health error context, got %q", health.Queue.Error)
+	}
+	if got := health.OverallStatus(); got != "degraded" {
+		t.Fatalf("expected overall status degraded, got %q", got)
 	}
 }
 

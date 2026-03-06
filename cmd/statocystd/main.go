@@ -24,10 +24,26 @@ func main() {
 		addr = ":8080"
 	}
 
-	controlStore, queueStore, err := store.NewStoresFromEnv()
+	storageStartupMode, err := store.StorageStartupModeFromEnv()
+	if err != nil {
+		log.Fatalf("storage startup mode configuration error: %v", err)
+	}
+
+	controlStore, queueStore, storageHealth, err := store.NewStoresFromEnvWithMode(storageStartupMode)
 	if err != nil {
 		log.Fatalf("storage backend configuration error: %v", err)
 	}
+	if storageHealth.OverallStatus() != "ok" {
+		log.Printf(
+			"storage backend degraded: mode=%s state_backend=%s state_error=%q queue_backend=%s queue_error=%q",
+			storageHealth.StartupMode,
+			storageHealth.State.Backend,
+			storageHealth.State.Error,
+			storageHealth.Queue.Backend,
+			storageHealth.Queue.Error,
+		)
+	}
+
 	waiters := longpoll.NewWaiters()
 	humanAuth := auth.NewHumanAuthProviderFromEnv()
 	bindTTL := 15 * time.Minute
@@ -61,6 +77,7 @@ func main() {
 		bindTTL,
 		headlessMode,
 	)
+	handler.SetStorageHealth(storageHealth)
 	router := api.NewRouter(handler)
 
 	server := &http.Server{

@@ -34,6 +34,9 @@ This version provides:
   - Required: `STATOCYST_STATE_S3_ENDPOINT`, `STATOCYST_STATE_S3_BUCKET`
   - Optional: `STATOCYST_STATE_S3_REGION` (default `us-east-1`), `STATOCYST_STATE_S3_PREFIX` (default `statocyst-state`), `STATOCYST_STATE_S3_PATH_STYLE=true`
   - Current implementation is designed for a single writer instance (beta), with direct multi-object overwrites and no startup recovery journal.
+- Startup mode:
+  - `STATOCYST_STORAGE_STARTUP_MODE=strict` (default): startup fails when configured storage backends are invalid/unreachable.
+  - `STATOCYST_STORAGE_STARTUP_MODE=degraded`: startup falls back to memory for failing backends and reports dependency failures in `/health`.
 
 ### Queue backend
 
@@ -100,6 +103,12 @@ Caller credentials are intentionally separated: human credentials are for contro
 curl -sS http://localhost:8080/health
 curl -sS http://localhost:8080/openapi.yaml
 ```
+
+`/health` is now liveness-oriented:
+- Always HTTP `200` while web server is running.
+- `status: ok` when configured storage dependencies are healthy.
+- `status: degraded` when one or more configured dependencies are unhealthy.
+- Includes per-backend detail under `storage.state` and `storage.queue` (`backend`, `healthy`, and optional `error`).
 
 ### UI
 

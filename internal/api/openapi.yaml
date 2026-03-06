@@ -14,11 +14,49 @@ servers:
 paths:
   /health:
     get:
-      summary: Health check (primary probe)
-      description: Preferred readiness/liveness endpoint.
+      summary: Health check (liveness with dependency details)
+      description: |
+        Liveness endpoint. Returns HTTP 200 when the web server is up.
+        `status` is `ok` when configured storage backends are healthy and `degraded` otherwise.
       responses:
         '200':
-          description: OK
+          description: Health payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, storage]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+                  storage:
+                    type: object
+                    required: [startup_mode, state, queue]
+                    properties:
+                      startup_mode:
+                        type: string
+                        enum: [strict, degraded]
+                      state:
+                        type: object
+                        required: [backend, healthy]
+                        properties:
+                          backend:
+                            type: string
+                          healthy:
+                            type: boolean
+                          error:
+                            type: string
+                      queue:
+                        type: object
+                        required: [backend, healthy]
+                        properties:
+                          backend:
+                            type: string
+                          healthy:
+                            type: boolean
+                          error:
+                            type: string
   /openapi.yaml:
     get:
       summary: OpenAPI document

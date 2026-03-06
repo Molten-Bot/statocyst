@@ -35,10 +35,66 @@ func TestHandlerWiringWithInterfaceStores(t *testing.T) {
 	if health.Code != http.StatusOK {
 		t.Fatalf("expected /health 200, got %d %s", health.Code, health.Body.String())
 	}
+	var healthPayload map[string]any
+	if err := json.Unmarshal(health.Body.Bytes(), &healthPayload); err != nil {
+		t.Fatalf("decode /health response: %v", err)
+	}
+	if status, _ := healthPayload["status"].(string); status != "ok" {
+		t.Fatalf("expected /health status ok, got %v payload=%v", healthPayload["status"], healthPayload)
+	}
+	storageObj, _ := healthPayload["storage"].(map[string]any)
+	if storageObj == nil {
+		t.Fatalf("expected /health storage object, got payload=%v", healthPayload)
+	}
 
 	me := doJSONRequest(t, router, http.MethodGet, "/v1/me", nil, humanHeaders("alice", "alice@a.test"))
 	if me.Code != http.StatusOK {
 		t.Fatalf("expected /v1/me 200, got %d %s", me.Code, me.Body.String())
+	}
+}
+
+func TestHealthReportsDegradedStorageStatus(t *testing.T) {
+	mem := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h.SetStorageHealth(store.StorageHealthStatus{
+		StartupMode: store.StorageStartupModeDegraded,
+		State: store.StorageBackendHealth{
+			Backend: "s3",
+			Healthy: false,
+			Error:   "state backend unavailable",
+		},
+		Queue: store.StorageBackendHealth{
+			Backend: "memory",
+			Healthy: true,
+		},
+	})
+	router := NewRouter(h)
+
+	health := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
+	if health.Code != http.StatusOK {
+		t.Fatalf("expected /health 200, got %d %s", health.Code, health.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(health.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode /health response: %v", err)
+	}
+	if got, _ := payload["status"].(string); got != "degraded" {
+		t.Fatalf("expected /health status degraded, got %q payload=%v", got, payload)
+	}
+	storageObj, _ := payload["storage"].(map[string]any)
+	if storageObj == nil {
+		t.Fatalf("expected /health storage object, got payload=%v", payload)
+	}
+	stateObj, _ := storageObj["state"].(map[string]any)
+	if stateObj == nil {
+		t.Fatalf("expected /health storage.state object, got payload=%v", payload)
+	}
+	if healthy, ok := stateObj["healthy"].(bool); !ok || healthy {
+		t.Fatalf("expected storage.state.healthy=false, got %v payload=%v", stateObj["healthy"], payload)
+	}
+	if _, ok := stateObj["error"].(string); !ok {
+		t.Fatalf("expected storage.state.error string, got %v payload=%v", stateObj["error"], payload)
 	}
 }
 
