@@ -18,6 +18,14 @@ import (
 type fakeS3State struct {
 	mu      sync.Mutex
 	objects map[string][]byte
+	counts  fakeS3Counts
+}
+
+type fakeS3Counts struct {
+	put    int
+	get    int
+	delete int
+	list   int
 }
 
 func newFakeS3State() *fakeS3State {
@@ -38,12 +46,14 @@ func (f *fakeS3State) server(bucket string) *httptest.Server {
 			case http.MethodPut:
 				body, _ := io.ReadAll(r.Body)
 				f.mu.Lock()
+				f.counts.put++
 				f.objects[key] = body
 				f.mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 				return
 			case http.MethodGet:
 				f.mu.Lock()
+				f.counts.get++
 				body, ok := f.objects[key]
 				f.mu.Unlock()
 				if !ok {
@@ -55,6 +65,7 @@ func (f *fakeS3State) server(bucket string) *httptest.Server {
 				return
 			case http.MethodDelete:
 				f.mu.Lock()
+				f.counts.delete++
 				delete(f.objects, key)
 				f.mu.Unlock()
 				w.WriteHeader(http.StatusNoContent)
@@ -65,6 +76,7 @@ func (f *fakeS3State) server(bucket string) *httptest.Server {
 		if path == bucket && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
 			prefix := r.URL.Query().Get("prefix")
 			f.mu.Lock()
+			f.counts.list++
 			keys := make([]obj, 0, len(f.objects))
 			for key := range f.objects {
 				if strings.HasPrefix(key, prefix) {
@@ -123,6 +135,18 @@ func (f *fakeS3State) keysWithPrefix(prefix string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func (f *fakeS3State) resetCounts() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.counts = fakeS3Counts{}
+}
+
+func (f *fakeS3State) currentCounts() fakeS3Counts {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.counts
 }
 
 func TestS3StateStore_ProfileAndPermissionsRoundTrip(t *testing.T) {
@@ -349,6 +373,54 @@ func TestS3StateStore_ReloadRebuildsIndexesFromPrimaryState(t *testing.T) {
 	}
 	if got.HumanID != human.HumanID {
 		t.Fatalf("expected human id %q after reload rebuild, got %q", human.HumanID, got.HumanID)
+	}
+}
+
+func TestS3StateStore_IncrementalPersistAvoidsFullResync(t *testing.T) {
+	fake := newFakeS3State()
+	server := fake.server("state-bucket")
+	defer server.Close()
+
+	store := &s3StateStore{
+		MemoryStore: NewMemoryStore(),
+		httpClient:  server.Client(),
+		endpoint:    server.URL,
+		bucket:      "state-bucket",
+		region:      "us-east-1",
+		prefix:      "statocyst-state",
+		pathStyle:   true,
+	}
+	if err := store.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("loadFromS3 empty failed: %v", err)
+	}
+
+	now := time.Date(2026, 3, 5, 15, 0, 0, 0, time.UTC)
+	id := &idGen{}
+	alice, err := store.UpsertHuman("dev", "alice-sub", "alice@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	org, _, err := store.CreateOrg("org-a", "Org A", alice.HumanID, id.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	owner := alice.HumanID
+	agent, err := store.RegisterAgent(org.OrgID, "agent-a", &owner, "agent-token-hash", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+
+	fake.resetCounts()
+	if _, err := store.SetAgentVisibility(agent.AgentUUID, false, alice.HumanID, now, false); err != nil {
+		t.Fatalf("SetAgentVisibility failed: %v", err)
+	}
+
+	counts := fake.currentCounts()
+	if counts.list != 0 {
+		t.Fatalf("expected no list requests during incremental persist, got %d", counts.list)
+	}
+	if counts.put > 3 {
+		t.Fatalf("expected only changed objects to be written, got %d put requests", counts.put)
 	}
 }
 

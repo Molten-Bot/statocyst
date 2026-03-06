@@ -38,6 +38,9 @@ type s3StateStore struct {
 	signer     *s3Signer
 
 	persistMu sync.Mutex
+	// persistedObjects tracks the last successfully persisted object bodies by key.
+	// It lets us write only changed keys instead of full-prefix rewrites.
+	persistedObjects map[string][]byte
 }
 
 type s3StateListBucketResult struct {
@@ -590,12 +593,41 @@ func (s *s3StateStore) RecordMessageDropped(orgID string) {
 }
 
 func (s *s3StateStore) persistAll(ctx context.Context) error {
-	desired := s.buildDesiredObjects()
-	for _, descriptor := range s.persistedPrefixes() {
-		if err := s.syncPrefix(ctx, descriptor.Prefix, desired[descriptor.Prefix]); err != nil {
+	desired := flattenS3Objects(s.buildDesiredObjects())
+	previous := s.persistedObjects
+	if previous == nil {
+		previous = make(map[string][]byte)
+	}
+
+	writeKeys := make([]string, 0, len(desired))
+	for key, body := range desired {
+		if existing, ok := previous[key]; ok && bytes.Equal(existing, body) {
+			continue
+		}
+		writeKeys = append(writeKeys, key)
+	}
+	sort.Strings(writeKeys)
+	for _, key := range writeKeys {
+		if err := s.putObject(ctx, key, desired[key]); err != nil {
 			return err
 		}
 	}
+
+	deleteKeys := make([]string, 0)
+	for key := range previous {
+		if _, ok := desired[key]; ok {
+			continue
+		}
+		deleteKeys = append(deleteKeys, key)
+	}
+	sort.Strings(deleteKeys)
+	for _, key := range deleteKeys {
+		if err := s.deleteObject(ctx, key); err != nil {
+			return err
+		}
+	}
+
+	s.persistedObjects = cloneS3Objects(desired)
 	return nil
 }
 
@@ -981,7 +1013,26 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	rebuildStateIndexesLocked(loaded)
 
 	s.MemoryStore = loaded
+	s.persistedObjects = flattenS3Objects(s.buildDesiredObjects())
 	return nil
+}
+
+func flattenS3Objects(byPrefix map[string]map[string][]byte) map[string][]byte {
+	flat := make(map[string][]byte)
+	for _, objects := range byPrefix {
+		for key, body := range objects {
+			flat[key] = append([]byte(nil), body...)
+		}
+	}
+	return flat
+}
+
+func cloneS3Objects(objects map[string][]byte) map[string][]byte {
+	out := make(map[string][]byte, len(objects))
+	for key, body := range objects {
+		out[key] = append([]byte(nil), body...)
+	}
+	return out
 }
 
 func rebuildStateIndexesLocked(mem *MemoryStore) {
@@ -1069,38 +1120,6 @@ func (s *s3StateStore) loadTypedObjects(ctx context.Context, prefix string, fn f
 		}
 		if err := fn(key, body); err != nil {
 			return fmt.Errorf("decode %s: %w", key, err)
-		}
-	}
-	return nil
-}
-
-func (s *s3StateStore) syncPrefix(ctx context.Context, prefix string, desired map[string][]byte) error {
-	if desired == nil {
-		desired = make(map[string][]byte)
-	}
-
-	existing, err := s.listKeys(ctx, prefix+"/")
-	if err != nil {
-		return err
-	}
-
-	writeKeys := make([]string, 0, len(desired))
-	for key := range desired {
-		writeKeys = append(writeKeys, key)
-	}
-	sort.Strings(writeKeys)
-	for _, key := range writeKeys {
-		if err := s.putObject(ctx, key, desired[key]); err != nil {
-			return err
-		}
-	}
-
-	for _, key := range existing {
-		if _, ok := desired[key]; ok {
-			continue
-		}
-		if err := s.deleteObject(ctx, key); err != nil {
-			return err
 		}
 	}
 	return nil
