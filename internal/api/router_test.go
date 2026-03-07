@@ -1097,6 +1097,45 @@ func TestPublishDropAndQueuedPaths(t *testing.T) {
 	}
 }
 
+func TestRevokedAgentCannotPublishOrPullAndQueuedMessagesArePurged(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, agentUUIDA, agentUUIDB := setupTrustedAgents(t, router)
+
+	queuedBeforeRevoke := publish(t, router, tokenA, agentUUIDB, "queued-before-revoke")
+	if queuedBeforeRevoke.Code != http.StatusAccepted {
+		t.Fatalf("expected publish before revoke to be accepted, got %d %s", queuedBeforeRevoke.Code, queuedBeforeRevoke.Body.String())
+	}
+	queuedPayload := decodeJSONMap(t, queuedBeforeRevoke.Body.Bytes())
+	if queuedPayload["status"] != "queued" {
+		t.Fatalf("expected queued status before revoke, got %v", queuedPayload["status"])
+	}
+
+	revokeResp := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUIDA, nil, humanHeaders("alice", "alice@a.test"))
+	if revokeResp.Code != http.StatusOK {
+		t.Fatalf("revoke agent failed: %d %s", revokeResp.Code, revokeResp.Body.String())
+	}
+
+	publishAfterRevoke := publish(t, router, tokenA, agentUUIDB, "publish-after-revoke")
+	if publishAfterRevoke.Code != http.StatusUnauthorized {
+		t.Fatalf("expected revoked token publish to return 401, got %d %s", publishAfterRevoke.Code, publishAfterRevoke.Body.String())
+	}
+
+	pullAfterRevoke := pull(t, router, tokenA, 0)
+	if pullAfterRevoke.Code != http.StatusUnauthorized {
+		t.Fatalf("expected revoked token pull to return 401, got %d %s", pullAfterRevoke.Code, pullAfterRevoke.Body.String())
+	}
+
+	publishToRevoked := publish(t, router, tokenB, agentUUIDA, "to-revoked")
+	if publishToRevoked.Code != http.StatusNotFound {
+		t.Fatalf("expected publish to revoked receiver to return 404, got %d %s", publishToRevoked.Code, publishToRevoked.Body.String())
+	}
+
+	receiverPull := pull(t, router, tokenB, 0)
+	if receiverPull.Code != http.StatusNoContent {
+		t.Fatalf("expected revoked sender messages to be purged from receiver queue, got %d %s", receiverPull.Code, receiverPull.Body.String())
+	}
+}
+
 func TestLongPollTimeout(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Org A")
