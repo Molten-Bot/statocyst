@@ -146,14 +146,16 @@ func TestCanonicalAgentURIAndUUIDLifecycleRoutes(t *testing.T) {
 		t.Fatalf("expected human-owned canonical URI org/human/agent, got %q", canonicalAgentID)
 	}
 
-	visibility := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/"+agentUUID, map[string]any{
-		"is_public": false,
+	metadata := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/"+agentUUID+"/metadata", map[string]any{
+		"metadata": map[string]any{
+			"public": false,
+		},
 	}, humanHeaders("alice", "alice@a.test"))
-	if visibility.Code != http.StatusOK {
-		t.Fatalf("expected visibility patch with agent_uuid to succeed, got %d %s", visibility.Code, visibility.Body.String())
+	if metadata.Code != http.StatusOK {
+		t.Fatalf("expected metadata patch with agent_uuid to succeed, got %d %s", metadata.Code, metadata.Body.String())
 	}
-	visPayload := decodeJSONMap(t, visibility.Body.Bytes())
-	agentObj, _ := visPayload["agent"].(map[string]any)
+	metadataPayload := decodeJSONMap(t, metadata.Body.Bytes())
+	agentObj, _ := metadataPayload["agent"].(map[string]any)
 	if agentObj["agent_id"] != canonicalAgentID {
 		t.Fatalf("expected visibility response agent_id=%q, got %v", canonicalAgentID, agentObj["agent_id"])
 	}

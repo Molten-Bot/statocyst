@@ -19,24 +19,24 @@ const (
 )
 
 type Organization struct {
-	OrgID       string    `json:"org_id"`
-	Handle      string    `json:"handle"`
-	DisplayName string    `json:"display_name"`
-	IsPublic    bool      `json:"is_public"`
-	CreatedAt   time.Time `json:"created_at"`
-	CreatedBy   string    `json:"created_by"`
+	OrgID       string         `json:"org_id"`
+	Handle      string         `json:"handle"`
+	DisplayName string         `json:"display_name"`
+	Metadata    map[string]any `json:"metadata"`
+	CreatedAt   time.Time      `json:"created_at"`
+	CreatedBy   string         `json:"created_by"`
 }
 
 type Human struct {
-	HumanID           string     `json:"human_id"`
-	Handle            string     `json:"handle"`
-	HandleConfirmedAt *time.Time `json:"handle_confirmed_at,omitempty"`
-	AuthProvider      string     `json:"auth_provider"`
-	AuthSubject       string     `json:"auth_subject"`
-	Email             string     `json:"email"`
-	EmailVerified     bool       `json:"email_verified"`
-	IsPublic          bool       `json:"is_public"`
-	CreatedAt         time.Time  `json:"created_at"`
+	HumanID           string         `json:"human_id"`
+	Handle            string         `json:"handle"`
+	HandleConfirmedAt *time.Time     `json:"handle_confirmed_at,omitempty"`
+	AuthProvider      string         `json:"auth_provider"`
+	AuthSubject       string         `json:"auth_subject"`
+	Email             string         `json:"email"`
+	EmailVerified     bool           `json:"email_verified"`
+	Metadata          map[string]any `json:"metadata"`
+	CreatedAt         time.Time      `json:"created_at"`
 }
 
 type Membership struct {
@@ -63,17 +63,17 @@ type Invite struct {
 }
 
 type Agent struct {
-	AgentUUID    string     `json:"agent_uuid"`
-	AgentID      string     `json:"agent_id"` // URI metadata: org/agent or org/human/agent
-	Handle       string     `json:"handle"`
-	OrgID        string     `json:"org_id"`
-	OwnerHumanID *string    `json:"owner_human_id,omitempty"`
-	TokenHash    string     `json:"-"`
-	Status       string     `json:"status"`
-	IsPublic     bool       `json:"is_public"`
-	CreatedBy    string     `json:"created_by"`
-	CreatedAt    time.Time  `json:"created_at"`
-	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
+	AgentUUID    string         `json:"agent_uuid"`
+	AgentID      string         `json:"agent_id"` // URI metadata: org/agent or org/human/agent
+	Handle       string         `json:"handle"`
+	OrgID        string         `json:"org_id"`
+	OwnerHumanID *string        `json:"owner_human_id,omitempty"`
+	TokenHash    string         `json:"-"`
+	Status       string         `json:"status"`
+	Metadata     map[string]any `json:"metadata"`
+	CreatedBy    string         `json:"created_by"`
+	CreatedAt    time.Time      `json:"created_at"`
+	RevokedAt    *time.Time     `json:"revoked_at,omitempty"`
 }
 
 type BindToken struct {
@@ -115,13 +115,13 @@ type Message struct {
 }
 
 type OrgHumanView struct {
-	HumanID      string `json:"human_id"`
-	Handle       string `json:"handle"`
-	Email        string `json:"email"`
-	Role         string `json:"role"`
-	Status       string `json:"status"`
-	AuthProvider string `json:"auth_provider"`
-	IsPublic     bool   `json:"is_public"`
+	HumanID      string         `json:"human_id"`
+	Handle       string         `json:"handle"`
+	Email        string         `json:"email"`
+	Role         string         `json:"role"`
+	Status       string         `json:"status"`
+	AuthProvider string         `json:"auth_provider"`
+	Metadata     map[string]any `json:"metadata"`
 }
 
 type OrgStats struct {

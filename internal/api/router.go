@@ -33,6 +33,7 @@ type Handler struct {
 	idFactory         func() (string, error)
 	supabaseURL       string
 	supabaseAnonKey   string
+	adminSnapshotKey  string
 	superAdminEmails  map[string]struct{}
 	superAdminDomains map[string]struct{}
 	superAdminReview  bool
@@ -53,6 +54,7 @@ func NewHandler(
 	humanAuth auth.HumanAuthProvider,
 	supabaseURL,
 	supabaseAnonKey,
+	adminSnapshotKey,
 	superAdminEmailsCSV,
 	superAdminDomainsCSV string,
 	superAdminReview bool,
@@ -71,6 +73,7 @@ func NewHandler(
 		idFactory:         newUUIDv7,
 		supabaseURL:       strings.TrimSpace(supabaseURL),
 		supabaseAnonKey:   strings.TrimSpace(supabaseAnonKey),
+		adminSnapshotKey:  strings.TrimSpace(adminSnapshotKey),
 		superAdminEmails:  parseEmails(superAdminEmailsCSV),
 		superAdminDomains: parseDomains(superAdminDomainsCSV),
 		superAdminReview:  superAdminReview,
@@ -86,6 +89,7 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/openapi.yaml", handler.handleOpenAPIYAML)
 	mux.HandleFunc("/v1/ui/config", handler.handleUIConfig)
 	mux.HandleFunc("/v1/me", handler.handleMe)
+	mux.HandleFunc("/v1/me/metadata", handler.handleMeMetadata)
 	mux.HandleFunc("/v1/me/orgs", handler.handleMyOrgs)
 	mux.HandleFunc("/v1/me/agents", handler.handleMyAgents)
 	mux.HandleFunc("/v1/me/agents/bind-tokens", handler.handleMyAgentBindTokens)
@@ -99,7 +103,7 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/v1/org-access/agents", handler.handleOrgAccessAgents)
 	mux.HandleFunc("/v1/agents/bind-tokens", handler.handleCreateBindToken)
 	mux.HandleFunc("/v1/agents/bind", handler.handleRedeemBindToken)
-	mux.HandleFunc("/v1/agents/me", handler.handleAgentMe)
+	mux.HandleFunc("/v1/agents/me/metadata", handler.handleAgentMeMetadata)
 	mux.HandleFunc("/v1/agents/me/capabilities", handler.handleAgentMeCapabilities)
 	mux.HandleFunc("/v1/agents/me/skill", handler.handleAgentMeSkill)
 	mux.HandleFunc("/v1/agents/", handler.handleAgentsSubroutes)
@@ -109,7 +113,6 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/v1/agent-trusts/", handler.handleAgentTrustByID)
 	mux.HandleFunc("/v1/messages/publish", handler.handlePublish)
 	mux.HandleFunc("/v1/messages/pull", handler.handlePull)
-	mux.HandleFunc("/v1/live/snapshot", handler.handleLiveSnapshot)
 	mux.HandleFunc("/", handler.handleUI)
 	return mux
 }

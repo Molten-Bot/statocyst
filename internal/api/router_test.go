@@ -19,7 +19,7 @@ import (
 func newTestRouter() http.Handler {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	return NewRouter(h)
 }
 
@@ -28,7 +28,7 @@ func TestHandlerWiringWithInterfaceStores(t *testing.T) {
 	var control store.ControlPlaneStore = mem
 	var queue store.MessageQueueStore = mem
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(control, queue, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(control, queue, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	router := NewRouter(h)
 
 	health := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
@@ -56,7 +56,7 @@ func TestHandlerWiringWithInterfaceStores(t *testing.T) {
 func TestHealthReportsDegradedStorageStatus(t *testing.T) {
 	mem := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	h.SetStorageHealth(store.StorageHealthStatus{
 		StartupMode: store.StorageStartupModeDegraded,
 		State: store.StorageBackendHealth{
@@ -111,6 +111,7 @@ func TestUIConfigExposesSupabaseAnonKeyAndRedactsPrivilegedFields(t *testing.T) 
 		auth.NewDevHumanAuthProvider(),
 		"https://example.supabase.co",
 		"should-not-leak",
+		"",
 		"admin1@molten.bot,admin2@molten.bot",
 		"molten.bot",
 		true,
@@ -160,6 +161,7 @@ func TestUIConfigReturnsSensitiveFieldsWithPrivilegedKey(t *testing.T) {
 		auth.NewDevHumanAuthProvider(),
 		"https://example.supabase.co",
 		"should-leak-only-to-privileged-caller",
+		"",
 		"admin1@molten.bot,admin2@molten.bot",
 		"molten.bot",
 		true,
@@ -205,6 +207,7 @@ func TestUIConfigKeepsPrivilegedFieldsRedactedWithWrongPrivilegedKey(t *testing.
 		auth.NewDevHumanAuthProvider(),
 		"https://example.supabase.co",
 		"should-not-leak",
+		"",
 		"admin1@molten.bot,admin2@molten.bot",
 		"molten.bot",
 		true,
@@ -1068,13 +1071,12 @@ func TestOrganizationNameUniqueCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestHumanCanSetHandleAndVisibility(t *testing.T) {
+func TestHumanCanSetHandleAndMetadata(t *testing.T) {
 	router := newTestRouter()
 
 	_ = currentHumanID(t, router, "alice", "alice@a.test")
 	update := doJSONRequest(t, router, http.MethodPatch, "/v1/me", map[string]any{
-		"handle":    "Alice Main",
-		"is_public": false,
+		"handle": "Alice Main",
 	}, humanHeaders("alice", "alice@a.test"))
 	if update.Code != http.StatusOK {
 		t.Fatalf("expected profile patch 200, got %d %s", update.Code, update.Body.String())
@@ -1084,8 +1086,18 @@ func TestHumanCanSetHandleAndVisibility(t *testing.T) {
 	if human["handle"] != "alice-main" {
 		t.Fatalf("expected normalized handle alice-main, got %v", human["handle"])
 	}
-	if human["is_public"] != false {
-		t.Fatalf("expected is_public false, got %v", human["is_public"])
+
+	metadataResp := doJSONRequest(t, router, http.MethodPatch, "/v1/me/metadata", map[string]any{
+		"metadata": map[string]any{"public": false},
+	}, humanHeaders("alice", "alice@a.test"))
+	if metadataResp.Code != http.StatusOK {
+		t.Fatalf("expected metadata patch 200, got %d %s", metadataResp.Code, metadataResp.Body.String())
+	}
+	metadataPayload := decodeJSONMap(t, metadataResp.Body.Bytes())
+	updatedHuman, _ := metadataPayload["human"].(map[string]any)
+	metadata, _ := updatedHuman["metadata"].(map[string]any)
+	if metadata["public"] != false {
+		t.Fatalf("expected metadata.public false, got %v", metadata["public"])
 	}
 }
 
@@ -1162,66 +1174,10 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	}
 }
 
-func TestLiveShowsOnlyPublicEntities(t *testing.T) {
-	router := newTestRouter()
-
-	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
-	orgID := createOrg(t, router, "alice", "alice@a.test", "Live Org")
-	_, liveAgentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "live-agent", aliceHumanID)
-
-	live := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
-	if live.Code != http.StatusOK {
-		t.Fatalf("expected /live 200, got %d %s", live.Code, live.Body.String())
-	}
-	liveBody := live.Body.String()
-	if !strings.Contains(liveBody, "live-org") {
-		t.Fatalf("expected live page to include org handle, got %q", liveBody)
-	}
-	if !strings.Contains(liveBody, "alice") {
-		t.Fatalf("expected live page to include human handle, got %q", liveBody)
-	}
-	if !strings.Contains(liveBody, "live-agent") {
-		t.Fatalf("expected live page to include agent handle, got %q", liveBody)
-	}
-
-	hideAgent := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/"+liveAgentUUID, map[string]any{
-		"is_public": false,
-	}, humanHeaders("alice", "alice@a.test"))
-	if hideAgent.Code != http.StatusOK {
-		t.Fatalf("expected agent hide 200, got %d %s", hideAgent.Code, hideAgent.Body.String())
-	}
-	liveAfterAgentHide := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
-	if strings.Contains(liveAfterAgentHide.Body.String(), "live-agent") {
-		t.Fatalf("expected hidden agent to be absent from /live")
-	}
-
-	hideHuman := doJSONRequest(t, router, http.MethodPatch, "/v1/me", map[string]any{
-		"is_public": false,
-	}, humanHeaders("alice", "alice@a.test"))
-	if hideHuman.Code != http.StatusOK {
-		t.Fatalf("expected human hide 200, got %d %s", hideHuman.Code, hideHuman.Body.String())
-	}
-	liveAfterHumanHide := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
-	if strings.Contains(liveAfterHumanHide.Body.String(), "alice") {
-		t.Fatalf("expected hidden human to be absent from /live")
-	}
-
-	hideOrg := doJSONRequest(t, router, http.MethodPatch, "/v1/orgs/"+orgID, map[string]any{
-		"is_public": false,
-	}, humanHeaders("alice", "alice@a.test"))
-	if hideOrg.Code != http.StatusOK {
-		t.Fatalf("expected org hide 200, got %d %s", hideOrg.Code, hideOrg.Body.String())
-	}
-	liveAfterOrgHide := doJSONRequest(t, router, http.MethodGet, "/live", nil, nil)
-	if strings.Contains(liveAfterOrgHide.Body.String(), "live-org") {
-		t.Fatalf("expected hidden org to be absent from /live")
-	}
-}
-
 func TestBindTokenExpires(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
 	h.now = func() time.Time { return now }
 	router := NewRouter(h)
@@ -1308,40 +1264,29 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 }
 
-func TestAgentMeVisibilityUpdateEndpoint(t *testing.T) {
+func TestAgentMeMetadataUpdateEndpoint(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, agentUUIDA, agentUUIDB := setupTrustedAgents(t, router)
 	headers := map[string]string{"Authorization": "Bearer " + tokenA}
 
-	patchResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
-		"is_public": false,
+	patchResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{"public": false},
 	}, headers)
 	if patchResp.Code != http.StatusOK {
-		t.Fatalf("expected PATCH /v1/agents/me 200, got %d %s", patchResp.Code, patchResp.Body.String())
+		t.Fatalf("expected PATCH /v1/agents/me/metadata 200, got %d %s", patchResp.Code, patchResp.Body.String())
 	}
 	patchPayload := decodeJSONMap(t, patchResp.Body.Bytes())
 	patchAgent, _ := patchPayload["agent"].(map[string]any)
 	if patchAgent["agent_uuid"] != agentUUIDA {
-		t.Fatalf("expected PATCH /v1/agents/me to update authenticated agent %q, got %v", agentUUIDA, patchAgent["agent_uuid"])
+		t.Fatalf("expected PATCH /v1/agents/me/metadata to update authenticated agent %q, got %v", agentUUIDA, patchAgent["agent_uuid"])
 	}
-	if isPublic, ok := patchAgent["is_public"].(bool); !ok || isPublic {
-		t.Fatalf("expected PATCH /v1/agents/me to set is_public=false, got %v payload=%v", patchAgent["is_public"], patchPayload)
-	}
-
-	postResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/me", map[string]any{
-		"is_public": true,
-	}, headers)
-	if postResp.Code != http.StatusOK {
-		t.Fatalf("expected POST /v1/agents/me 200, got %d %s", postResp.Code, postResp.Body.String())
-	}
-	postPayload := decodeJSONMap(t, postResp.Body.Bytes())
-	postAgent, _ := postPayload["agent"].(map[string]any)
-	if isPublic, ok := postAgent["is_public"].(bool); !ok || !isPublic {
-		t.Fatalf("expected POST /v1/agents/me to set is_public=true, got %v payload=%v", postAgent["is_public"], postPayload)
+	metadata, _ := patchAgent["metadata"].(map[string]any)
+	if metadata["public"] != false {
+		t.Fatalf("expected PATCH /v1/agents/me/metadata to set metadata.public=false, got %v payload=%v", metadata["public"], patchPayload)
 	}
 
-	humanRouteResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/"+agentUUIDB, map[string]any{
-		"is_public": false,
+	humanRouteResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/"+agentUUIDB+"/metadata", map[string]any{
+		"metadata": map[string]any{"public": false},
 	}, headers)
 	if humanRouteResp.Code != http.StatusUnauthorized {
 		t.Fatalf("expected agent token on human control-plane route to return 401, got %d %s", humanRouteResp.Code, humanRouteResp.Body.String())
@@ -1379,6 +1324,59 @@ func TestAdminSnapshotDoesNotLeakMessagePayloads(t *testing.T) {
 	bodyText := snap.Body.String()
 	if strings.Contains(bodyText, secretPayload) || strings.Contains(bodyText, "\"payload\"") {
 		t.Fatalf("snapshot should not include message payload data: %s", bodyText)
+	}
+}
+
+func TestAdminSnapshotHeaderKeyAccess(t *testing.T) {
+	st := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "snapshot-secret", "", "molten.bot", true, 15*time.Minute, false)
+	router := NewRouter(h)
+
+	unauth := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, nil)
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected admin snapshot without auth to return 401, got %d %s", unauth.Code, unauth.Body.String())
+	}
+
+	wrongKey := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, map[string]string{
+		"X-Admin-Snapshot-Key": "wrong",
+	})
+	if wrongKey.Code != http.StatusUnauthorized {
+		t.Fatalf("expected admin snapshot with wrong key to return 401, got %d %s", wrongKey.Code, wrongKey.Body.String())
+	}
+
+	withKey := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, map[string]string{
+		"X-Admin-Snapshot-Key": "snapshot-secret",
+	})
+	if withKey.Code != http.StatusOK {
+		t.Fatalf("expected admin snapshot with key to return 200, got %d %s", withKey.Code, withKey.Body.String())
+	}
+
+	superAdmin := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, humanHeaders("root", "root@molten.bot"))
+	if superAdmin.Code != http.StatusOK {
+		t.Fatalf("expected super-admin snapshot without key to return 200, got %d %s", superAdmin.Code, superAdmin.Body.String())
+	}
+}
+
+func TestMetadataValidationRejectsNonObjectAndOversizedPayload(t *testing.T) {
+	router := newTestRouter()
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	nonObject := doJSONRequest(t, router, http.MethodPatch, "/v1/me/metadata", map[string]any{
+		"metadata": []string{"not", "an", "object"},
+	}, humanHeaders("alice", "alice@a.test"))
+	if nonObject.Code != http.StatusBadRequest {
+		t.Fatalf("expected non-object metadata to return 400, got %d %s", nonObject.Code, nonObject.Body.String())
+	}
+
+	tooLargeValue := strings.Repeat("x", maxMetadataBytes+1)
+	tooLarge := doJSONRequest(t, router, http.MethodPatch, "/v1/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"description": tooLargeValue,
+		},
+	}, humanHeaders("alice", "alice@a.test"))
+	if tooLarge.Code != http.StatusBadRequest {
+		t.Fatalf("expected oversized metadata to return 400, got %d %s", tooLarge.Code, tooLarge.Body.String())
 	}
 }
 
@@ -1443,7 +1441,7 @@ func TestUIRoutes_JavascriptAssets(t *testing.T) {
 func TestHeadlessModeDisablesUIRoutes(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "molten.bot", true, 15*time.Minute, true)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, true)
 	router := NewRouter(h)
 
 	me := doJSONRequest(t, router, http.MethodGet, "/v1/me", nil, humanHeaders("alice", "alice@a.test"))
@@ -1527,26 +1525,5 @@ func TestAgentLimitAndSuperAdminBypass(t *testing.T) {
 	}, humanHeaders("root", "root@molten.bot"))
 	if createThree.Code != http.StatusCreated {
 		t.Fatalf("expected root third agent to bypass limit, got %d %s", createThree.Code, createThree.Body.String())
-	}
-}
-
-func TestLiveSnapshotEndpoint(t *testing.T) {
-	router := newTestRouter()
-	orgID := createOrg(t, router, "alice", "alice@a.test", "Snapshot Org")
-	aliceID := currentHumanID(t, router, "alice", "alice@a.test")
-	_ = registerAgent(t, router, "alice", "alice@a.test", orgID, "snapshot-agent", aliceID)
-
-	resp := doJSONRequest(t, router, http.MethodGet, "/v1/live/snapshot", nil, nil)
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected /v1/live/snapshot 200, got %d %s", resp.Code, resp.Body.String())
-	}
-	payload := decodeJSONMap(t, resp.Body.Bytes())
-	orgs, ok := payload["organizations"].([]any)
-	if !ok || len(orgs) == 0 {
-		t.Fatalf("expected non-empty organizations in snapshot, got %v", payload["organizations"])
-	}
-	first, _ := orgs[0].(map[string]any)
-	if first["handle"] == "" {
-		t.Fatalf("expected organization handle in snapshot row: %v", first)
 	}
 }

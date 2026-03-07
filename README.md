@@ -96,7 +96,7 @@ docker build -t statocyst:local .
 
 ### Caller Contract (must stay stable)
 
-- `Public` (no auth): `/health`, `/openapi.yaml`, `/v1/live/snapshot`.
+- `Public` (no auth): `/health`, `/openapi.yaml`.
 - `Human control-plane auth`: `/v1/me*`, `/v1/org*`, `/v1/agent-trusts*`, `/v1/org-trusts*`, `/v1/agents/{agent_uuid}*`, `/v1/agents/bind-tokens`.
 - `Agent bootstrap` (no prior auth): `POST /v1/agents/bind` with one-time `bind_token`.
 - `Agent runtime auth`: `/v1/agents/me/capabilities`, `/v1/agents/me/skill`, `/v1/messages/publish`, `/v1/messages/pull` using agent bearer token.

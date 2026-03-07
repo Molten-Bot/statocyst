@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,8 +21,7 @@ type createOrgRequest struct {
 }
 
 type updateMyProfileRequest struct {
-	Handle   *string `json:"handle,omitempty"`
-	IsPublic *bool   `json:"is_public,omitempty"`
+	Handle *string `json:"handle,omitempty"`
 }
 
 type createInviteRequest struct {
@@ -51,8 +51,8 @@ type registerAgentRequest struct {
 	OwnerHumanID *string `json:"owner_human_id,omitempty"`
 }
 
-type updateVisibilityRequest struct {
-	IsPublic *bool `json:"is_public,omitempty"`
+type updateMetadataRequest struct {
+	Metadata json.RawMessage `json:"metadata"`
 }
 
 type trustOrgRequest struct {
@@ -93,6 +93,7 @@ const (
 	defaultInviteExpiryDays = 7
 	maxInviteExpiryDays     = 365
 	defaultUIAppName        = "Statocyst"
+	maxMetadataBytes        = 64 * 1024
 )
 
 func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
@@ -137,12 +138,52 @@ func hasUIConfigPrivilegedAccess(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(presentedKey), []byte(expectedKey)) == 1
 }
 
+func (h *Handler) hasAdminSnapshotKeyAccess(r *http.Request) bool {
+	expectedKey := strings.TrimSpace(h.adminSnapshotKey)
+	if expectedKey == "" {
+		return false
+	}
+	presentedKey := strings.TrimSpace(r.Header.Get("X-Admin-Snapshot-Key"))
+	if presentedKey == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presentedKey), []byte(expectedKey)) == 1
+}
+
 func uiAppName() string {
 	name := strings.TrimSpace(os.Getenv("STATOCYST_APP_NAME"))
 	if name == "" {
 		return defaultUIAppName
 	}
 	return name
+}
+
+func decodeMetadataUpdateRequest(r *http.Request) (map[string]any, error) {
+	var req updateMetadataRequest
+	if err := decodeJSON(r, &req); err != nil {
+		return nil, errors.New("invalid JSON request")
+	}
+	if len(req.Metadata) == 0 {
+		return nil, errors.New("metadata is required")
+	}
+
+	var decoded any
+	if err := json.Unmarshal(req.Metadata, &decoded); err != nil {
+		return nil, errors.New("metadata must be a valid JSON object")
+	}
+	metadata, ok := decoded.(map[string]any)
+	if !ok {
+		return nil, errors.New("metadata must be a JSON object")
+	}
+
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, errors.New("metadata must be a valid JSON object")
+	}
+	if len(body) > maxMetadataBytes {
+		return nil, fmt.Errorf("metadata exceeds %d bytes", maxMetadataBytes)
+	}
+	return metadata, nil
 }
 
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +227,7 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		human, err := h.control.UpdateHumanProfile(actor.Human.HumanID, handle, req.IsPublic, req.Handle != nil, h.now().UTC())
+		human, err := h.control.UpdateHumanProfile(actor.Human.HumanID, handle, req.Handle != nil, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrHumanNotFound):
@@ -214,6 +255,42 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
+}
+
+func (h *Handler) handleMeMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	actor, err := h.authenticateHuman(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
+		return
+	}
+	if h.requireHandleConfirmedForWrite(w, actor) {
+		return
+	}
+
+	metadata, err := decodeMetadataUpdateRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	human, err := h.control.UpdateHumanMetadata(actor.Human.HumanID, metadata, h.now().UTC())
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrHumanNotFound):
+			writeError(w, http.StatusNotFound, "unknown_human", "human not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to update human metadata")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"human": human,
+	})
 }
 
 func (h *Handler) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
@@ -542,7 +619,11 @@ func (h *Handler) ensureHumanOwnedAgentLimit(w http.ResponseWriter, ownerHumanID
 }
 
 func (h *Handler) handleAgentMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+	writeMethodNotAllowed(w)
+}
+
+func (h *Handler) handleAgentMeMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
 		writeMethodNotAllowed(w)
 		return
 	}
@@ -553,23 +634,19 @@ func (h *Handler) handleAgentMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req updateVisibilityRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
-		return
-	}
-	if req.IsPublic == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "is_public is required")
+	metadata, err := decodeMetadataUpdateRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	agent, err := h.control.SetAgentVisibilitySelf(agentUUID, *req.IsPublic, h.now().UTC())
+	agent, err := h.control.UpdateAgentMetadataSelf(agentUUID, metadata, h.now().UTC())
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):
 			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
 		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent visibility")
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
 		}
 		return
 	}
@@ -787,15 +864,19 @@ func (h *Handler) handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	actor, err := h.authenticateHuman(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
-		return
+
+	if !h.hasAdminSnapshotKeyAccess(r) {
+		actor, err := h.authenticateHuman(r)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
+			return
+		}
+		if !actor.IsSuperAdmin {
+			writeError(w, http.StatusForbidden, "forbidden", "super admin required")
+			return
+		}
 	}
-	if !actor.IsSuperAdmin {
-		writeError(w, http.StatusForbidden, "forbidden", "super admin required")
-		return
-	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"snapshot": h.control.AdminSnapshot(),
 	})
@@ -865,6 +946,18 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 3 {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	sub := parts[3]
+
+	switch sub {
+	case "metadata":
+		if len(parts) != 4 {
+			writeError(w, http.StatusNotFound, "not_found", "route not found")
+			return
+		}
 		if r.Method != http.MethodPatch {
 			writeMethodNotAllowed(w)
 			return
@@ -872,17 +965,12 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 		if h.requireHandleConfirmedForWrite(w, actor) {
 			return
 		}
-		var req updateVisibilityRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+		metadata, err := decodeMetadataUpdateRequest(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
-		if req.IsPublic == nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "is_public is required")
-			return
-		}
-
-		org, err := h.control.SetOrgVisibility(orgID, *req.IsPublic, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
+		org, err := h.control.UpdateOrgMetadata(orgID, metadata, actor.Human.HumanID, actor.IsSuperAdmin, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrOrgNotFound):
@@ -890,17 +978,12 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, store.ErrUnauthorizedRole):
 				writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
 			default:
-				writeError(w, http.StatusInternalServerError, "store_error", "failed to update organization visibility")
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to update organization metadata")
 			}
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"organization": org})
 		return
-	}
-
-	sub := parts[3]
-
-	switch sub {
 	case "invites":
 		if len(parts) != 4 {
 			writeError(w, http.StatusNotFound, "not_found", "route not found")
@@ -1624,6 +1707,10 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 		action = "bind"
 		agentRef = strings.Trim(strings.TrimSuffix(tail, "/bind"), "/")
 	}
+	if r.Method == http.MethodPatch && strings.HasSuffix(tail, "/metadata") {
+		action = "metadata"
+		agentRef = strings.Trim(strings.TrimSuffix(tail, "/metadata"), "/")
+	}
 	agentRef = strings.TrimSpace(agentRef)
 	if agentRef == "" {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
@@ -1688,6 +1775,30 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if action == "metadata" {
+		metadata, err := decodeMetadataUpdateRequest(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		agent, err := h.control.UpdateAgentMetadata(agentUUID, metadata, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrAgentNotFound):
+				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			case errors.Is(err, store.ErrUnauthorizedRole):
+				writeError(w, http.StatusForbidden, "forbidden", "admin/owner required")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"agent": agent,
+		})
+		return
+	}
+
 	switch r.Method {
 	case http.MethodDelete:
 		if err := h.control.RevokeAgent(agentUUID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin); err != nil {
@@ -1705,32 +1816,6 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 			"status":     "ok",
 			"agent_uuid": agentUUID,
 			"result":     "revoked",
-		})
-		return
-	case http.MethodPatch:
-		var req updateVisibilityRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
-			return
-		}
-		if req.IsPublic == nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "is_public is required")
-			return
-		}
-		agent, err := h.control.SetAgentVisibility(agentUUID, *req.IsPublic, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin)
-		if err != nil {
-			switch {
-			case errors.Is(err, store.ErrAgentNotFound):
-				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
-			case errors.Is(err, store.ErrUnauthorizedRole):
-				writeError(w, http.StatusForbidden, "forbidden", "admin/owner required")
-			default:
-				writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent visibility")
-			}
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"agent": agent,
 		})
 		return
 	default:

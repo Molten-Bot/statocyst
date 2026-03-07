@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -129,6 +130,9 @@ func (s *MemoryStore) UpsertHuman(provider, subject, email string, emailVerified
 	key := authKey(provider, subject)
 	if humanID, ok := s.humanByAuthKey[key]; ok {
 		h := s.humans[humanID]
+		if h.Metadata == nil {
+			h.Metadata = map[string]any{}
+		}
 		if email != "" && !strings.EqualFold(h.Email, email) {
 			h.Email = email
 		}
@@ -152,7 +156,7 @@ func (s *MemoryStore) UpsertHuman(provider, subject, email string, emailVerified
 		AuthSubject:   subject,
 		Email:         email,
 		EmailVerified: emailVerified,
-		IsPublic:      true,
+		Metadata:      map[string]any{},
 		CreatedAt:     now,
 	}
 	s.humans[humanID] = h
@@ -161,13 +165,16 @@ func (s *MemoryStore) UpsertHuman(provider, subject, email string, emailVerified
 	return h, nil
 }
 
-func (s *MemoryStore) UpdateHumanProfile(humanID, handle string, isPublic *bool, confirmHandle bool, now time.Time) (model.Human, error) {
+func (s *MemoryStore) UpdateHumanProfile(humanID, handle string, confirmHandle bool, now time.Time) (model.Human, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	h, ok := s.humans[humanID]
 	if !ok {
 		return model.Human{}, ErrHumanNotFound
+	}
+	if h.Metadata == nil {
+		h.Metadata = map[string]any{}
 	}
 	if handle != "" {
 		nextHandle := normalizeHumanHandleCandidate(handle)
@@ -187,9 +194,19 @@ func (s *MemoryStore) UpdateHumanProfile(humanID, handle string, isPublic *bool,
 		confirmedAt := now
 		h.HandleConfirmedAt = &confirmedAt
 	}
-	if isPublic != nil {
-		h.IsPublic = *isPublic
+	s.humans[humanID] = h
+	return h, nil
+}
+
+func (s *MemoryStore) UpdateHumanMetadata(humanID string, metadata map[string]any, now time.Time) (model.Human, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	h, ok := s.humans[humanID]
+	if !ok {
+		return model.Human{}, ErrHumanNotFound
 	}
+	h.Metadata = copyMetadata(metadata)
 	s.humans[humanID] = h
 	return h, nil
 }
@@ -218,7 +235,7 @@ func (s *MemoryStore) CreateOrg(handle, displayName string, creatorHumanID strin
 		OrgID:       orgID,
 		Handle:      handleKey,
 		DisplayName: strings.TrimSpace(displayName),
-		IsPublic:    true,
+		Metadata:    map[string]any{},
 		CreatedAt:   now,
 		CreatedBy:   creatorHumanID,
 	}
@@ -282,7 +299,7 @@ func (s *MemoryStore) ensurePersonalOrgLocked(humanID string, now time.Time, idF
 		OrgID:       orgID,
 		Handle:      handle,
 		DisplayName: fmt.Sprintf("Personal %s", s.humans[humanID].Handle),
-		IsPublic:    true,
+		Metadata:    map[string]any{},
 		CreatedAt:   now,
 		CreatedBy:   humanID,
 	}
@@ -737,7 +754,7 @@ func (s *MemoryStore) ListOrgHumans(orgID, requesterHumanID string, isSuperAdmin
 			Role:         m.Role,
 			Status:       m.Status,
 			AuthProvider: h.AuthProvider,
-			IsPublic:     h.IsPublic,
+			Metadata:     copyMetadata(h.Metadata),
 		})
 	}
 	return out, nil
@@ -815,7 +832,7 @@ func (s *MemoryStore) RegisterAgent(orgID, agentID string, ownerHumanID *string,
 		OwnerHumanID: ownerHumanID,
 		TokenHash:    tokenHash,
 		Status:       model.StatusActive,
-		IsPublic:     true,
+		Metadata:     map[string]any{},
 		CreatedBy:    actorHumanID,
 		CreatedAt:    now,
 	}
@@ -966,7 +983,7 @@ func (s *MemoryStore) RedeemBindToken(bindTokenHash, agentID, agentTokenHash str
 		OwnerHumanID: bind.OwnerHumanID,
 		TokenHash:    agentTokenHash,
 		Status:       model.StatusActive,
-		IsPublic:     true,
+		Metadata:     map[string]any{},
 		CreatedBy:    bind.CreatedBy,
 		CreatedAt:    now,
 	}
@@ -1043,7 +1060,7 @@ func (s *MemoryStore) RevokeAgent(agentUUID, actorHumanID string, now time.Time,
 	return nil
 }
 
-func (s *MemoryStore) SetOrgVisibility(orgID string, isPublic bool, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error) {
+func (s *MemoryStore) UpdateOrgMetadata(orgID string, metadata map[string]any, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1054,13 +1071,13 @@ func (s *MemoryStore) SetOrgVisibility(orgID string, isPublic bool, actorHumanID
 	if !isSuperAdmin && !hasRoleAtLeast(s.membershipRoleLocked(orgID, actorHumanID), model.RoleAdmin) {
 		return model.Organization{}, ErrUnauthorizedRole
 	}
-	org.IsPublic = isPublic
+	org.Metadata = copyMetadata(metadata)
 	s.orgs[orgID] = org
-	s.appendAuditLocked(orgID, actorHumanID, "org", "set_visibility", orgID, map[string]any{"is_public": isPublic}, now)
+	s.appendAuditLocked(orgID, actorHumanID, "org", "set_metadata", orgID, metadataAuditSummary(metadata), now)
 	return org, nil
 }
 
-func (s *MemoryStore) SetAgentVisibility(agentUUID string, isPublic bool, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error) {
+func (s *MemoryStore) UpdateAgentMetadata(agentUUID string, metadata map[string]any, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1071,16 +1088,15 @@ func (s *MemoryStore) SetAgentVisibility(agentUUID string, isPublic bool, actorH
 	if !isSuperAdmin && !s.canManageAgentLocked(agent, actorHumanID) {
 		return model.Agent{}, ErrUnauthorizedRole
 	}
-	agent.IsPublic = isPublic
+	agent.Metadata = copyMetadata(metadata)
 	s.agents[agentUUID] = agent
-	s.appendAuditLocked(agent.OrgID, actorHumanID, "agent", "set_visibility", agentUUID, map[string]any{
-		"is_public": isPublic,
-		"agent_id":  agent.AgentID,
-	}, now)
+	summary := metadataAuditSummary(metadata)
+	summary["agent_id"] = agent.AgentID
+	s.appendAuditLocked(agent.OrgID, actorHumanID, "agent", "set_metadata", agentUUID, summary, now)
 	return agent, nil
 }
 
-func (s *MemoryStore) SetAgentVisibilitySelf(agentUUID string, isPublic bool, now time.Time) (model.Agent, error) {
+func (s *MemoryStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1088,13 +1104,38 @@ func (s *MemoryStore) SetAgentVisibilitySelf(agentUUID string, isPublic bool, no
 	if !ok {
 		return model.Agent{}, ErrAgentNotFound
 	}
-	agent.IsPublic = isPublic
+	agent.Metadata = copyMetadata(metadata)
 	s.agents[agentUUID] = agent
-	s.appendAuditLocked(agent.OrgID, "", "agent", "set_visibility_self", agentUUID, map[string]any{
-		"is_public": isPublic,
-		"agent_id":  agent.AgentID,
-	}, now)
+	summary := metadataAuditSummary(metadata)
+	summary["agent_id"] = agent.AgentID
+	s.appendAuditLocked(agent.OrgID, "", "agent", "set_metadata_self", agentUUID, summary, now)
 	return agent, nil
+}
+
+func metadataAuditSummary(metadata map[string]any) map[string]any {
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	summary := map[string]any{
+		"metadata_keys": keys,
+	}
+	if body, err := json.Marshal(metadata); err == nil {
+		summary["metadata_size_bytes"] = len(body)
+	}
+	return summary
+}
+
+func copyMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		out[key] = value
+	}
+	return out
 }
 
 func (s *MemoryStore) AgentUUIDForTokenHash(tokenHash string) (string, error) {
