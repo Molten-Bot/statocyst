@@ -63,17 +63,18 @@ type Invite struct {
 }
 
 type Agent struct {
-	AgentUUID    string         `json:"agent_uuid"`
-	AgentID      string         `json:"agent_id"` // URI metadata: org/agent or org/human/agent
-	Handle       string         `json:"handle"`
-	OrgID        string         `json:"org_id"`
-	OwnerHumanID *string        `json:"owner_human_id,omitempty"`
-	TokenHash    string         `json:"-"`
-	Status       string         `json:"status"`
-	Metadata     map[string]any `json:"metadata"`
-	CreatedBy    string         `json:"created_by"`
-	CreatedAt    time.Time      `json:"created_at"`
-	RevokedAt    *time.Time     `json:"revoked_at,omitempty"`
+	AgentUUID         string         `json:"agent_uuid"`
+	AgentID           string         `json:"agent_id"` // URI metadata: org/agent or org/human/agent
+	Handle            string         `json:"handle"`
+	HandleFinalizedAt *time.Time     `json:"handle_finalized_at,omitempty"`
+	OrgID             string         `json:"org_id"`
+	OwnerHumanID      *string        `json:"owner_human_id,omitempty"`
+	TokenHash         string         `json:"-"`
+	Status            string         `json:"status"`
+	Metadata          map[string]any `json:"metadata"`
+	CreatedBy         string         `json:"created_by"`
+	CreatedAt         time.Time      `json:"created_at"`
+	RevokedAt         *time.Time     `json:"revoked_at,omitempty"`
 }
 
 type BindToken struct {

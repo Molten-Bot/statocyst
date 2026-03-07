@@ -125,11 +125,11 @@ func TestHandleContractValidationRejectsShortAndBlocked(t *testing.T) {
 		"bind_token": bindToken,
 		"agent_id":   "f-u-c-k",
 	}, nil)
-	if blockedRedeem.Code != http.StatusBadRequest {
-		t.Fatalf("expected blocked bind redeem handle to fail with 400, got %d %s", blockedRedeem.Code, blockedRedeem.Body.String())
+	if blockedRedeem.Code != http.StatusCreated {
+		t.Fatalf("expected bind redeem to ignore supplied agent_id and succeed, got %d %s", blockedRedeem.Code, blockedRedeem.Body.String())
 	}
-	if decodeJSONMap(t, blockedRedeem.Body.Bytes())["error"] != "invalid_agent_id" {
-		t.Fatalf("expected invalid_agent_id for blocked bind redeem handle")
+	if token, _ := decodeJSONMap(t, blockedRedeem.Body.Bytes())["token"].(string); strings.TrimSpace(token) == "" {
+		t.Fatalf("expected bind redeem success payload to include token")
 	}
 }
 
@@ -295,12 +295,13 @@ func TestAgentTrustRejectsMismatchedAgentUUIDAndAgentID(t *testing.T) {
 func TestAgentTrustRejectsAmbiguousAgentID(t *testing.T) {
 	router := newTestRouter()
 	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	bobHumanID := currentHumanID(t, router, "bob", "bob@b.test")
 	orgA := createOrg(t, router, "alice", "alice@a.test", "Trust Ambiguous A")
 	orgB := createOrg(t, router, "bob", "bob@b.test", "Trust Ambiguous B")
 
 	_, _, _, _ = registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "shared", aliceHumanID)
 	_, _, peerID, _ := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgA, "peer", aliceHumanID)
-	_, _, _, _ = registerAgentWithDetails(t, router, "bob", "bob@b.test", orgB, "shared", "")
+	_, _, _, _ = registerAgentWithDetails(t, router, "bob", "bob@b.test", orgB, "shared", bobHumanID)
 
 	resp := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts", map[string]any{
 		"org_id":        orgA,

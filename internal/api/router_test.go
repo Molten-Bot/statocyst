@@ -973,7 +973,7 @@ func TestMyAgentsAndImmediateSelfBond(t *testing.T) {
 	}
 }
 
-func TestMyAgentBindTokenRedeemWithAgentChosenName(t *testing.T) {
+func TestMyAgentBindTokenRedeemUsesTempHandleThenFinalizesOnce(t *testing.T) {
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
 	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
@@ -995,33 +995,60 @@ func TestMyAgentBindTokenRedeemWithAgentChosenName(t *testing.T) {
 		t.Fatalf("redeem bind token failed: %d %s", redeemResp.Code, redeemResp.Body.String())
 	}
 	redeemPayload := decodeJSONMap(t, redeemResp.Body.Bytes())
-	if redeemPayload["token"] == "" {
+	token, _ := redeemPayload["token"].(string)
+	if token == "" {
 		t.Fatalf("expected bind response token")
 	}
 
-	listResp := doJSONRequest(t, router, http.MethodGet, "/v1/me/agents", nil, humanHeaders("alice", "alice@a.test"))
-	if listResp.Code != http.StatusOK {
-		t.Fatalf("list my agents failed: %d %s", listResp.Code, listResp.Body.String())
+	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if capsResp.Code != http.StatusOK {
+		t.Fatalf("agent capabilities failed: %d %s", capsResp.Code, capsResp.Body.String())
 	}
-	listPayload := decodeJSONMap(t, listResp.Body.Bytes())
-	agents, ok := listPayload["agents"].([]any)
-	if !ok || len(agents) == 0 {
-		t.Fatalf("expected at least one agent in my list, got %v", listPayload["agents"])
+	capsPayload := decodeJSONMap(t, capsResp.Body.Bytes())
+	capsAgent, _ := capsPayload["agent"].(map[string]any)
+	agentUUID, _ := capsAgent["agent_uuid"].(string)
+	if strings.TrimSpace(agentUUID) == "" {
+		t.Fatalf("expected capabilities payload agent_uuid")
 	}
-	found := false
-	for _, item := range agents {
-		agent, _ := item.(map[string]any)
-		if agent["handle"] == "alice-agent-picked-name" {
-			agentID, _ := agent["agent_id"].(string)
-			if !strings.HasSuffix(agentID, "/alice-agent-picked-name") {
-				t.Fatalf("expected canonical URI to end with /alice-agent-picked-name, got %q", agentID)
-			}
-			found = true
-			break
-		}
+	initialAgentID, _ := capsAgent["agent_id"].(string)
+	if !strings.Contains(initialAgentID, "/tmp-") {
+		t.Fatalf("expected bind redeem to create temporary handle URI, got %q", initialAgentID)
 	}
-	if !found {
-		t.Fatalf("expected agent created via bind redeem to appear in /v1/me/agents")
+
+	firstFinalize := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
+		"handle": "alice-agent-picked-name",
+	}, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if firstFinalize.Code != http.StatusOK {
+		t.Fatalf("expected first finalize patch to return 200, got %d %s", firstFinalize.Code, firstFinalize.Body.String())
+	}
+	firstFinalizePayload := decodeJSONMap(t, firstFinalize.Body.Bytes())
+	firstFinalizeAgent, _ := firstFinalizePayload["agent"].(map[string]any)
+	if firstFinalizeAgent["agent_uuid"] != agentUUID {
+		t.Fatalf("expected finalize to update authenticated agent %q, got %v", agentUUID, firstFinalizeAgent["agent_uuid"])
+	}
+	if firstFinalizeAgent["handle"] != "alice-agent-picked-name" {
+		t.Fatalf("expected finalized handle alice-agent-picked-name, got %v", firstFinalizeAgent["handle"])
+	}
+	firstFinalizeAgentID, _ := firstFinalizeAgent["agent_id"].(string)
+	if !strings.HasSuffix(firstFinalizeAgentID, "/alice-agent-picked-name") {
+		t.Fatalf("expected finalized URI to end with /alice-agent-picked-name, got %q", firstFinalizeAgentID)
+	}
+
+	secondFinalize := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
+		"handle": "alice-agent-second-name",
+	}, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if secondFinalize.Code != http.StatusConflict {
+		t.Fatalf("expected second finalize patch to return 409, got %d %s", secondFinalize.Code, secondFinalize.Body.String())
+	}
+	secondFinalizePayload := decodeJSONMap(t, secondFinalize.Body.Bytes())
+	if secondFinalizePayload["error"] != "agent_handle_locked" {
+		t.Fatalf("expected second finalize error agent_handle_locked, got %v payload=%v", secondFinalizePayload["error"], secondFinalizePayload)
 	}
 }
 
@@ -1094,6 +1121,45 @@ func TestPublishDropAndQueuedPaths(t *testing.T) {
 	pullResp := pull(t, router, tokenB, 50)
 	if pullResp.Code != http.StatusOK {
 		t.Fatalf("expected pull 200, got %d", pullResp.Code)
+	}
+}
+
+func TestRevokedAgentCannotPublishOrPullAndQueuedMessagesArePurged(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, agentUUIDA, agentUUIDB := setupTrustedAgents(t, router)
+
+	queuedBeforeRevoke := publish(t, router, tokenA, agentUUIDB, "queued-before-revoke")
+	if queuedBeforeRevoke.Code != http.StatusAccepted {
+		t.Fatalf("expected publish before revoke to be accepted, got %d %s", queuedBeforeRevoke.Code, queuedBeforeRevoke.Body.String())
+	}
+	queuedPayload := decodeJSONMap(t, queuedBeforeRevoke.Body.Bytes())
+	if queuedPayload["status"] != "queued" {
+		t.Fatalf("expected queued status before revoke, got %v", queuedPayload["status"])
+	}
+
+	revokeResp := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUIDA, nil, humanHeaders("alice", "alice@a.test"))
+	if revokeResp.Code != http.StatusOK {
+		t.Fatalf("revoke agent failed: %d %s", revokeResp.Code, revokeResp.Body.String())
+	}
+
+	publishAfterRevoke := publish(t, router, tokenA, agentUUIDB, "publish-after-revoke")
+	if publishAfterRevoke.Code != http.StatusUnauthorized {
+		t.Fatalf("expected revoked token publish to return 401, got %d %s", publishAfterRevoke.Code, publishAfterRevoke.Body.String())
+	}
+
+	pullAfterRevoke := pull(t, router, tokenA, 0)
+	if pullAfterRevoke.Code != http.StatusUnauthorized {
+		t.Fatalf("expected revoked token pull to return 401, got %d %s", pullAfterRevoke.Code, pullAfterRevoke.Body.String())
+	}
+
+	publishToRevoked := publish(t, router, tokenB, agentUUIDA, "to-revoked")
+	if publishToRevoked.Code != http.StatusNotFound {
+		t.Fatalf("expected publish to revoked receiver to return 404, got %d %s", publishToRevoked.Code, publishToRevoked.Body.String())
+	}
+
+	receiverPull := pull(t, router, tokenB, 0)
+	if receiverPull.Code != http.StatusNoContent {
+		t.Fatalf("expected revoked sender messages to be purged from receiver queue, got %d %s", receiverPull.Code, receiverPull.Body.String())
 	}
 }
 
@@ -1331,21 +1397,62 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	router := newTestRouter()
 
 	orgA := createOrg(t, router, "alice", "alice@a.test", "Org Agents Unique")
-	registerAgent(t, router, "alice", "alice@a.test", orgA, "org-agent", "")
-
-	bindCreate := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
+	bindCreateA := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
 		"org_id": orgA,
 	}, humanHeaders("alice", "alice@a.test"))
-	if bindCreate.Code != http.StatusCreated {
-		t.Fatalf("expected bind token creation for duplicate org-bound test, got %d %s", bindCreate.Code, bindCreate.Body.String())
+	if bindCreateA.Code != http.StatusCreated {
+		t.Fatalf("expected bind token creation for duplicate org-bound test, got %d %s", bindCreateA.Code, bindCreateA.Body.String())
 	}
-	bindToken, _ := decodeJSONMap(t, bindCreate.Body.Bytes())["bind_token"].(string)
-	dup := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
-		"bind_token": bindToken,
-		"agent_id":   "ORG-AGENT",
+	bindTokenA, _ := decodeJSONMap(t, bindCreateA.Body.Bytes())["bind_token"].(string)
+	if strings.TrimSpace(bindTokenA) == "" {
+		t.Fatalf("expected first bind token")
+	}
+	redeemA := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
+		"bind_token": bindTokenA,
 	}, nil)
+	if redeemA.Code != http.StatusCreated {
+		t.Fatalf("expected first bind redeem success, got %d %s", redeemA.Code, redeemA.Body.String())
+	}
+	tokenA, _ := decodeJSONMap(t, redeemA.Body.Bytes())["token"].(string)
+	if strings.TrimSpace(tokenA) == "" {
+		t.Fatalf("expected first agent token from bind redeem")
+	}
+	finalizeA := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
+		"handle": "org-agent",
+	}, map[string]string{
+		"Authorization": "Bearer " + tokenA,
+	})
+	if finalizeA.Code != http.StatusOK {
+		t.Fatalf("expected first org-bound finalize success, got %d %s", finalizeA.Code, finalizeA.Body.String())
+	}
+
+	bindCreateB := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
+		"org_id": orgA,
+	}, humanHeaders("alice", "alice@a.test"))
+	if bindCreateB.Code != http.StatusCreated {
+		t.Fatalf("expected second bind token creation success, got %d %s", bindCreateB.Code, bindCreateB.Body.String())
+	}
+	bindTokenB, _ := decodeJSONMap(t, bindCreateB.Body.Bytes())["bind_token"].(string)
+	if strings.TrimSpace(bindTokenB) == "" {
+		t.Fatalf("expected second bind token")
+	}
+	redeemB := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
+		"bind_token": bindTokenB,
+	}, nil)
+	if redeemB.Code != http.StatusCreated {
+		t.Fatalf("expected second bind redeem success, got %d %s", redeemB.Code, redeemB.Body.String())
+	}
+	tokenB, _ := decodeJSONMap(t, redeemB.Body.Bytes())["token"].(string)
+	if strings.TrimSpace(tokenB) == "" {
+		t.Fatalf("expected second agent token from bind redeem")
+	}
+	dup := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
+		"handle": "ORG-AGENT",
+	}, map[string]string{
+		"Authorization": "Bearer " + tokenB,
+	})
 	if dup.Code != http.StatusConflict {
-		t.Fatalf("expected 409 for duplicate org-bound agent name in same org, got %d %s", dup.Code, dup.Body.String())
+		t.Fatalf("expected 409 for duplicate org-bound finalize handle in same org, got %d %s", dup.Code, dup.Body.String())
 	}
 	body := decodeJSONMap(t, dup.Body.Bytes())
 	if body["error"] != "agent_exists" {

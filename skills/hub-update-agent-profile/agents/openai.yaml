@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hub Update Agent Profile"
+  short_description: "Update agent metadata on Hub API"
+  default_prompt: "Use $hub-update-agent-profile to replace authenticated agent metadata via PATCH /v1/agents/me/metadata."

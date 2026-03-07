@@ -596,7 +596,8 @@ paths:
       summary: Agent self-onboarding (bind token -> bearer token)
       description: |
         Primary onboarding route for agent runtimes.
-        Redeems one-time `bind_token`; optionally accepts `agent_id`.
+        Redeems one-time `bind_token` and assigns a temporary server-generated `agent_id`.
+        The agent must later finalize its permanent handle exactly once via `PATCH /v1/agents/me` (or `/v1/agents/me/metadata`).
         This bootstrap route intentionally requires no prior auth token.
         `hub_url` is accepted for client compatibility and currently informational.
       requestBody:
@@ -613,6 +614,7 @@ paths:
                   type: string
                 agent_id:
                   type: string
+                  description: Deprecated compatibility field. Ignored by server.
       responses:
         '201':
           description: Agent onboarded; returns bearer token
@@ -620,10 +622,11 @@ paths:
           description: Bind already used or supplied agent_id exists
   /v1/agents/me:
     patch:
-      summary: Update authenticated agent metadata (alias)
+      summary: Update authenticated agent profile (alias)
       description: |
         Compatibility alias for `PATCH /v1/agents/me/metadata`.
-        Replaces the metadata object for the authenticated bearer-token agent.
+        Supports one-time handle finalization (`handle`) and metadata replacement (`metadata`).
+        Provide at least one of `handle` or `metadata`.
       security:
         - agentAuth: []
       requestBody:
@@ -632,8 +635,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [metadata]
               properties:
+                handle:
+                  type: string
                 metadata:
                   type: object
                   additionalProperties: true
@@ -655,9 +659,10 @@ paths:
           description: Unauthorized
   /v1/agents/me/metadata:
     patch:
-      summary: Update authenticated agent metadata
+      summary: Update authenticated agent profile
       description: |
-        Replaces the metadata object for the authenticated bearer-token agent.
+        Supports one-time handle finalization (`handle`) and metadata replacement (`metadata`).
+        Provide at least one of `handle` or `metadata`.
         Metadata must be a JSON object and serialized size must be <= 65536 bytes.
       security:
         - agentAuth: []
@@ -667,8 +672,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [metadata]
               properties:
+                handle:
+                  type: string
                 metadata:
                   type: object
                   additionalProperties: true

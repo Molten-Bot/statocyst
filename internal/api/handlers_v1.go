@@ -55,6 +55,11 @@ type updateMetadataRequest struct {
 	Metadata json.RawMessage `json:"metadata"`
 }
 
+type updateAgentProfileRequest struct {
+	Handle   *string         `json:"handle,omitempty"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+}
+
 type trustOrgRequest struct {
 	OrgID     string `json:"org_id"`
 	PeerOrgID string `json:"peer_org_id"`
@@ -163,12 +168,18 @@ func decodeMetadataUpdateRequest(r *http.Request) (map[string]any, error) {
 	if err := decodeJSON(r, &req); err != nil {
 		return nil, errors.New("invalid JSON request")
 	}
-	if len(req.Metadata) == 0 {
-		return nil, errors.New("metadata is required")
-	}
+	return decodeMetadataJSON(req.Metadata, true)
+}
 
+func decodeMetadataJSON(raw json.RawMessage, required bool) (map[string]any, error) {
+	if len(raw) == 0 {
+		if required {
+			return nil, errors.New("metadata is required")
+		}
+		return nil, nil
+	}
 	var decoded any
-	if err := json.Unmarshal(req.Metadata, &decoded); err != nil {
+	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, errors.New("metadata must be a valid JSON object")
 	}
 	metadata, ok := decoded.(map[string]any)
@@ -184,6 +195,31 @@ func decodeMetadataUpdateRequest(r *http.Request) (map[string]any, error) {
 		return nil, fmt.Errorf("metadata exceeds %d bytes", maxMetadataBytes)
 	}
 	return metadata, nil
+}
+
+func decodeAgentProfileUpdateRequest(r *http.Request) (*string, map[string]any, error) {
+	var req updateAgentProfileRequest
+	if err := decodeJSON(r, &req); err != nil {
+		return nil, nil, errors.New("invalid JSON request")
+	}
+
+	var handle *string
+	if req.Handle != nil {
+		candidate := normalizeHandle(*req.Handle)
+		if !validateAgentID(candidate) {
+			return nil, nil, errors.New("handle must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
+		}
+		handle = &candidate
+	}
+
+	metadata, err := decodeMetadataJSON(req.Metadata, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	if handle == nil && metadata == nil {
+		return nil, nil, errors.New("at least one of handle or metadata is required")
+	}
+	return handle, metadata, nil
 }
 
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -633,25 +669,46 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if targetAgentUUID != "" && normalizeUUID(targetAgentUUID) != agentUUID {
-		writeError(w, http.StatusForbidden, "forbidden", "agent token can only update its own metadata")
+		writeError(w, http.StatusForbidden, "forbidden", "agent token can only update its own profile")
 		return
 	}
 
-	metadata, err := decodeMetadataUpdateRequest(r)
+	handle, metadata, err := decodeAgentProfileUpdateRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	agent, err := h.control.UpdateAgentMetadataSelf(agentUUID, metadata, h.now().UTC())
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrAgentNotFound):
-			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
+	var agent model.Agent
+	if handle != nil {
+		agent, err = h.control.FinalizeAgentHandleSelf(agentUUID, *handle, h.now().UTC())
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrAgentNotFound):
+				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			case errors.Is(err, store.ErrInvalidHandle):
+				writeError(w, http.StatusBadRequest, "invalid_handle", "handle must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
+			case errors.Is(err, store.ErrAgentExists):
+				writeError(w, http.StatusConflict, "agent_exists", "agent_id already registered")
+			case errors.Is(err, store.ErrAgentHandleLocked):
+				writeError(w, http.StatusConflict, "agent_handle_locked", "agent handle is already finalized")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to finalize agent handle")
+			}
+			return
 		}
-		return
+	}
+	if metadata != nil {
+		agent, err = h.control.UpdateAgentMetadataSelf(agentUUID, metadata, h.now().UTC())
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrAgentNotFound):
+				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
+			}
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1611,13 +1668,8 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	req.BindToken = strings.TrimSpace(req.BindToken)
-	req.AgentID = normalizeHandle(req.AgentID)
 	if req.BindToken == "" {
 		writeError(w, http.StatusBadRequest, "invalid_bind_token", "bind_token is required")
-		return
-	}
-	if req.AgentID != "" && !validateAgentID(req.AgentID) {
-		writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
 		return
 	}
 
@@ -1633,16 +1685,11 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	agentID := req.AgentID
 	for attempt := 0; attempt < 8; attempt++ {
-		if agentID == "" {
-			var generated string
-			generated, err = h.generateDefaultAgentID()
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate agent_id")
-				return
-			}
-			agentID = generated
+		agentID, genErr := h.generateTemporaryAgentID()
+		if genErr != nil {
+			writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate temporary agent_id")
+			return
 		}
 
 		_, err = h.control.RedeemBindToken(bindTokenHash, agentID, auth.HashToken(agentToken), h.now().UTC())
@@ -1652,8 +1699,7 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 			})
 			return
 		}
-		if errors.Is(err, store.ErrAgentExists) && req.AgentID == "" {
-			agentID = ""
+		if errors.Is(err, store.ErrAgentExists) {
 			continue
 		}
 		switch {
@@ -1663,8 +1709,6 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "bind_expired", "bind token has expired")
 		case errors.Is(err, store.ErrBindUsed):
 			writeError(w, http.StatusConflict, "bind_used", "bind token already used")
-		case errors.Is(err, store.ErrAgentExists):
-			writeError(w, http.StatusConflict, "agent_exists", "agent_id already registered")
 		case errors.Is(err, store.ErrInvalidHandle):
 			writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
 		case errors.Is(err, store.ErrMembershipNotFound):
@@ -1677,7 +1721,7 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 	writeError(w, http.StatusConflict, "agent_id_generation_failed", "failed to allocate a unique agent_id")
 }
 
-func (h *Handler) generateDefaultAgentID() (string, error) {
+func (h *Handler) generateTemporaryAgentID() (string, error) {
 	id, err := h.idFactory()
 	if err != nil {
 		return "", err
@@ -1689,7 +1733,7 @@ func (h *Handler) generateDefaultAgentID() (string, error) {
 	if len(clean) > 12 {
 		clean = clean[:12]
 	}
-	agentID := "agent-" + clean
+	agentID := "tmp-" + clean
 	if !validateAgentID(agentID) {
 		return "", errors.New("invalid generated agent_id")
 	}

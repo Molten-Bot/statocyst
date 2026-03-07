@@ -33,6 +33,7 @@ var (
 	ErrAgentExists          = errors.New("agent already exists")
 	ErrAgentNotFound        = errors.New("agent not found")
 	ErrAgentAmbiguous       = errors.New("agent reference is ambiguous")
+	ErrAgentHandleLocked    = errors.New("agent handle is already finalized")
 	ErrAgentRevoked         = errors.New("agent revoked")
 	ErrTrustNotFound        = errors.New("trust edge not found")
 	ErrUnauthorizedRole     = errors.New("unauthorized role")
@@ -825,16 +826,17 @@ func (s *MemoryStore) RegisterAgent(orgID, agentID string, ownerHumanID *string,
 	}
 
 	agent := model.Agent{
-		AgentUUID:    agentUUID,
-		AgentID:      agentURI,
-		Handle:       agentHandle,
-		OrgID:        orgID,
-		OwnerHumanID: ownerHumanID,
-		TokenHash:    tokenHash,
-		Status:       model.StatusActive,
-		Metadata:     map[string]any{},
-		CreatedBy:    actorHumanID,
-		CreatedAt:    now,
+		AgentUUID:         agentUUID,
+		AgentID:           agentURI,
+		Handle:            agentHandle,
+		HandleFinalizedAt: &now,
+		OrgID:             orgID,
+		OwnerHumanID:      ownerHumanID,
+		TokenHash:         tokenHash,
+		Status:            model.StatusActive,
+		Metadata:          map[string]any{},
+		CreatedBy:         actorHumanID,
+		CreatedAt:         now,
 	}
 	s.agents[agentUUID] = agent
 	s.agentByURI[agentURI] = agentUUID
@@ -976,16 +978,17 @@ func (s *MemoryStore) RedeemBindToken(bindTokenHash, agentID, agentTokenHash str
 	}
 
 	agent := model.Agent{
-		AgentUUID:    agentUUID,
-		AgentID:      agentURI,
-		Handle:       agentHandle,
-		OrgID:        bind.OrgID,
-		OwnerHumanID: bind.OwnerHumanID,
-		TokenHash:    agentTokenHash,
-		Status:       model.StatusActive,
-		Metadata:     map[string]any{},
-		CreatedBy:    bind.CreatedBy,
-		CreatedAt:    now,
+		AgentUUID:         agentUUID,
+		AgentID:           agentURI,
+		Handle:            agentHandle,
+		HandleFinalizedAt: nil,
+		OrgID:             bind.OrgID,
+		OwnerHumanID:      bind.OwnerHumanID,
+		TokenHash:         agentTokenHash,
+		Status:            model.StatusActive,
+		Metadata:          map[string]any{},
+		CreatedBy:         bind.CreatedBy,
+		CreatedAt:         now,
 	}
 	s.agents[agent.AgentUUID] = agent
 	s.agentByURI[agent.AgentID] = agent.AgentUUID
@@ -1013,7 +1016,7 @@ func (s *MemoryStore) RotateAgentToken(agentUUID, actorHumanID, tokenHash string
 	defer s.mu.Unlock()
 
 	agent, ok := s.agents[agentUUID]
-	if !ok {
+	if !ok || agent.Status == model.StatusRevoked {
 		return ErrAgentNotFound
 	}
 	if !isSuperAdmin && !s.canManageAgentLocked(agent, actorHumanID) {
@@ -1054,8 +1057,45 @@ func (s *MemoryStore) RevokeAgent(agentUUID, actorHumanID string, now time.Time,
 	revokedAt := now
 	agent.RevokedAt = &revokedAt
 	s.agents[agentUUID] = agent
+	revokedTrustEdges := 0
+	for edgeID, edge := range s.agentTrusts {
+		if edge.LeftID != agentUUID && edge.RightID != agentUUID {
+			continue
+		}
+		if edge.State == model.StatusRevoked {
+			continue
+		}
+		edge.State = model.StatusRevoked
+		edge.LeftApproved = false
+		edge.RightApproved = false
+		edge.UpdatedAt = now
+		s.agentTrusts[edgeID] = edge
+		revokedTrustEdges++
+	}
+
+	purgedMessages := 0
+	for queueAgentUUID, queue := range s.queues {
+		if len(queue) == 0 {
+			continue
+		}
+		filtered := queue[:0]
+		for _, msg := range queue {
+			if msg.FromAgentUUID == agentUUID || msg.ToAgentUUID == agentUUID {
+				purgedMessages++
+				continue
+			}
+			filtered = append(filtered, msg)
+		}
+		if len(filtered) == 0 {
+			delete(s.queues, queueAgentUUID)
+			continue
+		}
+		s.queues[queueAgentUUID] = filtered
+	}
 	s.appendAuditLocked(agent.OrgID, actorHumanID, "agent", "revoke", agentUUID, map[string]any{
-		"agent_id": agent.AgentID,
+		"agent_id":                  agent.AgentID,
+		"revoked_agent_trust_edges": revokedTrustEdges,
+		"purged_queued_messages":    purgedMessages,
 	}, now)
 	return nil
 }
@@ -1082,7 +1122,7 @@ func (s *MemoryStore) UpdateAgentMetadata(agentUUID string, metadata map[string]
 	defer s.mu.Unlock()
 
 	agent, ok := s.agents[agentUUID]
-	if !ok {
+	if !ok || agent.Status == model.StatusRevoked {
 		return model.Agent{}, ErrAgentNotFound
 	}
 	if !isSuperAdmin && !s.canManageAgentLocked(agent, actorHumanID) {
@@ -1101,7 +1141,7 @@ func (s *MemoryStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[str
 	defer s.mu.Unlock()
 
 	agent, ok := s.agents[agentUUID]
-	if !ok {
+	if !ok || agent.Status == model.StatusRevoked {
 		return model.Agent{}, ErrAgentNotFound
 	}
 	agent.Metadata = copyMetadata(metadata)
@@ -1109,6 +1149,92 @@ func (s *MemoryStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[str
 	summary := metadataAuditSummary(metadata)
 	summary["agent_id"] = agent.AgentID
 	s.appendAuditLocked(agent.OrgID, "", "agent", "set_metadata_self", agentUUID, summary, now)
+	return agent, nil
+}
+
+func (s *MemoryStore) FinalizeAgentHandleSelf(agentUUID, handle string, now time.Time) (model.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agents[agentUUID]
+	if !ok || agent.Status == model.StatusRevoked {
+		return model.Agent{}, ErrAgentNotFound
+	}
+
+	nextHandle := normalizeAgentNameKey(handle)
+	if err := handles.ValidateHandle(nextHandle); err != nil {
+		return model.Agent{}, ErrInvalidHandle
+	}
+
+	if agent.HandleFinalizedAt != nil {
+		if agent.Handle == nextHandle {
+			return agent, nil
+		}
+		return model.Agent{}, ErrAgentHandleLocked
+	}
+
+	var ownerHandle *string
+	if agent.OwnerHumanID != nil {
+		human, ok := s.humans[*agent.OwnerHumanID]
+		if !ok {
+			return model.Agent{}, ErrHumanNotFound
+		}
+		if err := handles.ValidateHandle(human.Handle); err != nil {
+			return model.Agent{}, ErrInvalidHandle
+		}
+		oh := human.Handle
+		ownerHandle = &oh
+	}
+
+	var nextAgentURI string
+	if agent.OrgID == "" {
+		if ownerHandle == nil {
+			return model.Agent{}, ErrMembershipNotFound
+		}
+		nextAgentURI = handles.BuildHumanAgentURI(*ownerHandle, nextHandle)
+	} else {
+		org, ok := s.orgs[agent.OrgID]
+		if !ok {
+			return model.Agent{}, ErrOrgNotFound
+		}
+		nextAgentURI = handles.BuildAgentURI(org.Handle, ownerHandle, nextHandle)
+	}
+
+	if owner, exists := s.agentByURI[nextAgentURI]; exists && owner != agent.AgentUUID {
+		return model.Agent{}, ErrAgentExists
+	}
+	if agent.OwnerHumanID != nil {
+		nextKey := humanOwnedAgentNameKey(agent.OrgID, *agent.OwnerHumanID, nextHandle)
+		if owner, exists := s.humanOwnedAgentNameIdx[nextKey]; exists && owner != agent.AgentUUID {
+			return model.Agent{}, ErrAgentExists
+		}
+		oldKey := humanOwnedAgentNameKey(agent.OrgID, *agent.OwnerHumanID, agent.Handle)
+		delete(s.humanOwnedAgentNameIdx, oldKey)
+		s.humanOwnedAgentNameIdx[nextKey] = agent.AgentUUID
+	} else {
+		nextKey := orgOwnedAgentNameKey(agent.OrgID, nextHandle)
+		if owner, exists := s.orgOwnedAgentNameIdx[nextKey]; exists && owner != agent.AgentUUID {
+			return model.Agent{}, ErrAgentExists
+		}
+		oldKey := orgOwnedAgentNameKey(agent.OrgID, agent.Handle)
+		delete(s.orgOwnedAgentNameIdx, oldKey)
+		s.orgOwnedAgentNameIdx[nextKey] = agent.AgentUUID
+	}
+
+	delete(s.agentByURI, agent.AgentID)
+	agent.Handle = nextHandle
+	agent.AgentID = nextAgentURI
+	finalizedAt := now
+	agent.HandleFinalizedAt = &finalizedAt
+	s.agentByURI[agent.AgentID] = agent.AgentUUID
+	s.agents[agent.AgentUUID] = agent
+
+	summary := map[string]any{
+		"agent_id":   agent.AgentID,
+		"agent_uuid": agent.AgentUUID,
+		"handle":     agent.Handle,
+	}
+	s.appendAuditLocked(agent.OrgID, "", "agent", "finalize_handle_self", agentUUID, summary, now)
 	return agent, nil
 }
 
@@ -1257,7 +1383,7 @@ func (s *MemoryStore) CreateOrJoinAgentTrust(orgID, agentUUID, peerAgentUUID, ac
 	defer s.mu.Unlock()
 
 	a, ok := s.agents[agentUUID]
-	if !ok {
+	if !ok || a.Status == model.StatusRevoked {
 		return model.TrustEdge{}, false, ErrAgentNotFound
 	}
 	if orgID != "" && a.OrgID != orgID {
@@ -1266,7 +1392,8 @@ func (s *MemoryStore) CreateOrJoinAgentTrust(orgID, agentUUID, peerAgentUUID, ac
 	if !isSuperAdmin && !s.canManageAgentLocked(a, actorHumanID) {
 		return model.TrustEdge{}, false, ErrUnauthorizedRole
 	}
-	if _, ok := s.agents[peerAgentUUID]; !ok {
+	peer, ok := s.agents[peerAgentUUID]
+	if !ok || peer.Status == model.StatusRevoked {
 		return model.TrustEdge{}, false, ErrAgentNotFound
 	}
 	return s.createOrJoinTrustLocked("agent", agentUUID, peerAgentUUID, actorHumanID, edgeID, now, isSuperAdmin)

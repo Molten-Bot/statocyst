@@ -75,17 +75,18 @@ type s3PersistInvite struct {
 }
 
 type s3PersistAgent struct {
-	AgentUUID    string         `json:"agent_uuid"`
-	AgentID      string         `json:"agent_id"`
-	Handle       string         `json:"handle"`
-	OrgID        string         `json:"org_id"`
-	OwnerHumanID *string        `json:"owner_human_id,omitempty"`
-	TokenHash    string         `json:"token_hash"`
-	Status       string         `json:"status"`
-	Metadata     map[string]any `json:"metadata"`
-	CreatedBy    string         `json:"created_by"`
-	CreatedAt    time.Time      `json:"created_at"`
-	RevokedAt    *time.Time     `json:"revoked_at,omitempty"`
+	AgentUUID         string         `json:"agent_uuid"`
+	AgentID           string         `json:"agent_id"`
+	Handle            string         `json:"handle"`
+	HandleFinalizedAt *time.Time     `json:"handle_finalized_at,omitempty"`
+	OrgID             string         `json:"org_id"`
+	OwnerHumanID      *string        `json:"owner_human_id,omitempty"`
+	TokenHash         string         `json:"token_hash"`
+	Status            string         `json:"status"`
+	Metadata          map[string]any `json:"metadata"`
+	CreatedBy         string         `json:"created_by"`
+	CreatedAt         time.Time      `json:"created_at"`
+	RevokedAt         *time.Time     `json:"revoked_at,omitempty"`
 }
 
 type s3PersistBindToken struct {
@@ -470,6 +471,20 @@ func (s *s3StateStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[st
 	defer s.persistMu.Unlock()
 
 	agent, err := s.MemoryStore.UpdateAgentMetadataSelf(agentUUID, metadata, now)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return model.Agent{}, err
+	}
+	return agent, nil
+}
+
+func (s *s3StateStore) FinalizeAgentHandleSelf(agentUUID, handle string, now time.Time) (model.Agent, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	agent, err := s.MemoryStore.FinalizeAgentHandleSelf(agentUUID, handle, now)
 	if err != nil {
 		return model.Agent{}, err
 	}
@@ -1366,33 +1381,35 @@ func (v s3PersistInvite) toModel() model.Invite {
 
 func persistAgent(v model.Agent) s3PersistAgent {
 	return s3PersistAgent{
-		AgentUUID:    v.AgentUUID,
-		AgentID:      v.AgentID,
-		Handle:       v.Handle,
-		OrgID:        v.OrgID,
-		OwnerHumanID: v.OwnerHumanID,
-		TokenHash:    v.TokenHash,
-		Status:       v.Status,
-		Metadata:     copyMetadata(v.Metadata),
-		CreatedBy:    v.CreatedBy,
-		CreatedAt:    v.CreatedAt,
-		RevokedAt:    v.RevokedAt,
+		AgentUUID:         v.AgentUUID,
+		AgentID:           v.AgentID,
+		Handle:            v.Handle,
+		HandleFinalizedAt: v.HandleFinalizedAt,
+		OrgID:             v.OrgID,
+		OwnerHumanID:      v.OwnerHumanID,
+		TokenHash:         v.TokenHash,
+		Status:            v.Status,
+		Metadata:          copyMetadata(v.Metadata),
+		CreatedBy:         v.CreatedBy,
+		CreatedAt:         v.CreatedAt,
+		RevokedAt:         v.RevokedAt,
 	}
 }
 
 func (v s3PersistAgent) toModel() model.Agent {
 	return model.Agent{
-		AgentUUID:    v.AgentUUID,
-		AgentID:      v.AgentID,
-		Handle:       v.Handle,
-		OrgID:        v.OrgID,
-		OwnerHumanID: v.OwnerHumanID,
-		TokenHash:    v.TokenHash,
-		Status:       v.Status,
-		Metadata:     copyMetadata(v.Metadata),
-		CreatedBy:    v.CreatedBy,
-		CreatedAt:    v.CreatedAt,
-		RevokedAt:    v.RevokedAt,
+		AgentUUID:         v.AgentUUID,
+		AgentID:           v.AgentID,
+		Handle:            v.Handle,
+		HandleFinalizedAt: v.HandleFinalizedAt,
+		OrgID:             v.OrgID,
+		OwnerHumanID:      v.OwnerHumanID,
+		TokenHash:         v.TokenHash,
+		Status:            v.Status,
+		Metadata:          copyMetadata(v.Metadata),
+		CreatedBy:         v.CreatedBy,
+		CreatedAt:         v.CreatedAt,
+		RevokedAt:         v.RevokedAt,
 	}
 }
 
