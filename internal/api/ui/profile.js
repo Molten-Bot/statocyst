@@ -22,6 +22,16 @@ function daysAgoLabel(raw) {
   return `Joined ${days} ${unit} ago`;
 }
 
+function metadataFrom(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return { ...raw };
+}
+
+function metadataPublic(raw) {
+  const value = metadataFrom(raw).public;
+  return typeof value === "boolean" ? value : true;
+}
+
 function renderOrgs(memberships) {
   const target = UI.$("profileOrgs");
   target.innerHTML = "";
@@ -63,7 +73,7 @@ function renderProfile(me, orgs) {
   UI.$("profileHandle").textContent = human?.handle || "-";
   UI.$("profileJoined").textContent = daysAgoLabel(human?.created_at);
   UI.$("profileHandleInput").value = human?.handle || "";
-  UI.$("profileIsPublic").checked = Boolean(human?.is_public);
+  UI.$("profileIsPublic").checked = metadataPublic(human?.metadata);
   renderOrgs(orgs?.data?.memberships);
 
   const isSuperAdmin = Boolean(me?.data?.is_super_admin);
@@ -227,12 +237,11 @@ async function saveProfile() {
   }
 
   setStatus("Saving profile...");
-  const res = await UI.req("/v1/me", "PATCH", {
+  const profileRes = await UI.req("/v1/me", "PATCH", {
     handle,
-    is_public: isPublic,
   });
-  if (res.status !== 200) {
-    const err = String(res?.data?.error || "");
+  if (profileRes.status !== 200) {
+    const err = String(profileRes?.data?.error || "");
     if (err === "human_handle_exists") {
       setStatus("Handle already exists. Choose another.", true);
       return;
@@ -244,6 +253,19 @@ async function saveProfile() {
     setStatus("Could not update profile.", true);
     return;
   }
+
+  const currentMetadata = metadataFrom(profileRes?.data?.human?.metadata);
+  const metadataRes = await UI.req("/v1/me/metadata", "PATCH", {
+    metadata: {
+      ...currentMetadata,
+      public: isPublic,
+    },
+  });
+  if (metadataRes.status !== 200) {
+    setStatus("Handle updated, but visibility update failed.", true);
+    return;
+  }
+
   setStatus("Profile updated.");
   await loadProfileData();
 }

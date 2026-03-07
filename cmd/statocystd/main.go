@@ -71,6 +71,7 @@ func main() {
 		humanAuth,
 		os.Getenv("SUPABASE_URL"),
 		os.Getenv("SUPABASE_ANON_KEY"),
+		os.Getenv("STATOCYST_ADMIN_SNAPSHOT_KEY"),
 		os.Getenv("SUPER_ADMIN_EMAILS"),
 		os.Getenv("SUPER_ADMIN_DOMAINS"),
 		superAdminReviewMode,

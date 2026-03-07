@@ -175,9 +175,13 @@ func TestS3StateStore_ProfileAndPermissionsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertHuman(alice) failed: %v", err)
 	}
-	alice, err = store.UpdateHumanProfile(alice.HumanID, "alice", boolPtr(true), true, now)
+	alice, err = store.UpdateHumanProfile(alice.HumanID, "alice", true, now)
 	if err != nil {
 		t.Fatalf("UpdateHumanProfile(alice) failed: %v", err)
+	}
+	alice, err = store.UpdateHumanMetadata(alice.HumanID, map[string]any{"public": true}, now)
+	if err != nil {
+		t.Fatalf("UpdateHumanMetadata(alice) failed: %v", err)
 	}
 	bob, err := store.UpsertHuman("dev", "bob-sub", "bob@b.test", true, now, id.Next)
 	if err != nil {
@@ -223,8 +227,8 @@ func TestS3StateStore_ProfileAndPermissionsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterAgent failed: %v", err)
 	}
-	if _, err := store.SetAgentVisibility(agent.AgentUUID, false, alice.HumanID, now, false); err != nil {
-		t.Fatalf("SetAgentVisibility failed: %v", err)
+	if _, err := store.UpdateAgentMetadata(agent.AgentUUID, map[string]any{"public": false}, alice.HumanID, now, false); err != nil {
+		t.Fatalf("UpdateAgentMetadata failed: %v", err)
 	}
 
 	reloaded := &s3StateStore{
@@ -295,7 +299,7 @@ func TestS3StateStore_PersistsSecondaryIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertHuman failed: %v", err)
 	}
-	alice, err = store.UpdateHumanProfile(alice.HumanID, "alice", nil, true, now)
+	alice, err = store.UpdateHumanProfile(alice.HumanID, "alice", true, now)
 	if err != nil {
 		t.Fatalf("UpdateHumanProfile failed: %v", err)
 	}
@@ -411,8 +415,8 @@ func TestS3StateStore_IncrementalPersistAvoidsFullResync(t *testing.T) {
 	}
 
 	fake.resetCounts()
-	if _, err := store.SetAgentVisibility(agent.AgentUUID, false, alice.HumanID, now, false); err != nil {
-		t.Fatalf("SetAgentVisibility failed: %v", err)
+	if _, err := store.UpdateAgentMetadata(agent.AgentUUID, map[string]any{"public": false}, alice.HumanID, now, false); err != nil {
+		t.Fatalf("UpdateAgentMetadata failed: %v", err)
 	}
 
 	counts := fake.currentCounts()
@@ -423,5 +427,3 @@ func TestS3StateStore_IncrementalPersistAvoidsFullResync(t *testing.T) {
 		t.Fatalf("expected only changed objects to be written, got %d put requests", counts.put)
 	}
 }
-
-func boolPtr(v bool) *bool { return &v }

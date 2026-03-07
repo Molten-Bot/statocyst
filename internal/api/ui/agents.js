@@ -14,6 +14,25 @@ function setBindCodeStatus(message, warn = false) {
   el.className = warn ? "status warn code" : "status code";
 }
 
+function metadataFrom(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return { ...raw };
+}
+
+function metadataPublic(raw) {
+  const value = metadataFrom(raw).public;
+  return typeof value === "boolean" ? value : true;
+}
+
+function metadataFromDataset(raw) {
+  if (!raw) return {};
+  try {
+    return metadataFrom(JSON.parse(raw));
+  } catch (_) {
+    return {};
+  }
+}
+
 async function loadBindOrganizations() {
   const select = UI.$("bindOrgSelect");
   if (!select) return;
@@ -177,7 +196,8 @@ function renderAgents(agents) {
     tr.appendChild(tdOwner);
 
     const tdPublic = document.createElement("td");
-    tdPublic.textContent = agent.is_public ? "public" : "private";
+    const isPublic = metadataPublic(agent.metadata);
+    tdPublic.textContent = isPublic ? "public" : "private";
     tr.appendChild(tdPublic);
 
     const tdActions = document.createElement("td");
@@ -199,10 +219,11 @@ function renderAgents(agents) {
     actionWrap.appendChild(revokeBtn);
 
     const visibilityBtn = document.createElement("button");
-    visibilityBtn.textContent = agent.is_public ? "Make Private" : "Make Public";
+    visibilityBtn.textContent = isPublic ? "Make Private" : "Make Public";
     visibilityBtn.dataset.agentAction = "visibility";
     visibilityBtn.dataset.agentUuid = agent.agent_uuid || "";
-    visibilityBtn.dataset.makePublic = agent.is_public ? "false" : "true";
+    visibilityBtn.dataset.makePublic = isPublic ? "false" : "true";
+    visibilityBtn.dataset.metadata = JSON.stringify(metadataFrom(agent.metadata));
     visibilityBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
     actionWrap.appendChild(visibilityBtn);
 
@@ -280,14 +301,17 @@ async function revokeAgent(agentUUID) {
   await loadPendingTrusts();
 }
 
-async function setAgentVisibility(agentUUID, makePublic) {
+async function setAgentVisibility(agentUUID, makePublic, currentMetadata = {}) {
   if (!agentUUID) {
     setStatus("agentStatus", "agent_uuid required", true);
     return;
   }
   setStatus("agentStatus", `Updating visibility for ${agentUUID}...`);
-  const result = await UI.req(`/v1/agents/${encodeURIComponent(agentUUID)}`, "PATCH", {
-    is_public: makePublic,
+  const result = await UI.req(`/v1/agents/${encodeURIComponent(agentUUID)}/metadata`, "PATCH", {
+    metadata: {
+      ...metadataFrom(currentMetadata),
+      public: makePublic,
+    },
   });
   if (result.status !== 200) {
     setStatus("agentStatus", "Could not update agent visibility.", true);
@@ -444,7 +468,8 @@ async function init() {
     }
     if (action === "visibility") {
       const makePublic = String(button.dataset.makePublic || "false") === "true";
-      await setAgentVisibility(agentUUID, makePublic);
+      const currentMetadata = metadataFromDataset(button.dataset.metadata);
+      await setAgentVisibility(agentUUID, makePublic, currentMetadata);
       return;
     }
   });

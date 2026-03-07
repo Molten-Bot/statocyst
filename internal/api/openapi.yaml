@@ -94,9 +94,7 @@ paths:
           description: Unauthorized
     patch:
       summary: Update current human profile
-      description: |
-        Updates mutable human profile fields.
-        Current schema only documents `is_public`; handle immutability can be enforced in a follow-up API change.
+      description: Updates mutable human profile fields.
       security:
         - humanAuth: []
       requestBody:
@@ -106,15 +104,46 @@ paths:
             schema:
               type: object
               properties:
-                is_public:
-                  type: boolean
+                handle:
+                  type: string
       responses:
         '200':
           description: Human updated
+  /v1/me/metadata:
+    patch:
+      summary: Update current human metadata
+      description: |
+        Replaces the metadata object for the authenticated human.
+        Metadata must be a JSON object and serialized size must be <= 65536 bytes.
+      security:
+        - humanAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metadata]
+              properties:
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Human metadata updated
   /v1/admin/snapshot:
     get:
       summary: Super-admin read-only global snapshot
-      description: Internal super-admin diagnostics/export endpoint across all orgs; not used by `/v1/live/snapshot`.
+      description: |
+        Internal diagnostics/export endpoint across all orgs.
+        Access is granted to super-admin humans or callers presenting `X-Admin-Snapshot-Key` that matches `STATOCYST_ADMIN_SNAPSHOT_KEY`.
+      parameters:
+        - in: header
+          name: X-Admin-Snapshot-Key
+          required: false
+          schema:
+            type: string
+          description: Optional machine-access key for admin snapshot retrieval.
       security:
         - humanAuth: []
       responses:
@@ -233,6 +262,34 @@ paths:
           description: Organization created
         '409':
           description: Duplicate handle
+  /v1/orgs/{org_id}/metadata:
+    patch:
+      summary: Update organization metadata
+      description: |
+        Replaces the metadata object for an organization.
+        Requires owner/admin role for the org or super-admin.
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: org_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metadata]
+              properties:
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Organization metadata updated
   /v1/orgs/{org_id}/invites:
     get:
       summary: List invites for an organization
@@ -572,10 +629,12 @@ paths:
           description: Agent capabilities
         '401':
           description: Unauthorized
-  /v1/agents/me:
+  /v1/agents/me/metadata:
     patch:
-      summary: Update authenticated agent profile visibility
-      description: Agent runtime route. Updates `is_public` for the authenticated bearer-token agent only.
+      summary: Update authenticated agent metadata
+      description: |
+        Replaces the metadata object for the authenticated bearer-token agent.
+        Metadata must be a JSON object and serialized size must be <= 65536 bytes.
       security:
         - agentAuth: []
       requestBody:
@@ -584,34 +643,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [is_public]
+              required: [metadata]
               properties:
-                is_public:
-                  type: boolean
+                metadata:
+                  type: object
+                  additionalProperties: true
       responses:
         '200':
-          description: Agent updated
-        '401':
-          description: Unauthorized
-    post:
-      summary: Compatibility alias for PATCH /v1/agents/me
-      description: Backward-compatible alias that performs the same update as `PATCH /v1/agents/me`.
-      deprecated: true
-      security:
-        - agentAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [is_public]
-              properties:
-                is_public:
-                  type: boolean
-      responses:
-        '200':
-          description: Agent updated
+          description: Agent metadata updated
         '401':
           description: Unauthorized
   /v1/agents/me/skill:
@@ -661,9 +700,12 @@ paths:
       responses:
         '200':
           description: Revoked
+  /v1/agents/{agent_uuid}/metadata:
     patch:
-      summary: Update agent visibility (human control-plane)
-      description: Human/admin operation to set `is_public` on an existing agent profile.
+      summary: Update agent metadata (human control-plane)
+      description: |
+        Replaces the metadata object for an existing agent profile.
+        Requires admin/owner role for the agent or super-admin.
       security:
         - humanAuth: []
       parameters:
@@ -678,13 +720,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [is_public]
+              required: [metadata]
               properties:
-                is_public:
-                  type: boolean
+                metadata:
+                  type: object
+                  additionalProperties: true
       responses:
         '200':
-          description: Agent updated
+          description: Agent metadata updated
   /v1/agents/{agent_ref}/bind:
     post:
       summary: Agent trust bind compatibility route
@@ -901,13 +944,6 @@ paths:
           description: Message
         '204':
           description: No content
-  /v1/live/snapshot:
-    get:
-      summary: Public live snapshot for static site generation
-      description: Public read-only snapshot for live/status views; separate from `/v1/admin/snapshot`.
-      responses:
-        '200':
-          description: Public organizations/humans/agents snapshot
 components:
   securitySchemes:
     humanAuth:

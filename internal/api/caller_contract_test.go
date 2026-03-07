@@ -12,8 +12,8 @@ func TestCallerContract_AgentRuntimeEndpointsRejectHumanHeaders(t *testing.T) {
 	router := newTestRouter()
 	headers := humanHeaders("alice", "alice@a.test")
 
-	profileResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
-		"is_public": false,
+	profileResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{"public": false},
 	}, headers)
 	requireUnauthorized(t, profileResp)
 
@@ -84,13 +84,11 @@ func TestOpenAPICallerContractSecuritySchemes(t *testing.T) {
 		{Method: http.MethodGet, Path: "/v1/me"}:                       {"humanAuth"},
 		{Method: http.MethodPost, Path: "/v1/agent-trusts"}:            {"humanAuth"},
 		{Method: http.MethodPost, Path: "/v1/agents/bind"}:             nil,
-		{Method: http.MethodPatch, Path: "/v1/agents/me"}:              {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/agents/me"}:               {"agentAuth"},
+		{Method: http.MethodPatch, Path: "/v1/agents/me/metadata"}:     {"agentAuth"},
 		{Method: http.MethodGet, Path: "/v1/agents/me/capabilities"}:   {"agentAuth"},
 		{Method: http.MethodGet, Path: "/v1/agents/me/skill"}:          {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/messages/publish"}:        {"agentAuth"},
 		{Method: http.MethodGet, Path: "/v1/messages/pull"}:            {"agentAuth"},
-		{Method: http.MethodGet, Path: "/v1/live/snapshot"}:            nil,
 		{Method: http.MethodPost, Path: "/v1/agents/{agent_ref}/bind"}: {"humanAuth"},
 	}
 

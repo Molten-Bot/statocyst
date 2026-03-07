@@ -122,11 +122,6 @@ func makeConcretePath(specPath string) string {
 	return path
 }
 
-func stringField(row map[string]any, key string) string {
-	value, _ := row[key].(string)
-	return strings.TrimSpace(value)
-}
-
 func TestAPIModelContract_OnboardingAndOrganizationShape(t *testing.T) {
 	router := newTestRouter()
 
@@ -221,47 +216,6 @@ func TestAPIModelContract_OnboardingAndOrganizationShape(t *testing.T) {
 	}
 	if !foundNewOrg {
 		t.Fatalf("newly created org %q not present in /v1/me/orgs response", orgID)
-	}
-}
-
-func TestAPIModelContract_LiveSnapshotSanitizesInternalIDs(t *testing.T) {
-	router := newTestRouter()
-	orgID := createOrg(t, router, "alice", "alice@a.test", "Public Snapshot")
-	aliceID := currentHumanID(t, router, "alice", "alice@a.test")
-	_ = registerAgent(t, router, "alice", "alice@a.test", orgID, "snap-a", aliceID)
-
-	resp := doJSONRequest(t, router, http.MethodGet, "/v1/live/snapshot", nil, nil)
-	if resp.Code != http.StatusOK {
-		t.Fatalf("/v1/live/snapshot failed: %d %s", resp.Code, resp.Body.String())
-	}
-	payload := decodeJSONMap(t, resp.Body.Bytes())
-	orgs, _ := payload["organizations"].([]any)
-	if len(orgs) == 0 {
-		t.Fatalf("expected organizations in live snapshot")
-	}
-
-	for _, item := range orgs {
-		org, _ := item.(map[string]any)
-		if stringField(org, "handle") == "" {
-			t.Fatalf("snapshot org.handle must be present: %v", org)
-		}
-		if stringField(org, "display_name") == "" {
-			t.Fatalf("snapshot org.display_name must be present: %v", org)
-		}
-		if org["org_id"] != "" {
-			t.Fatalf("snapshot org_id must be sanitized to empty string, got %v", org["org_id"])
-		}
-
-		humans, _ := org["humans"].([]any)
-		for _, humanItem := range humans {
-			human, _ := humanItem.(map[string]any)
-			if stringField(human, "handle") == "" {
-				t.Fatalf("snapshot human.handle must be present: %v", human)
-			}
-			if human["human_id"] != "" {
-				t.Fatalf("snapshot human_id must be sanitized to empty string, got %v", human["human_id"])
-			}
-		}
 	}
 }
 

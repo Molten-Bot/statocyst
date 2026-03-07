@@ -35,7 +35,7 @@ func mustCreateHuman(t *testing.T, mem *MemoryStore, ids *seqID, subject, email,
 		t.Fatalf("UpsertHuman(%q) failed: %v", subject, err)
 	}
 	if handle != "" {
-		h, err = mem.UpdateHumanProfile(h.HumanID, handle, nil, true, now)
+		h, err = mem.UpdateHumanProfile(h.HumanID, handle, true, now)
 		if err != nil {
 			t.Fatalf("UpdateHumanProfile(%q) failed: %v", handle, err)
 		}
@@ -173,10 +173,10 @@ func TestMemoryStoreHandleValidationAcrossEntities(t *testing.T) {
 
 	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
 
-	if _, err := mem.UpdateHumanProfile(alice.HumanID, "a", nil, true, now); !errors.Is(err, ErrInvalidHandle) {
+	if _, err := mem.UpdateHumanProfile(alice.HumanID, "a", true, now); !errors.Is(err, ErrInvalidHandle) {
 		t.Fatalf("expected short human handle to fail with ErrInvalidHandle, got %v", err)
 	}
-	if _, err := mem.UpdateHumanProfile(alice.HumanID, "fuck", nil, true, now); !errors.Is(err, ErrInvalidHandle) {
+	if _, err := mem.UpdateHumanProfile(alice.HumanID, "fuck", true, now); !errors.Is(err, ErrInvalidHandle) {
 		t.Fatalf("expected blocked human handle to fail with ErrInvalidHandle, got %v", err)
 	}
 

@@ -121,30 +121,34 @@
       "expected_error": "unauthorized"
     },
     {
-      "name": "agent_me_visibility_update_unauthorized",
+      "name": "agent_me_metadata_update_unauthorized",
       "method": "PATCH",
-      "path": "/v1/agents/me",
+      "path": "/v1/agents/me/metadata",
       "body": {
-        "is_public": false
+        "metadata": {
+          "public": false
+        }
       },
       "expected_status": 401,
       "expected_error": "unauthorized"
     },
     {
-      "name": "agent_me_visibility_update_with_agent_token",
+      "name": "agent_me_metadata_update_with_agent_token",
       "setup": "trusted_agents",
       "method": "PATCH",
-      "path": "/v1/agents/me",
+      "path": "/v1/agents/me/metadata",
       "headers": {
         "Authorization": "Bearer __TOKEN_A__"
       },
       "body": {
-        "is_public": false
+        "metadata": {
+          "public": false
+        }
       },
       "expected_status": 200,
-      "required_json_paths": ["agent.agent_uuid", "agent.is_public"],
+      "required_json_paths": ["agent.agent_uuid", "agent.metadata.public"],
       "expected_json_values": {
-        "agent.is_public": false
+        "agent.metadata.public": false
       }
     },
     {

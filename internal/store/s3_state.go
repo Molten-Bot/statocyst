@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -74,17 +75,17 @@ type s3PersistInvite struct {
 }
 
 type s3PersistAgent struct {
-	AgentUUID    string     `json:"agent_uuid"`
-	AgentID      string     `json:"agent_id"`
-	Handle       string     `json:"handle"`
-	OrgID        string     `json:"org_id"`
-	OwnerHumanID *string    `json:"owner_human_id,omitempty"`
-	TokenHash    string     `json:"token_hash"`
-	Status       string     `json:"status"`
-	IsPublic     bool       `json:"is_public"`
-	CreatedBy    string     `json:"created_by"`
-	CreatedAt    time.Time  `json:"created_at"`
-	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
+	AgentUUID    string         `json:"agent_uuid"`
+	AgentID      string         `json:"agent_id"`
+	Handle       string         `json:"handle"`
+	OrgID        string         `json:"org_id"`
+	OwnerHumanID *string        `json:"owner_human_id,omitempty"`
+	TokenHash    string         `json:"token_hash"`
+	Status       string         `json:"status"`
+	Metadata     map[string]any `json:"metadata"`
+	CreatedBy    string         `json:"created_by"`
+	CreatedAt    time.Time      `json:"created_at"`
+	RevokedAt    *time.Time     `json:"revoked_at,omitempty"`
 }
 
 type s3PersistBindToken struct {
@@ -190,7 +191,7 @@ func (s *s3StateStore) UpsertHuman(provider, subject, email string, emailVerifie
 	if err != nil {
 		return model.Human{}, err
 	}
-	if existingFound && existing == human {
+	if existingFound && reflect.DeepEqual(existing, human) {
 		return human, nil
 	}
 	if err := s.persistAll(context.Background()); err != nil {
@@ -199,11 +200,25 @@ func (s *s3StateStore) UpsertHuman(provider, subject, email string, emailVerifie
 	return human, nil
 }
 
-func (s *s3StateStore) UpdateHumanProfile(humanID, handle string, isPublic *bool, confirmHandle bool, now time.Time) (model.Human, error) {
+func (s *s3StateStore) UpdateHumanProfile(humanID, handle string, confirmHandle bool, now time.Time) (model.Human, error) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 
-	human, err := s.MemoryStore.UpdateHumanProfile(humanID, handle, isPublic, confirmHandle, now)
+	human, err := s.MemoryStore.UpdateHumanProfile(humanID, handle, confirmHandle, now)
+	if err != nil {
+		return model.Human{}, err
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return model.Human{}, err
+	}
+	return human, nil
+}
+
+func (s *s3StateStore) UpdateHumanMetadata(humanID string, metadata map[string]any, now time.Time) (model.Human, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	human, err := s.MemoryStore.UpdateHumanMetadata(humanID, metadata, now)
 	if err != nil {
 		return model.Human{}, err
 	}
@@ -422,11 +437,11 @@ func (s *s3StateStore) RevokeAgent(agentUUID, actorHumanID string, now time.Time
 	return s.persistAll(context.Background())
 }
 
-func (s *s3StateStore) SetOrgVisibility(orgID string, isPublic bool, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error) {
+func (s *s3StateStore) UpdateOrgMetadata(orgID string, metadata map[string]any, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 
-	org, err := s.MemoryStore.SetOrgVisibility(orgID, isPublic, actorHumanID, isSuperAdmin, now)
+	org, err := s.MemoryStore.UpdateOrgMetadata(orgID, metadata, actorHumanID, isSuperAdmin, now)
 	if err != nil {
 		return model.Organization{}, err
 	}
@@ -436,11 +451,11 @@ func (s *s3StateStore) SetOrgVisibility(orgID string, isPublic bool, actorHumanI
 	return org, nil
 }
 
-func (s *s3StateStore) SetAgentVisibility(agentUUID string, isPublic bool, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error) {
+func (s *s3StateStore) UpdateAgentMetadata(agentUUID string, metadata map[string]any, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 
-	agent, err := s.MemoryStore.SetAgentVisibility(agentUUID, isPublic, actorHumanID, now, isSuperAdmin)
+	agent, err := s.MemoryStore.UpdateAgentMetadata(agentUUID, metadata, actorHumanID, now, isSuperAdmin)
 	if err != nil {
 		return model.Agent{}, err
 	}
@@ -450,11 +465,11 @@ func (s *s3StateStore) SetAgentVisibility(agentUUID string, isPublic bool, actor
 	return agent, nil
 }
 
-func (s *s3StateStore) SetAgentVisibilitySelf(agentUUID string, isPublic bool, now time.Time) (model.Agent, error) {
+func (s *s3StateStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 
-	agent, err := s.MemoryStore.SetAgentVisibilitySelf(agentUUID, isPublic, now)
+	agent, err := s.MemoryStore.UpdateAgentMetadataSelf(agentUUID, metadata, now)
 	if err != nil {
 		return model.Agent{}, err
 	}
@@ -1358,7 +1373,7 @@ func persistAgent(v model.Agent) s3PersistAgent {
 		OwnerHumanID: v.OwnerHumanID,
 		TokenHash:    v.TokenHash,
 		Status:       v.Status,
-		IsPublic:     v.IsPublic,
+		Metadata:     copyMetadata(v.Metadata),
 		CreatedBy:    v.CreatedBy,
 		CreatedAt:    v.CreatedAt,
 		RevokedAt:    v.RevokedAt,
@@ -1374,7 +1389,7 @@ func (v s3PersistAgent) toModel() model.Agent {
 		OwnerHumanID: v.OwnerHumanID,
 		TokenHash:    v.TokenHash,
 		Status:       v.Status,
-		IsPublic:     v.IsPublic,
+		Metadata:     copyMetadata(v.Metadata),
 		CreatedBy:    v.CreatedBy,
 		CreatedAt:    v.CreatedAt,
 		RevokedAt:    v.RevokedAt,

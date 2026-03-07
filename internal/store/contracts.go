@@ -10,9 +10,11 @@ import (
 // ControlPlaneStore captures all non-queue state operations used by handlers.
 type ControlPlaneStore interface {
 	UpsertHuman(provider, subject, email string, emailVerified bool, now time.Time, idFactory func() (string, error)) (model.Human, error)
-	UpdateHumanProfile(humanID, handle string, isPublic *bool, confirmHandle bool, now time.Time) (model.Human, error)
+	UpdateHumanProfile(humanID, handle string, confirmHandle bool, now time.Time) (model.Human, error)
+	UpdateHumanMetadata(humanID string, metadata map[string]any, now time.Time) (model.Human, error)
 	CreateOrg(handle, displayName string, creatorHumanID string, orgID string, now time.Time) (model.Organization, model.Membership, error)
 	EnsurePersonalOrg(humanID string, now time.Time, idFactory func() (string, error)) (model.Organization, error)
+	UpdateOrgMetadata(orgID string, metadata map[string]any, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error)
 	ListMyMemberships(humanID string) []model.MembershipWithOrg
 	CreateInvite(orgID, email, role, actorHumanID, inviteID, inviteSecretHash string, expiresAt, now time.Time, isSuperAdmin bool) (model.Invite, error)
 	AcceptInvite(inviteID, humanID, humanEmail string, now time.Time, idFactory func() (string, error)) (model.Membership, error)
@@ -38,9 +40,8 @@ type ControlPlaneStore interface {
 	RedeemBindToken(bindTokenHash, agentID, agentTokenHash string, now time.Time) (model.Agent, error)
 	RotateAgentToken(agentUUID, actorHumanID, tokenHash string, now time.Time, isSuperAdmin bool) error
 	RevokeAgent(agentUUID, actorHumanID string, now time.Time, isSuperAdmin bool) error
-	SetOrgVisibility(orgID string, isPublic bool, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error)
-	SetAgentVisibility(agentUUID string, isPublic bool, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error)
-	SetAgentVisibilitySelf(agentUUID string, isPublic bool, now time.Time) (model.Agent, error)
+	UpdateAgentMetadata(agentUUID string, metadata map[string]any, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error)
+	UpdateAgentMetadataSelf(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error)
 	AgentUUIDForTokenHash(tokenHash string) (string, error)
 	GetHuman(humanID string) (model.Human, error)
 	GetAgentByUUID(agentUUID string) (model.Agent, error)

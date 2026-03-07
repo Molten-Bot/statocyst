@@ -49,13 +49,23 @@ function orgNameByID(orgID) {
   return orgID;
 }
 
+function metadataFrom(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return { ...raw };
+}
+
+function metadataPublic(raw) {
+  const value = metadataFrom(raw).public;
+  return typeof value === "boolean" ? value : true;
+}
+
 function syncOrgVisibilityUI() {
   const orgID = selectedOrg();
   const org = orgByID[orgID];
   const checkbox = UI.$("orgIsPublic");
   if (!checkbox) return;
   checkbox.disabled = !org;
-  checkbox.checked = org ? Boolean(org.is_public) : true;
+  checkbox.checked = org ? metadataPublic(org.metadata) : true;
 }
 
 function escapeHTML(input) {
@@ -189,8 +199,14 @@ async function saveOrgVisibility() {
   if (!orgID) return;
 
   const isPublic = Boolean(UI.$("orgIsPublic").checked);
+  const currentMetadata = metadataFrom(orgByID[orgID]?.metadata);
   setStatus("orgStatus", "Saving organization visibility...");
-  const res = await UI.req(`/v1/orgs/${orgID}`, "PATCH", { is_public: isPublic });
+  const res = await UI.req(`/v1/orgs/${orgID}/metadata`, "PATCH", {
+    metadata: {
+      ...currentMetadata,
+      public: isPublic,
+    },
+  });
   if (res.status !== 200) {
     setStatus("orgStatus", "Could not update organization visibility.", true);
     return;
@@ -323,7 +339,7 @@ function renderHumans(humans) {
 
     const meta = document.createElement("div");
     meta.className = "rowMeta";
-    const visibility = h.is_public ? "public" : "private";
+    const visibility = metadataPublic(h.metadata) ? "public" : "private";
     meta.textContent = `${h.role || "unknown"} • ${h.status || "unknown"} • ${h.auth_provider || "unknown provider"} • ${visibility}`;
 
     card.appendChild(title);
