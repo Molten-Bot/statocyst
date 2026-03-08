@@ -432,6 +432,8 @@ func pruneEmptyJSONObjectFields(payload any) (any, error) {
 
 func pruneEmptyObjects(value any) (any, bool) {
 	switch typed := value.(type) {
+	case nil:
+		return nil, false
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for k, v := range typed {

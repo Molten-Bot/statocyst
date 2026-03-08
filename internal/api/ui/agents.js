@@ -33,6 +33,12 @@ function metadataFromDataset(raw) {
   }
 }
 
+function agentOwnerLabel(agent) {
+  const ownerHuman = agent?.owner?.human_id || agent?.owner_human_id;
+  if (ownerHuman) return ownerHuman;
+  return "org-owned";
+}
+
 async function loadBindOrganizations() {
   const select = UI.$("bindOrgSelect");
   if (!select) return;
@@ -129,7 +135,7 @@ function syncBondSelectors(agents) {
   right.disabled = false;
 
   for (const agent of activeAgents) {
-    const text = `${agent.agent_id || ""} [${agent.agent_uuid || ""}] (${agent.owner_human_id || "org-owned"})`;
+    const text = `${agent.agent_id || ""} [${agent.agent_uuid || ""}] (${agentOwnerLabel(agent)})`;
     const value = agent.agent_uuid || "";
 
     const leftOpt = document.createElement("option");
@@ -192,7 +198,7 @@ function renderAgents(agents) {
     tr.appendChild(tdStatus);
 
     const tdOwner = document.createElement("td");
-    tdOwner.textContent = agent.owner_human_id || "org-owned";
+    tdOwner.textContent = agentOwnerLabel(agent);
     tr.appendChild(tdOwner);
 
     const tdPublic = document.createElement("td");

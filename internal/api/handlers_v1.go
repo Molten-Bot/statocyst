@@ -289,6 +289,47 @@ func meResponsePayload(human model.Human, isAdmin bool) map[string]any {
 	return payload
 }
 
+func agentOwnerPayload(agent model.Agent) map[string]any {
+	if agent.OwnerHumanID != nil && strings.TrimSpace(*agent.OwnerHumanID) != "" {
+		return map[string]any{
+			"human_id": strings.TrimSpace(*agent.OwnerHumanID),
+		}
+	}
+	if strings.TrimSpace(agent.OrgID) != "" {
+		return map[string]any{
+			"org_id": strings.TrimSpace(agent.OrgID),
+		}
+	}
+	return nil
+}
+
+func agentResponsePayload(agent model.Agent) map[string]any {
+	payload := map[string]any{
+		"agent_uuid":          agent.AgentUUID,
+		"agent_id":            agent.AgentID,
+		"handle":              agent.Handle,
+		"handle_finalized_at": agent.HandleFinalizedAt,
+		"org_id":              agent.OrgID,
+		"status":              agent.Status,
+		"metadata":            agent.Metadata,
+		"created_by":          agent.CreatedBy,
+		"created_at":          agent.CreatedAt,
+		"revoked_at":          agent.RevokedAt,
+	}
+	if owner := agentOwnerPayload(agent); owner != nil {
+		payload["owner"] = owner
+	}
+	return payload
+}
+
+func agentListResponsePayload(agents []model.Agent) []map[string]any {
+	out := make([]map[string]any, 0, len(agents))
+	for _, agent := range agents {
+		out = append(out, agentResponsePayload(agent))
+	}
+	return out
+}
+
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	actor, err := h.authenticateHuman(r)
 	if err != nil {
@@ -398,8 +439,9 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
+		agents := h.control.ListHumanAgents(actor.Human.HumanID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"agents": h.control.ListHumanAgents(actor.Human.HumanID),
+			"agents": agentListResponsePayload(agents),
 		})
 		return
 	case http.MethodPost:
@@ -662,14 +704,18 @@ func (h *Handler) handleAgentMe(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent")
 			return
 		}
-		org, err := h.control.GetOrganization(agent.OrgID)
-		if err != nil {
-			if errors.Is(err, store.ErrOrgNotFound) {
-				writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+		var organization any = nil
+		if strings.TrimSpace(agent.OrgID) != "" {
+			org, err := h.control.GetOrganization(agent.OrgID)
+			if err != nil {
+				if errors.Is(err, store.ErrOrgNotFound) {
+					writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to load organization")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to load organization")
-			return
+			organization = org
 		}
 
 		var ownerHuman any = nil
@@ -686,11 +732,17 @@ func (h *Handler) handleAgentMe(w http.ResponseWriter, r *http.Request) {
 			ownerHuman = human
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"agent":        agent,
-			"organization": org,
-			"human":        ownerHuman,
-		})
+		payload := map[string]any{
+			"agent": agentResponsePayload(agent),
+		}
+		if organization != nil {
+			payload["organization"] = organization
+		}
+		if ownerHuman != nil {
+			payload["human"] = ownerHuman
+		}
+
+		writeJSON(w, http.StatusOK, payload)
 		return
 	case http.MethodPatch:
 		h.handleAgentMetadataSelfPatch(w, r, "")
@@ -751,7 +803,7 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agent": agent,
+		"agent": agentResponsePayload(agent),
 	})
 }
 
@@ -789,12 +841,7 @@ func (h *Handler) handleAgentMeCapabilities(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agent": map[string]any{
-			"agent_uuid":     cp.AgentUUID,
-			"agent_id":       cp.AgentID,
-			"org_id":         cp.OrgID,
-			"owner_human_id": cp.OwnerHumanID,
-		},
+		"agent":         agentResponsePayload(agent),
 		"control_plane": h.agentControlPlanePayload(cp),
 	})
 }
@@ -834,12 +881,7 @@ func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agent": map[string]any{
-			"agent_uuid":     cp.AgentUUID,
-			"agent_id":       cp.AgentID,
-			"org_id":         cp.OrgID,
-			"owner_human_id": cp.OwnerHumanID,
-		},
+		"agent":         agentResponsePayload(agent),
 		"control_plane": h.agentControlPlanePayload(cp),
 		"skill": map[string]any{
 			"schema_version": "1",
@@ -870,17 +912,22 @@ func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (ag
 }
 
 func (h *Handler) agentControlPlanePayload(cp agentControlPlaneView) map[string]any {
+	var owner map[string]any
+	if strings.TrimSpace(cp.OwnerHumanID) != "" {
+		owner = map[string]any{
+			"human_id": strings.TrimSpace(cp.OwnerHumanID),
+		}
+	} else if strings.TrimSpace(cp.OrgID) != "" {
+		owner = map[string]any{
+			"org_id": strings.TrimSpace(cp.OrgID),
+		}
+	}
 	return map[string]any{
-		"api_base":   cp.APIBase,
-		"agent_uuid": cp.AgentUUID,
-		"agent_id":   cp.AgentID,
-		"org_id":     cp.OrgID,
-		"owner_human_id": func() any {
-			if cp.OwnerHumanID == "" {
-				return nil
-			}
-			return cp.OwnerHumanID
-		}(),
+		"api_base":        cp.APIBase,
+		"agent_uuid":      cp.AgentUUID,
+		"agent_id":        cp.AgentID,
+		"org_id":          cp.OrgID,
+		"owner":           owner,
 		"can_talk_to":     cp.CanTalkTo,
 		"capabilities":    cp.Capabilities,
 		"can_communicate": len(cp.CanTalkTo) > 0,
@@ -1261,8 +1308,8 @@ func (h *Handler) handlePublicSnapshot(w http.ResponseWriter, r *http.Request) {
 			"status":   agent.Status,
 			"metadata": snapshotMetadataPublicView(agent.Metadata),
 		}
-		if agent.OwnerHumanID != nil && strings.TrimSpace(*agent.OwnerHumanID) != "" {
-			row["owner_human_id"] = *agent.OwnerHumanID
+		if owner := agentOwnerPayload(agent); owner != nil {
+			row["owner"] = owner
 		}
 		agents = append(agents, row)
 	}
@@ -1690,7 +1737,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
+		writeJSON(w, http.StatusOK, map[string]any{"agents": agentListResponsePayload(agents)})
 		return
 	case "trust-graph":
 		if r.Method != http.MethodGet {
@@ -1806,7 +1853,7 @@ func (h *Handler) handleOrgAccessAgents(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"organization": org,
 		"access_key":   key,
-		"agents":       agents,
+		"agents":       agentListResponsePayload(agents),
 	})
 }
 

@@ -9,7 +9,7 @@ info:
     - Agent runtime APIs (`/v1/agents/me/*`, `/v1/messages/*`) using agent bearer tokens.
     Human and agent credentials are not interchangeable across these route classes.
     Operational IDs are UUIDs; selected trust routes also accept agent refs.
-    Empty JSON objects, arrays, and string fields are omitted from API responses to keep payloads compact.
+    Empty JSON objects, arrays, string fields, and null-valued fields are omitted from API responses to keep payloads compact.
     API routes (`/health`, `/openapi.yaml`, `/v1/*`) support gzip compression when
     clients send `Accept-Encoding: gzip`; compressed responses include
     `Content-Encoding: gzip` and `Vary: Accept-Encoding`.
@@ -74,7 +74,7 @@ paths:
         Runtime configuration consumed by bundled UI clients; external agents usually do not need this.
         `auth.human` declares the active human auth provider.
         When provider is `supabase`, `auth.supabase` is included and `anon_key` is intentionally exposed for browser auth bootstrap.
-        Empty string/array fields are omitted from the JSON response.
+        Empty string/array fields and null-valued fields are omitted from the JSON response.
         Privileged fields are redacted by default.
         When `UI_CONFIG_API_KEY` is configured server-side, callers can send header `X-UI-Config-Key` with the matching value to receive unredacted `admin.emails`.
       parameters:
@@ -818,7 +818,9 @@ paths:
       summary: Read authenticated agent profile with human/org context
       description: |
         Returns the authenticated agent plus read-only context objects:
-        `organization` and `human` (null when the agent is org-owned).
+        `agent`, and optionally `organization` and `human`.
+        The `agent.owner` object is always present and has either `human_id` or `org_id`.
+        Fields with null/empty values are omitted from responses.
       security:
         - agentAuth: []
       responses:

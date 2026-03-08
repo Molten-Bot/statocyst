@@ -346,6 +346,58 @@ Content-Type: application/json
 }
 
 ###
+# Caller: Agent (Agent A)
+# @name agent_a_me_get
+GET {{baseUrl}}/v1/agents/me
+Authorization: Bearer {{create_agent_a.response.body.$.token}}
+
+###
+# Caller: Agent (Agent B)
+# @name agent_b_me_get
+GET {{baseUrl}}/v1/agents/me
+Authorization: Bearer {{create_agent_b.response.body.$.token}}
+
+###
+# Caller: Agent (Agent B2)
+# @name agent_b2_me_get
+GET {{baseUrl}}/v1/agents/me
+Authorization: Bearer {{create_agent_b2.response.body.$.token}}
+
+###
+# Caller: Agent (Agent A)
+# @name agent_a_metadata_public
+PATCH {{baseUrl}}/v1/agents/me/metadata
+Content-Type: application/json
+Authorization: Bearer {{create_agent_a.response.body.$.token}}
+
+{
+  "metadata": {
+    "public": true,
+    "description": "Public agent A"
+  }
+}
+
+###
+# Caller: Agent (Agent B)
+# @name agent_b_metadata_public
+PATCH {{baseUrl}}/v1/agents/me/metadata
+Content-Type: application/json
+Authorization: Bearer {{create_agent_b.response.body.$.token}}
+
+{
+  "metadata": {
+    "public": true,
+    "description": "Public agent B"
+  }
+}
+
+###
+# Caller: System (entities metadata key)
+# @name entities_public_metadata_after_agents
+GET {{baseUrl}}/v1/entities/metadata?public=true
+X-Entities-Metadata-Key: {{entitiesMetadataKey}}
+
+###
 # Caller: Human (Alice)
 # @name list_alice_agents
 GET {{baseUrl}}/v1/me/agents
@@ -473,8 +525,8 @@ X-Human-Email: {{aliceHumanEmail}}
 
 {
   "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
-  "agent_uuid": "{{create_agent_a.response.body.$.agent_uuid}}",
-  "peer_agent_uuid": "{{create_agent_b.response.body.$.agent_uuid}}"
+  "agent_uuid": "{{agent_a_me_get.response.body.$.agent.agent_uuid}}",
+  "peer_agent_uuid": "{{agent_b_me_get.response.body.$.agent.agent_uuid}}"
 }
 
 ###
@@ -501,8 +553,8 @@ X-Human-Email: {{aliceHumanEmail}}
 
 {
   "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
-  "agent_uuid": "{{create_agent_a.response.body.$.agent_uuid}}",
-  "peer_agent_uuid": "{{create_agent_b.response.body.$.agent_uuid}}"
+  "agent_uuid": "{{agent_a_me_get.response.body.$.agent.agent_uuid}}",
+  "peer_agent_uuid": "{{agent_b_me_get.response.body.$.agent.agent_uuid}}"
 }
 
 ###
@@ -515,8 +567,8 @@ X-Human-Email: {{aliceHumanEmail}}
 
 {
   "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
-  "agent_uuid": "{{create_agent_a.response.body.$.agent_uuid}}",
-  "peer_agent_uuid": "{{create_agent_b2.response.body.$.agent_uuid}}"
+  "agent_uuid": "{{agent_a_me_get.response.body.$.agent.agent_uuid}}",
+  "peer_agent_uuid": "{{agent_b2_me_get.response.body.$.agent.agent_uuid}}"
 }
 
 ###
@@ -529,8 +581,8 @@ X-Human-Email: {{bobHumanEmail}}
 
 {
   "org_id": "{{create_org_beta.response.body.$.organization.org_id}}",
-  "agent_uuid": "{{create_agent_b2.response.body.$.agent_uuid}}",
-  "peer_agent_uuid": "{{create_agent_a.response.body.$.agent_uuid}}"
+  "agent_uuid": "{{agent_b2_me_get.response.body.$.agent.agent_uuid}}",
+  "peer_agent_uuid": "{{agent_a_me_get.response.body.$.agent.agent_uuid}}"
 }
 
 ###
@@ -541,7 +593,7 @@ Content-Type: application/json
 Authorization: Bearer {{create_agent_a.response.body.$.token}}
 
 {
-  "to_agent_uuid": "{{create_agent_b.response.body.$.agent_uuid}}",
+  "to_agent_uuid": "{{agent_b_me_get.response.body.$.agent.agent_uuid}}",
   "content_type": "text/plain",
   "payload": "hello from endpoints.http"
 }
@@ -590,7 +642,7 @@ X-Human-Email: {{aliceHumanEmail}}
 ###
 # Caller: Human (Alice)
 # @name forbidden_human_agent_metadata_patch
-PATCH {{baseUrl}}/v1/agents/{{create_agent_a.response.body.$.agent_uuid}}/metadata
+PATCH {{baseUrl}}/v1/agents/{{agent_a_me_get.response.body.$.agent.agent_uuid}}/metadata
 Content-Type: application/json
 X-Human-Id: {{aliceHumanId}}
 X-Human-Email: {{aliceHumanEmail}}
@@ -618,14 +670,14 @@ X-Human-Email: {{bobHumanEmail}}
 ###
 # Caller: Human (Bob)
 # @name rotate_agent_b2_token
-POST {{baseUrl}}/v1/agents/{{create_agent_b2.response.body.$.agent_uuid}}/rotate-token
+POST {{baseUrl}}/v1/agents/{{agent_b2_me_get.response.body.$.agent.agent_uuid}}/rotate-token
 X-Human-Id: {{bobHumanId}}
 X-Human-Email: {{bobHumanEmail}}
 
 ###
 # Caller: Human (Bob)
 # @name revoke_agent_b2
-DELETE {{baseUrl}}/v1/agents/{{create_agent_b2.response.body.$.agent_uuid}}
+DELETE {{baseUrl}}/v1/agents/{{agent_b2_me_get.response.body.$.agent.agent_uuid}}
 X-Human-Id: {{bobHumanId}}
 X-Human-Email: {{bobHumanEmail}}
 

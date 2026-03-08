@@ -70,7 +70,7 @@
       margin-bottom: 4px;
       font-family: var(--mono);
     }
-    input {
+    input, select {
       width: 100%;
       border: 1px solid var(--line);
       background: var(--panel-2);
@@ -266,6 +266,14 @@
     <section class="panel tabPanel" id="tab-humans">
       <h2>Humans</h2>
       <div class="row" style="margin-top:10px;">
+        <label for="selectedHumanSelect" class="meta">Agent Test Human</label>
+        <select id="selectedHumanSelect" style="max-width:220px;">
+          <option value="alice">Alice</option>
+          <option value="bob">Bob</option>
+        </select>
+        <span id="selectedHumanSummary" class="meta"></span>
+      </div>
+      <div class="row" style="margin-top:10px;">
         <button id="runAllHumansBtn">Run All (Humans)</button>
         <span id="humansMsg" class="meta"></span>
       </div>
@@ -279,6 +287,8 @@
         <span id="agentsMsg" class="meta"></span>
       </div>
       <div class="steps" id="steps-agents"></div>
+      <p>Optional manual bind tokens (used by Agent Bind calls when set).</p>
+      <div class="vars" id="agentTokenVars"></div>
       <p>This helper performs two trust calls: A -&gt; B and B -&gt; A.</p>
       <p>Use this instead of <code>POST /v1/agents/{agent_ref}/bind</code>.</p>
       <div class="vars" id="bindVars"></div>
@@ -316,7 +326,10 @@
       alphaOrgHandle: "alpha-org",
       betaOrgHandle: "beta-org",
       agentAHandle: "alpha-agent-one",
-      agentBHandle: "alpha-agent-two"
+      agentBHandle: "alpha-agent-two",
+      agentOwner: "alice",
+      agentBindTokenA: "",
+      agentBindTokenB: ""
     };
 
     const steps = [
@@ -417,17 +430,17 @@
         group: "humans",
         phase: 2,
         line: "org-create",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "create_org_alpha",
         method: "POST",
         path: "{{baseUrl}}/v1/orgs",
         headers: {
           "Content-Type": "application/json",
-          "X-Human-Id": "{{aliceHumanId}}",
-          "X-Human-Email": "{{aliceHumanEmail}}"
+          "X-Human-Id": "{{selectedHumanId}}",
+          "X-Human-Email": "{{selectedHumanEmail}}"
         },
         body: {
-          handle: "{{alphaOrgHandle}}",
+          handle: "{{alphaOrgHandle}}-{{selectedHumanId}}",
           display_name: "Alpha Org"
         }
       },
@@ -435,24 +448,24 @@
         group: "humans",
         phase: 2,
         line: "org-list",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "alice_me_orgs",
         method: "GET",
         path: "{{baseUrl}}/v1/me/orgs",
-        headers: { "X-Human-Id": "{{aliceHumanId}}", "X-Human-Email": "{{aliceHumanEmail}}" }
+        headers: { "X-Human-Id": "{{selectedHumanId}}", "X-Human-Email": "{{selectedHumanEmail}}" }
       },
       {
         group: "humans",
         phase: 2,
         line: "human-invite-agent-a",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "create_agent_a_bind_token",
         method: "POST",
         path: "{{baseUrl}}/v1/me/agents/bind-tokens",
         headers: {
           "Content-Type": "application/json",
-          "X-Human-Id": "{{aliceHumanId}}",
-          "X-Human-Email": "{{aliceHumanEmail}}"
+          "X-Human-Id": "{{selectedHumanId}}",
+          "X-Human-Email": "{{selectedHumanEmail}}"
         },
         body: {
           org_id: "{{create_org_alpha.response.body.$.organization.org_id}}"
@@ -462,14 +475,14 @@
         group: "humans",
         phase: 2,
         line: "human-invite-agent-b",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "create_agent_b_bind_token",
         method: "POST",
         path: "{{baseUrl}}/v1/me/agents/bind-tokens",
         headers: {
           "Content-Type": "application/json",
-          "X-Human-Id": "{{aliceHumanId}}",
-          "X-Human-Email": "{{aliceHumanEmail}}"
+          "X-Human-Id": "{{selectedHumanId}}",
+          "X-Human-Email": "{{selectedHumanEmail}}"
         },
         body: {
           org_id: "{{create_org_alpha.response.body.$.organization.org_id}}"
@@ -485,7 +498,7 @@
         path: "{{baseUrl}}/v1/agents/bind",
         headers: { "Content-Type": "application/json" },
         body: {
-          bind_token: "{{create_agent_a_bind_token.response.body.$.bind_token}}",
+          bind_token: "{{agentBindTokenA}}",
           agent_id: "{{agentAHandle}}",
           hub_url: "{{baseUrl}}"
         }
@@ -500,7 +513,7 @@
         path: "{{baseUrl}}/v1/agents/bind",
         headers: { "Content-Type": "application/json" },
         body: {
-          bind_token: "{{create_agent_b_bind_token.response.body.$.bind_token}}",
+          bind_token: "{{agentBindTokenB}}",
           agent_id: "{{agentBHandle}}",
           hub_url: "{{baseUrl}}"
         }
@@ -514,6 +527,16 @@
         method: "GET",
         path: "{{baseUrl}}/v1/agents/me",
         headers: { Authorization: "Bearer {{agent_bind_a.response.body.$.token}}" }
+      },
+      {
+        group: "agents",
+        phase: 3,
+        line: "agent-me-b",
+        caller: "Agent B",
+        name: "agent_me_get_b",
+        method: "GET",
+        path: "{{baseUrl}}/v1/agents/me",
+        headers: { Authorization: "Bearer {{agent_bind_b.response.body.$.token}}" }
       },
       {
         group: "agents",
@@ -532,6 +555,25 @@
           metadata: {
             public: true,
             description: "Updated via /v1/agents/me"
+          }
+        }
+      },
+      {
+        group: "agents",
+        phase: 3,
+        line: "agent-metadata-update-b",
+        caller: "Agent B",
+        name: "agent_update_metadata_b",
+        method: "PATCH",
+        path: "{{baseUrl}}/v1/agents/me/metadata",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer {{agent_bind_b.response.body.$.token}}"
+        },
+        body: {
+          metadata: {
+            public: true,
+            tags: ["manual", "agent-b"]
           }
         }
       },
@@ -558,38 +600,38 @@
         group: "humans",
         phase: 4,
         line: "human-bind-a-to-b",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "human_bind_agents_a_to_b",
         method: "POST",
         path: "{{baseUrl}}/v1/agent-trusts",
         headers: {
           "Content-Type": "application/json",
-          "X-Human-Id": "{{aliceHumanId}}",
-          "X-Human-Email": "{{aliceHumanEmail}}"
+          "X-Human-Id": "{{selectedHumanId}}",
+          "X-Human-Email": "{{selectedHumanEmail}}"
         },
         body: {
           org_id: "{{create_org_alpha.response.body.$.organization.org_id}}",
-          agent_uuid: "{{agent_bind_a.response.body.$.agent_uuid}}",
-          peer_agent_uuid: "{{agent_bind_b.response.body.$.agent_uuid}}"
+          agent_uuid: "{{agent_me_get.response.body.$.agent.agent_uuid}}",
+          peer_agent_uuid: "{{agent_me_get_b.response.body.$.agent.agent_uuid}}"
         }
       },
       {
         group: "humans",
         phase: 4,
         line: "human-bind-b-to-a",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "human_bind_agents_b_to_a",
         method: "POST",
         path: "{{baseUrl}}/v1/agent-trusts",
         headers: {
           "Content-Type": "application/json",
-          "X-Human-Id": "{{aliceHumanId}}",
-          "X-Human-Email": "{{aliceHumanEmail}}"
+          "X-Human-Id": "{{selectedHumanId}}",
+          "X-Human-Email": "{{selectedHumanEmail}}"
         },
         body: {
           org_id: "{{create_org_alpha.response.body.$.organization.org_id}}",
-          agent_uuid: "{{agent_bind_b.response.body.$.agent_uuid}}",
-          peer_agent_uuid: "{{agent_bind_a.response.body.$.agent_uuid}}"
+          agent_uuid: "{{agent_me_get_b.response.body.$.agent.agent_uuid}}",
+          peer_agent_uuid: "{{agent_me_get.response.body.$.agent.agent_uuid}}"
         }
       },
       {
@@ -615,50 +657,60 @@
           Authorization: "Bearer {{agent_bind_a.response.body.$.token}}"
         },
         body: {
-          to_agent_uuid: "{{agent_bind_b.response.body.$.agent_uuid}}",
+          to_agent_uuid: "{{agent_me_get_b.response.body.$.agent.agent_uuid}}",
           content_type: "text/plain",
           payload: "hello from manual testing page"
         }
       },
       {
+        group: "agents",
+        phase: 5,
+        line: "entities-refresh",
+        caller: "System",
+        name: "entities_public_metadata_after_agents",
+        method: "GET",
+        path: "{{baseUrl}}/v1/entities/metadata?public=true",
+        headers: { "X-Entities-Metadata-Key": "{{entitiesMetadataKey}}" }
+      },
+      {
         group: "humans",
         phase: 6,
         line: "human-delete-bind",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "human_delete_bind_agents",
         method: "DELETE",
         path: "{{baseUrl}}/v1/agent-trusts/{{human_bind_agents_a_to_b.response.body.$.trust.edge_id}}",
-        headers: { "X-Human-Id": "{{aliceHumanId}}", "X-Human-Email": "{{aliceHumanEmail}}" }
+        headers: { "X-Human-Id": "{{selectedHumanId}}", "X-Human-Email": "{{selectedHumanEmail}}" }
       },
       {
         group: "humans",
         phase: 6,
         line: "human-revoke-agent",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "human_revoke_agent_b",
         method: "DELETE",
-        path: "{{baseUrl}}/v1/agents/{{agent_bind_b.response.body.$.agent_uuid}}",
-        headers: { "X-Human-Id": "{{aliceHumanId}}", "X-Human-Email": "{{aliceHumanEmail}}" }
+        path: "{{baseUrl}}/v1/agents/{{agent_me_get_b.response.body.$.agent.agent_uuid}}",
+        headers: { "X-Human-Id": "{{selectedHumanId}}", "X-Human-Email": "{{selectedHumanEmail}}" }
       },
       {
         group: "humans",
         phase: 6,
         line: "human-delete-agent",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "human_delete_agent_a",
         method: "DELETE",
-        path: "{{baseUrl}}/v1/agents/{{agent_bind_a.response.body.$.agent_uuid}}",
-        headers: { "X-Human-Id": "{{aliceHumanId}}", "X-Human-Email": "{{aliceHumanEmail}}" }
+        path: "{{baseUrl}}/v1/agents/{{agent_me_get.response.body.$.agent.agent_uuid}}",
+        headers: { "X-Human-Id": "{{selectedHumanId}}", "X-Human-Email": "{{selectedHumanEmail}}" }
       },
       {
         group: "humans",
         phase: 6,
         line: "org-delete",
-        caller: "Human (Alice)",
+        caller: "Human (Selected)",
         name: "human_delete_org_alpha",
         method: "DELETE",
         path: "{{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}",
-        headers: { "X-Human-Id": "{{aliceHumanId}}", "X-Human-Email": "{{aliceHumanEmail}}" }
+        headers: { "X-Human-Id": "{{selectedHumanId}}", "X-Human-Email": "{{selectedHumanEmail}}" }
       }
     ];
 
@@ -708,6 +760,19 @@
       localStorage.setItem(BIND_STORAGE_KEY, JSON.stringify(state.bind));
     }
 
+    function selectedHumanKey() {
+      const owner = String(state.env.agentOwner || "alice").trim().toLowerCase();
+      return owner === "bob" ? "bob" : "alice";
+    }
+
+    function selectedHumanValue(kind) {
+      const key = selectedHumanKey();
+      if (kind === "id") return String(state.env[key + "HumanId"] || "");
+      if (kind === "email") return String(state.env[key + "HumanEmail"] || "");
+      if (kind === "handle") return String(state.env[key + "Handle"] || "");
+      return "";
+    }
+
     function getByPath(obj, path) {
       const parts = path.split(".");
       let cur = obj;
@@ -721,6 +786,19 @@
 
     function resolveToken(token) {
       const key = token.trim();
+      if (key === "selectedHumanId") return selectedHumanValue("id");
+      if (key === "selectedHumanEmail") return selectedHumanValue("email");
+      if (key === "selectedHumanHandle") return selectedHumanValue("handle");
+      if (key === "agentBindTokenA") {
+        const manual = String(state.env.agentBindTokenA || "").trim();
+        if (manual) return manual;
+        return getByPath(state.responses.create_agent_a_bind_token?.json || {}, "bind_token");
+      }
+      if (key === "agentBindTokenB") {
+        const manual = String(state.env.agentBindTokenB || "").trim();
+        if (manual) return manual;
+        return getByPath(state.responses.create_agent_b_bind_token?.json || {}, "bind_token");
+      }
       if (key in state.env) return String(state.env[key]);
 
       const m = key.match(/^([a-zA-Z0-9_]+)\.response\.body\.\$\.(.+)$/);
@@ -863,7 +941,10 @@
         state.responses[step.name] = {
           status: resp.status,
           text,
-          json: parsed
+          json: parsed,
+          meta: {
+            selectedHuman: selectedHumanKey()
+          }
         };
 
         const payload = parsed ? pretty(parsed) : text;
@@ -922,6 +1003,56 @@
       }
     }
 
+    function stepIndexByName(name) {
+      for (let i = 0; i < steps.length; i++) {
+        if (steps[i].name === name) return i;
+      }
+      return -1;
+    }
+
+    async function runAgentsWorkflow() {
+      const msg = document.getElementById("agentsMsg");
+      const orderedNames = [
+        "create_org_alpha",
+        "create_agent_a_bind_token",
+        "create_agent_b_bind_token",
+        "agent_bind_a",
+        "agent_bind_b",
+        "agent_me_get",
+        "agent_me_get_b",
+        "human_bind_agents_a_to_b",
+        "human_bind_agents_b_to_a",
+        "agent_update_profile",
+        "agent_update_metadata_b",
+        "agent_update_metadata",
+        "agent_list_associated_agents",
+        "agent_send_message_to_b",
+        "entities_public_metadata_after_agents"
+      ];
+      const indexes = orderedNames
+        .map(stepIndexByName)
+        .filter((i) => i >= 0);
+      if (msg) {
+        msg.className = "meta statusWarn";
+        msg.textContent = `Running agent workflow with ${selectedHumanValue("id")}...`;
+      }
+      for (const i of indexes) {
+        if (steps[i].name === "create_org_alpha") {
+          const existingOrgID = getByPath(state.responses.create_org_alpha?.json || {}, "organization.org_id");
+          const existingOwner = String(state.responses.create_org_alpha?.meta?.selectedHuman || "");
+          if (existingOrgID && existingOwner === selectedHumanKey()) {
+            continue;
+          }
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await runStep(i);
+      }
+      if (msg) {
+        msg.className = "meta statusOk";
+        msg.textContent = `Done (${indexes.length} calls).`;
+      }
+    }
+
     async function runAll() {
       const msg = document.getElementById("globalMsg");
       msg.className = "meta statusWarn";
@@ -947,8 +1078,8 @@
       const orgB = (state.bind.bind_org_b || orgA).trim();
       const agentA = (state.bind.bind_agent_a_uuid || "").trim();
       const agentB = (state.bind.bind_agent_b_uuid || "").trim();
-      const humanAID = (state.bind.bind_human_a_id || "").trim();
-      const humanAEmail = (state.bind.bind_human_a_email || "").trim();
+      const humanAID = (state.bind.bind_human_a_id || selectedHumanValue("id")).trim();
+      const humanAEmail = (state.bind.bind_human_a_email || selectedHumanValue("email")).trim();
       const humanBID = (state.bind.bind_human_b_id || humanAID).trim();
       const humanBEmail = (state.bind.bind_human_b_email || humanAEmail).trim();
       const baseUrl = (state.env.baseUrl || "").trim();
@@ -1066,12 +1197,55 @@
       const root = document.getElementById("vars");
       root.innerHTML = "";
       for (const key of Object.keys(defaults)) {
+        if (key === "agentOwner" || key === "agentBindTokenA" || key === "agentBindTokenB") continue;
         const box = document.createElement("div");
         box.className = "varItem";
         const label = document.createElement("label");
         label.textContent = key;
         const input = document.createElement("input");
         input.value = state.env[key] || "";
+        input.onchange = () => {
+          state.env[key] = input.value;
+          saveEnv();
+          refreshSelectedHumanSummary();
+        };
+        box.appendChild(label);
+        box.appendChild(input);
+        root.appendChild(box);
+      }
+    }
+
+    function refreshSelectedHumanSummary() {
+      const summary = document.getElementById("selectedHumanSummary");
+      if (!summary) return;
+      summary.textContent = `Using ${selectedHumanValue("id")} / ${selectedHumanValue("email")}`;
+    }
+
+    function initSelectedHumanSelector() {
+      const select = document.getElementById("selectedHumanSelect");
+      if (!select) return;
+      select.value = selectedHumanKey();
+      select.onchange = () => {
+        state.env.agentOwner = select.value === "bob" ? "bob" : "alice";
+        saveEnv();
+        refreshSelectedHumanSummary();
+      };
+      refreshSelectedHumanSummary();
+    }
+
+    function renderAgentTokenVars() {
+      const root = document.getElementById("agentTokenVars");
+      if (!root) return;
+      root.innerHTML = "";
+      const keys = ["agentBindTokenA", "agentBindTokenB"];
+      for (const key of keys) {
+        const box = document.createElement("div");
+        box.className = "varItem";
+        const label = document.createElement("label");
+        label.textContent = key;
+        const input = document.createElement("input");
+        input.value = state.env[key] || "";
+        input.placeholder = "optional manual bind token";
         input.onchange = () => {
           state.env[key] = input.value;
           saveEnv();
@@ -1159,7 +1333,7 @@
     document.getElementById("runAllBtn").onclick = runAll;
     document.getElementById("runAllSystemBtn").onclick = () => runGroup("system", "systemMsg");
     document.getElementById("runAllHumansBtn").onclick = () => runGroup("humans", "humansMsg");
-    document.getElementById("runAllAgentsBtn").onclick = () => runGroup("agents", "agentsMsg");
+    document.getElementById("runAllAgentsBtn").onclick = runAgentsWorkflow;
     document.getElementById("clearBtn").onclick = clearResponses;
     document.getElementById("runBindPairBtn").onclick = runBindPair;
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
@@ -1174,6 +1348,8 @@
     });
 
     renderVars();
+    initSelectedHumanSelector();
+    renderAgentTokenVars();
     renderBindVars();
     renderSteps();
   </script>
