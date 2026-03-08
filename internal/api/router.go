@@ -369,7 +369,15 @@ func pruneEmptyObjects(value any) (any, bool) {
 			}
 			out = append(out, next)
 		}
+		if len(out) == 0 {
+			return nil, false
+		}
 		return out, true
+	case string:
+		if typed == "" {
+			return nil, false
+		}
+		return typed, true
 	default:
 		return value, true
 	}
