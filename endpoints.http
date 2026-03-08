@@ -1,0 +1,612 @@
+@baseUrl = http://localhost:8080
+@entitiesMetadataKey = local-entities-metadata-key
+
+@aliceHumanId = alice
+@aliceHumanEmail = alice@a.test
+@aliceHandle = alice
+
+@bobHumanId = bob
+@bobHumanEmail = bob@b.test
+@bobHandle = bob
+
+@alphaOrgHandle = alpha-org
+@betaOrgHandle = beta-org
+
+###
+# Caller: Public
+# @name health
+GET {{baseUrl}}/health
+
+###
+# Caller: Public
+# @name openapi
+GET {{baseUrl}}/openapi.yaml
+
+###
+# Caller: Public
+# @name ui_config
+GET {{baseUrl}}/v1/ui/config
+
+###
+# Caller: System (entities metadata key)
+# @name entities_public_metadata
+GET {{baseUrl}}/v1/entities/metadata?public=true
+X-Entities-Metadata-Key: {{entitiesMetadataKey}}
+
+###
+# Caller: Human (Alice)
+# @name alice_me_get
+GET {{baseUrl}}/v1/me
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+# HUMAN TESTING COMPLETED UP UNTIL HERE>>>DO NOT REMOVE THIS LINE, I WILL COME BACK AND KEEP TESTING
+
+###
+# Caller: Human (Alice)
+# @name alice_me_patch
+PATCH {{baseUrl}}/v1/me
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "handle": "{{aliceHandle}}"
+}
+
+###
+# Caller: Human (Alice)
+# @name alice_me_metadata_patch
+PATCH {{baseUrl}}/v1/me/metadata
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "metadata": {
+    "public": true,
+    "testing": "Alice profile"
+  }
+}
+
+###
+# Caller: Human (Bob)
+# @name bob_me_get
+GET {{baseUrl}}/v1/me
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name bob_me_patch
+PATCH {{baseUrl}}/v1/me
+Content-Type: application/json
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+{
+  "handle": "{{bobHandle}}"
+}
+
+###
+# Caller: Human (Bob)
+# @name bob_me_metadata_patch
+PATCH {{baseUrl}}/v1/me/metadata
+Content-Type: application/json
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+{
+  "metadata": {
+    "public": true,
+    "description": "Bob profile"
+  }
+}
+
+###
+# Caller: Human (Alice)
+# @name create_org_alpha
+POST {{baseUrl}}/v1/orgs
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "handle": "{{alphaOrgHandle}}",
+  "display_name": "Alpha Org"
+}
+
+###
+# Caller: Human (Bob)
+# @name create_org_beta
+POST {{baseUrl}}/v1/orgs
+Content-Type: application/json
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+{
+  "handle": "{{betaOrgHandle}}",
+  "display_name": "Beta Org"
+}
+
+###
+# Caller: Human (Alice)
+# @name alice_me_orgs
+GET {{baseUrl}}/v1/me/orgs
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name bob_me_orgs
+GET {{baseUrl}}/v1/me/orgs
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name alpha_org_metadata_patch
+PATCH {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/metadata
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "metadata": {
+    "public": true,
+    "description": "Alpha org metadata"
+  }
+}
+
+###
+# Caller: Human (Alice)
+# @name create_invite_accept
+POST {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/invites
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "email": "{{bobHumanEmail}}",
+  "role": "member"
+}
+
+###
+# Caller: Human (Alice)
+# @name create_invite_redeem
+POST {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/invites
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "email": "{{bobHumanEmail}}",
+  "role": "member"
+}
+
+###
+# Caller: Human (Alice)
+# @name create_invite_revoke
+POST {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/invites
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "email": "{{bobHumanEmail}}",
+  "role": "member"
+}
+
+###
+# Caller: Human (Alice)
+# @name list_org_invites
+GET {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/invites
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name list_my_invites
+GET {{baseUrl}}/v1/org-invites
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name accept_invite
+POST {{baseUrl}}/v1/org-invites/{{create_invite_accept.response.body.$.invite.invite_id}}/accept
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name redeem_invite
+POST {{baseUrl}}/v1/org-invites/redeem
+Content-Type: application/json
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+{
+  "invite_code": "{{create_invite_redeem.response.body.$.invite_code}}"
+}
+
+###
+# Caller: Human (Alice)
+# @name revoke_invite
+DELETE {{baseUrl}}/v1/org-invites/{{create_invite_revoke.response.body.$.invite.invite_id}}
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name create_org_access_key
+POST {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/access-keys
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "label": "Partner read key",
+  "scopes": ["list_humans", "list_agents"],
+  "expires_in_days": 30
+}
+
+###
+# Caller: Human (Alice)
+# @name list_org_access_keys
+GET {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/access-keys
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Partner key)
+# @name org_access_humans
+GET {{baseUrl}}/v1/org-access/humans?org_name={{alphaOrgHandle}}
+X-Org-Access-Key: {{create_org_access_key.response.body.$.key}}
+
+###
+# Caller: Human (Partner key)
+# @name org_access_agents
+GET {{baseUrl}}/v1/org-access/agents?org_name={{alphaOrgHandle}}
+X-Org-Access-Key: {{create_org_access_key.response.body.$.key}}
+
+###
+# Caller: Human (Alice)
+# @name create_agent_a
+POST {{baseUrl}}/v1/me/agents
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
+  "agent_id": "alpha-agent-one"
+}
+
+###
+# Caller: Human (Bob)
+# @name create_agent_b
+POST {{baseUrl}}/v1/me/agents
+Content-Type: application/json
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+{
+  "org_id": "{{create_org_beta.response.body.$.organization.org_id}}",
+  "agent_id": "beta-agent-one"
+}
+
+###
+# Caller: Human (Bob)
+# @name create_agent_b2
+POST {{baseUrl}}/v1/me/agents
+Content-Type: application/json
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+{
+  "org_id": "{{create_org_beta.response.body.$.organization.org_id}}",
+  "agent_id": "beta-agent-two"
+}
+
+###
+# Caller: Human (Alice)
+# @name list_alice_agents
+GET {{baseUrl}}/v1/me/agents
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name list_bob_agents
+GET {{baseUrl}}/v1/me/agents
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name create_my_bind_token
+POST {{baseUrl}}/v1/me/agents/bind-tokens
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}"
+}
+
+###
+# Caller: Human (Alice)
+# @name create_bind_token_org_owned
+POST {{baseUrl}}/v1/agents/bind-tokens
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}"
+}
+
+###
+# Caller: Agent bootstrap (no prior auth)
+# @name redeem_bind_token
+POST {{baseUrl}}/v1/agents/bind
+Content-Type: application/json
+
+{
+  "hub_url": "{{baseUrl}}",
+  "bind_token": "{{create_bind_token_org_owned.response.body.$.bind_token}}"
+}
+
+###
+# Caller: Agent (bound token)
+# @name agent_me_get
+GET {{baseUrl}}/v1/agents/me
+Authorization: Bearer {{redeem_bind_token.response.body.$.token}}
+
+###
+# Caller: Agent (bound token)
+# @name agent_me_patch
+PATCH {{baseUrl}}/v1/agents/me
+Content-Type: application/json
+Authorization: Bearer {{redeem_bind_token.response.body.$.token}}
+
+{
+  "handle": "alpha-runtime-agent",
+  "metadata": {
+    "public": true,
+    "description": "Runtime-updated by agent /v1/agents/me"
+  }
+}
+
+###
+# Caller: Agent (bound token)
+# @name agent_me_metadata_patch
+PATCH {{baseUrl}}/v1/agents/me/metadata
+Content-Type: application/json
+Authorization: Bearer {{redeem_bind_token.response.body.$.token}}
+
+{
+  "metadata": {
+    "public": true,
+    "description": "Runtime-updated by agent /v1/agents/me/metadata"
+  }
+}
+
+###
+# Caller: Agent (bound token)
+# @name agent_me_capabilities
+GET {{baseUrl}}/v1/agents/me/capabilities
+Authorization: Bearer {{redeem_bind_token.response.body.$.token}}
+
+###
+# Caller: Agent (bound token)
+# @name agent_me_skill
+GET {{baseUrl}}/v1/agents/me/skill
+Authorization: Bearer {{redeem_bind_token.response.body.$.token}}
+
+###
+# Caller: Human (Alice)
+# @name create_org_trust
+POST {{baseUrl}}/v1/org-trusts
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
+  "peer_org_id": "{{create_org_beta.response.body.$.organization.org_id}}"
+}
+
+###
+# Caller: Human (Bob)
+# @name approve_org_trust
+POST {{baseUrl}}/v1/org-trusts/{{create_org_trust.response.body.$.trust.edge_id}}/approve
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name create_primary_agent_trust
+POST {{baseUrl}}/v1/me/agent-trusts
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
+  "agent_uuid": "{{create_agent_a.response.body.$.agent_uuid}}",
+  "peer_agent_uuid": "{{create_agent_b.response.body.$.agent_uuid}}"
+}
+
+###
+# Caller: Human (Alice)
+# @name list_my_agent_trusts
+GET {{baseUrl}}/v1/me/agent-trusts
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name approve_primary_agent_trust
+POST {{baseUrl}}/v1/agent-trusts/{{create_primary_agent_trust.response.body.$.trust.edge_id}}/approve
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name join_agent_trust_via_global
+POST {{baseUrl}}/v1/agent-trusts
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
+  "agent_uuid": "{{create_agent_a.response.body.$.agent_uuid}}",
+  "peer_agent_uuid": "{{create_agent_b.response.body.$.agent_uuid}}"
+}
+
+###
+# Caller: Human (Alice)
+# @name create_secondary_agent_trust_via_bind
+POST {{baseUrl}}/v1/agents/{{create_agent_a.response.body.$.agent_uuid}}/bind
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "org_id": "{{create_org_alpha.response.body.$.organization.org_id}}",
+  "peer_agent_uuid": "{{create_agent_b2.response.body.$.agent_uuid}}"
+}
+
+###
+# Caller: Human (Bob)
+# @name approve_secondary_agent_trust
+POST {{baseUrl}}/v1/agent-trusts/{{create_secondary_agent_trust_via_bind.response.body.$.trust.edge_id}}/approve
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Agent (Agent A)
+# @name publish_message
+POST {{baseUrl}}/v1/messages/publish
+Content-Type: application/json
+Authorization: Bearer {{create_agent_a.response.body.$.token}}
+
+{
+  "to_agent_uuid": "{{create_agent_b.response.body.$.agent_uuid}}",
+  "content_type": "text/plain",
+  "payload": "hello from endpoints.http"
+}
+
+###
+# Caller: Agent (Agent B)
+# @name pull_message
+GET {{baseUrl}}/v1/messages/pull?timeout_ms=0
+Authorization: Bearer {{create_agent_b.response.body.$.token}}
+
+###
+# Caller: Human (Alice)
+# @name list_alpha_humans
+GET {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/humans
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name list_alpha_agents
+GET {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/agents
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name alpha_trust_graph
+GET {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/trust-graph
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name alpha_audit
+GET {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/audit
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name alpha_stats
+GET {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/stats
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name forbidden_human_agent_metadata_patch
+PATCH {{baseUrl}}/v1/agents/{{create_agent_a.response.body.$.agent_uuid}}/metadata
+Content-Type: application/json
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+{
+  "metadata": {
+    "public": false
+  }
+}
+
+###
+# Caller: Human (Alice)
+# @name block_secondary_agent_trust
+POST {{baseUrl}}/v1/agent-trusts/{{create_secondary_agent_trust_via_bind.response.body.$.trust.edge_id}}/block
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name revoke_secondary_agent_trust
+DELETE {{baseUrl}}/v1/agent-trusts/{{create_secondary_agent_trust_via_bind.response.body.$.trust.edge_id}}
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name rotate_agent_b2_token
+POST {{baseUrl}}/v1/agents/{{create_agent_b2.response.body.$.agent_uuid}}/rotate-token
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Bob)
+# @name revoke_agent_b2
+DELETE {{baseUrl}}/v1/agents/{{create_agent_b2.response.body.$.agent_uuid}}
+X-Human-Id: {{bobHumanId}}
+X-Human-Email: {{bobHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name revoke_bob_membership_in_alpha
+DELETE {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/humans/{{bob_me_get.response.body.$.human.human_id}}
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name block_org_trust
+POST {{baseUrl}}/v1/org-trusts/{{create_org_trust.response.body.$.trust.edge_id}}/block
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name revoke_org_trust
+DELETE {{baseUrl}}/v1/org-trusts/{{create_org_trust.response.body.$.trust.edge_id}}
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}
+
+###
+# Caller: Human (Alice)
+# @name revoke_org_access_key
+DELETE {{baseUrl}}/v1/orgs/{{create_org_alpha.response.body.$.organization.org_id}}/access-keys/{{create_org_access_key.response.body.$.access_key.key_id}}
+X-Human-Id: {{aliceHumanId}}
+X-Human-Email: {{aliceHumanEmail}}

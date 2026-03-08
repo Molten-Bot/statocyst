@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,8 +100,20 @@ const (
 	defaultInviteExpiryDays = 7
 	maxInviteExpiryDays     = 365
 	defaultUIAppName        = "Statocyst"
-	maxMetadataBytes        = 64 * 1024
+	maxMetadataBytes        = 192 * 1024
 )
+
+func configuredMetadataMaxBytes() int {
+	raw := strings.TrimSpace(os.Getenv("STATOCYST_MAX_METADATA_BYTES"))
+	if raw == "" {
+		return maxMetadataBytes
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return maxMetadataBytes
+	}
+	return n
+}
 
 func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -108,27 +121,44 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	supabaseAnonKey := h.supabaseAnonKey
-	devHumanEmail := ""
+	authConfig := map[string]any{
+		"human": h.humanAuth.Name(),
+	}
+	if h.humanAuth.Name() == "supabase" {
+		supabaseConfig := map[string]any{}
+		if strings.TrimSpace(h.supabaseURL) != "" {
+			supabaseConfig["url"] = h.supabaseURL
+		}
+		if strings.TrimSpace(h.supabaseAnonKey) != "" {
+			supabaseConfig["anon_key"] = h.supabaseAnonKey
+		}
+		if len(supabaseConfig) > 0 {
+			authConfig["supabase"] = supabaseConfig
+		}
+	}
+
 	superAdminEmails := []string{}
 	if hasUIConfigPrivilegedAccess(r) {
-		devHumanEmail = strings.TrimSpace(strings.ToLower(os.Getenv("DEV_LOGIN_HUMAN_EMAIL")))
 		superAdminEmails = setToSortedSlice(h.superAdminEmails)
+	}
+	adminConfig := map[string]any{
+		"review_mode":  h.superAdminReview,
+		"write_policy": "global_write",
+	}
+	if len(superAdminEmails) > 0 {
+		adminConfig["emails"] = superAdminEmails
+	}
+	superAdminDomains := setToSortedSlice(h.superAdminDomains)
+	if len(superAdminDomains) > 0 {
+		adminConfig["domains"] = superAdminDomains
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"human_auth_provider":      h.humanAuth.Name(),
-		"supabase_url":             h.supabaseURL,
-		"supabase_anon_key":        supabaseAnonKey,
-		"dev_human_id":             strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_ID")),
-		"dev_human_email":          devHumanEmail,
-		"dev_auto_login":           strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN_AUTO")), "true"),
-		"super_admin_emails":       superAdminEmails,
-		"super_admin_domains":      setToSortedSlice(h.superAdminDomains),
-		"super_admin_review_mode":  h.superAdminReview,
-		"super_admin_write_policy": "global_write",
-		"bind_token_ttl_sec":       int(h.bindTokenTTL.Seconds()),
-		"headless_mode":            h.headlessMode,
+		"auth":               authConfig,
+		"dev_auto_login":     strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN_AUTO")), "true"),
+		"admin":              adminConfig,
+		"bind_token_ttl_sec": int(h.bindTokenTTL.Seconds()),
+		"headless_mode":      h.headlessMode,
 	})
 }
 
@@ -138,6 +168,18 @@ func hasUIConfigPrivilegedAccess(r *http.Request) bool {
 		return false
 	}
 	presentedKey := strings.TrimSpace(r.Header.Get("X-UI-Config-Key"))
+	if presentedKey == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presentedKey), []byte(expectedKey)) == 1
+}
+
+func hasEntitiesMetadataAccess(r *http.Request) bool {
+	expectedKey := strings.TrimSpace(os.Getenv("STATOCYST_ENTITIES_METADATA_KEY"))
+	if expectedKey == "" {
+		return false
+	}
+	presentedKey := strings.TrimSpace(r.Header.Get("X-Entities-Metadata-Key"))
 	if presentedKey == "" {
 		return false
 	}
@@ -192,8 +234,9 @@ func decodeMetadataJSON(raw json.RawMessage, required bool) (map[string]any, err
 	if err != nil {
 		return nil, errors.New("metadata must be a valid JSON object")
 	}
-	if len(body) > maxMetadataBytes {
-		return nil, fmt.Errorf("metadata exceeds %d bytes", maxMetadataBytes)
+	limit := configuredMetadataMaxBytes()
+	if len(body) > limit {
+		return nil, fmt.Errorf("metadata exceeds %d bytes", limit)
 	}
 	return metadata, nil
 }
@@ -243,9 +286,9 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 			}(),
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"human":          actor.Human,
-			"is_super_admin": actor.IsSuperAdmin,
-			"onboarding":     onboarding,
+			"human":      actor.Human,
+			"admin":      actor.IsSuperAdmin,
+			"onboarding": onboarding,
 		})
 		return
 	case http.MethodPatch:
@@ -279,8 +322,8 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"human":          human,
-			"is_super_admin": actor.IsSuperAdmin,
+			"human": human,
+			"admin": actor.IsSuperAdmin,
 			"onboarding": map[string]any{
 				"handle_required":  true,
 				"handle_confirmed": human.HandleConfirmedAt != nil,
@@ -398,7 +441,7 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, store.ErrInvalidHandle):
 				writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
 			case errors.Is(err, store.ErrAgentLimitExceeded):
-				writeError(w, http.StatusConflict, "agent_limit_reached", "non-super-admin users can only own up to 2 active agents")
+				writeError(w, http.StatusConflict, "agent_limit_reached", "non-admin users can only own up to 2 active agents")
 			default:
 				writeError(w, http.StatusInternalServerError, "store_error", "failed to register agent")
 			}
@@ -502,7 +545,7 @@ func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 			return
 		}
-		h.handleAgentTrustCreate(w, actor, req, "owner/admin required for initiating agent")
+		h.handleAgentTrustCreate(w, actor, req, "owner required for initiating agent")
 		return
 	default:
 		writeMethodNotAllowed(w)
@@ -649,7 +692,7 @@ func (h *Handler) ensureHumanOwnedAgentLimit(w http.ResponseWriter, ownerHumanID
 		return false
 	}
 	if h.control.CountActiveHumanOwnedAgents(ownerHumanID) >= 2 {
-		writeError(w, http.StatusConflict, "agent_limit_reached", "non-super-admin users can only own up to 2 active agents")
+		writeError(w, http.StatusConflict, "agent_limit_reached", "non-admin users can only own up to 2 active agents")
 		return true
 	}
 	return false
@@ -989,7 +1032,7 @@ func (h *Handler) handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !actor.IsSuperAdmin {
-			writeError(w, http.StatusForbidden, "forbidden", "super admin required")
+			writeError(w, http.StatusForbidden, "forbidden", "admin required")
 			return
 		}
 	}
@@ -1007,6 +1050,18 @@ func metadataPublicOrDefault(metadata map[string]any) bool {
 	publicValue, ok := raw.(bool)
 	if !ok {
 		return true
+	}
+	return publicValue
+}
+
+func metadataPublicStrict(metadata map[string]any) bool {
+	raw, ok := metadata["public"]
+	if !ok {
+		return false
+	}
+	publicValue, ok := raw.(bool)
+	if !ok {
+		return false
 	}
 	return publicValue
 }
@@ -1029,6 +1084,111 @@ func snapshotMetadataPublicView(metadata map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+func entityMetadataForRender(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(metadata))
+	for k, v := range metadata {
+		out[k] = v
+	}
+	return out
+}
+
+func (h *Handler) handleEntitiesMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if !hasEntitiesMetadataAccess(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid entities metadata key")
+		return
+	}
+
+	publicFilter := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("public")))
+	if publicFilter != "true" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "query parameter public=true is required")
+		return
+	}
+
+	admin := h.control.AdminSnapshot()
+
+	organizations := map[string]any{}
+	for _, org := range admin.Organizations {
+		if !metadataPublicStrict(org.Metadata) {
+			continue
+		}
+		key := strings.TrimSpace(org.Handle)
+		if key == "" {
+			key = org.OrgID
+		}
+		row := map[string]any{
+			"id": org.OrgID,
+		}
+		if metadata := entityMetadataForRender(org.Metadata); len(metadata) > 0 {
+			row["metadata"] = metadata
+		}
+		organizations[key] = row
+	}
+
+	humans := map[string]any{}
+	for _, human := range admin.Humans {
+		if !metadataPublicStrict(human.Metadata) {
+			continue
+		}
+		key := strings.TrimSpace(human.Handle)
+		if key == "" {
+			key = human.HumanID
+		}
+		row := map[string]any{
+			"id": human.HumanID,
+		}
+		if metadata := entityMetadataForRender(human.Metadata); len(metadata) > 0 {
+			row["metadata"] = metadata
+		}
+		humans[key] = row
+	}
+
+	agents := map[string]any{}
+	for _, agent := range admin.Agents {
+		if !metadataPublicStrict(agent.Metadata) {
+			continue
+		}
+		key := strings.TrimSpace(agent.AgentID)
+		if key == "" {
+			key = agent.AgentUUID
+		}
+		row := map[string]any{
+			"id": agent.AgentUUID,
+		}
+		if metadata := entityMetadataForRender(agent.Metadata); len(metadata) > 0 {
+			row["metadata"] = metadata
+		}
+		agents[key] = row
+	}
+
+	entities := map[string]any{}
+	if len(organizations) != 0 {
+		entities["organizations"] = organizations
+	}
+	if len(humans) != 0 {
+		entities["humans"] = humans
+	}
+	if len(agents) != 0 {
+		entities["agents"] = agents
+	}
+
+	response := map[string]any{
+		"generated_at": h.now().UTC().Format(time.RFC3339Nano),
+		"filters": map[string]any{
+			"public": true,
+		},
+		"entities": entities,
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) handlePublicSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -1277,7 +1437,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, store.ErrOrgNotFound):
 				writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
 			case errors.Is(err, store.ErrUnauthorizedRole):
-				writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+				writeError(w, http.StatusForbidden, "forbidden", "owner role required")
 			default:
 				writeError(w, http.StatusInternalServerError, "store_error", "failed to update organization metadata")
 			}
@@ -1298,7 +1458,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				case errors.Is(err, store.ErrOrgNotFound):
 					writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
 				case errors.Is(err, store.ErrUnauthorizedRole):
-					writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+					writeError(w, http.StatusForbidden, "forbidden", "owner role required")
 				default:
 					writeError(w, http.StatusInternalServerError, "store_error", "failed to list invites")
 				}
@@ -1358,7 +1518,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				case errors.Is(err, store.ErrOrgNotFound):
 					writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
 				case errors.Is(err, store.ErrUnauthorizedRole):
-					writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+					writeError(w, http.StatusForbidden, "forbidden", "owner role required")
 				case errors.Is(err, store.ErrInvalidRole):
 					writeError(w, http.StatusBadRequest, "invalid_role", "role must be admin|member|viewer")
 				case errors.Is(err, store.ErrInviteInvalid):
@@ -1388,7 +1548,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 					case errors.Is(err, store.ErrOrgNotFound):
 						writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
 					case errors.Is(err, store.ErrUnauthorizedRole):
-						writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+						writeError(w, http.StatusForbidden, "forbidden", "owner role required")
 					default:
 						writeError(w, http.StatusInternalServerError, "store_error", "failed to list access keys")
 					}
@@ -1440,7 +1600,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 					case errors.Is(err, store.ErrOrgNotFound):
 						writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
 					case errors.Is(err, store.ErrUnauthorizedRole):
-						writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+						writeError(w, http.StatusForbidden, "forbidden", "owner role required")
 					case errors.Is(err, store.ErrOrgAccessScopeDenied):
 						writeError(w, http.StatusBadRequest, "invalid_scopes", "at least one valid scope is required")
 					default:
@@ -1476,7 +1636,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				case errors.Is(err, store.ErrOrgAccessKeyNotFound):
 					writeError(w, http.StatusNotFound, "unknown_access_key", "key_id is not registered")
 				case errors.Is(err, store.ErrUnauthorizedRole):
-					writeError(w, http.StatusForbidden, "forbidden", "role owner/admin required")
+					writeError(w, http.StatusForbidden, "forbidden", "owner role required")
 				default:
 					writeError(w, http.StatusInternalServerError, "store_error", "failed to revoke access key")
 				}
@@ -1532,7 +1692,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				case errors.Is(err, store.ErrCannotRevokeOwner):
 					writeError(w, http.StatusBadRequest, "cannot_revoke_owner", "owner membership cannot be revoked")
 				case errors.Is(err, store.ErrUnauthorizedRole):
-					writeError(w, http.StatusForbidden, "forbidden", "owner/admin required")
+					writeError(w, http.StatusForbidden, "forbidden", "owner required")
 				default:
 					writeError(w, http.StatusInternalServerError, "store_error", "failed to revoke human membership")
 				}
@@ -1806,7 +1966,7 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, store.ErrInviteNotFound):
 				writeError(w, http.StatusNotFound, "unknown_invite", "invite_id is not registered")
 			case errors.Is(err, store.ErrUnauthorizedRole):
-				writeError(w, http.StatusForbidden, "forbidden", "invite recipient or org admin required")
+				writeError(w, http.StatusForbidden, "forbidden", "invite recipient or org owner required")
 			default:
 				writeError(w, http.StatusInternalServerError, "store_error", "failed to revoke invite")
 			}
@@ -2038,7 +2198,7 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 		} else {
 			req.AgentID = agentRef
 		}
-		h.handleAgentTrustCreate(w, actor, req, "owner/admin required for initiating agent")
+		h.handleAgentTrustCreate(w, actor, req, "owner required for initiating agent")
 		return
 	}
 
@@ -2132,7 +2292,7 @@ func (h *Handler) handleOrgTrusts(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrOrgNotFound):
 			writeError(w, http.StatusNotFound, "unknown_org", "org_id or peer_org_id is not registered")
 		case errors.Is(err, store.ErrUnauthorizedRole):
-			writeError(w, http.StatusForbidden, "forbidden", "owner/admin required")
+			writeError(w, http.StatusForbidden, "forbidden", "owner required")
 		case errors.Is(err, store.ErrSelfTrust):
 			writeError(w, http.StatusBadRequest, "invalid_peer_org_id", "peer_org_id cannot equal org_id")
 		default:
@@ -2226,7 +2386,7 @@ func (h *Handler) handleAgentTrusts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 		return
 	}
-	h.handleAgentTrustCreate(w, actor, req, "owner/admin required in org")
+	h.handleAgentTrustCreate(w, actor, req, "owner required in org")
 }
 
 func (h *Handler) handleAgentTrustByID(w http.ResponseWriter, r *http.Request) {
@@ -2295,7 +2455,7 @@ func (h *Handler) writeTrustErr(w http.ResponseWriter, err error, kind string) {
 	case errors.Is(err, store.ErrTrustNotFound):
 		writeError(w, http.StatusNotFound, "unknown_trust", kind+"_trust id is not registered")
 	case errors.Is(err, store.ErrUnauthorizedRole):
-		writeError(w, http.StatusForbidden, "forbidden", "owner/admin required")
+		writeError(w, http.StatusForbidden, "forbidden", "owner required")
 	case errors.Is(err, store.ErrAgentNotFound):
 		writeError(w, http.StatusNotFound, "unknown_agent", "agent not found")
 	default:

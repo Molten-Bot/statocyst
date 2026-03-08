@@ -277,10 +277,7 @@ func TestHealthReportsRuntimeDequeueFailureAndRecovery(t *testing.T) {
 	}
 }
 
-func TestUIConfigExposesSupabaseAnonKeyAndRedactsPrivilegedFields(t *testing.T) {
-	t.Setenv("DEV_LOGIN_HUMAN_ID", "dev-human")
-	t.Setenv("DEV_LOGIN_HUMAN_EMAIL", "dev@local.test")
-
+func TestUIConfigExposesAuthAndRedactsPrivilegedFields(t *testing.T) {
 	mem := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
 	h := NewHandler(
@@ -305,24 +302,24 @@ func TestUIConfigExposesSupabaseAnonKeyAndRedactsPrivilegedFields(t *testing.T) 
 	}
 
 	payload := decodeJSONMap(t, resp.Body.Bytes())
-	if got, _ := payload["supabase_anon_key"].(string); got != "should-not-leak" {
-		t.Fatalf("expected supabase_anon_key to be exposed for UI bootstrap, got %q", got)
+	authObj, _ := payload["auth"].(map[string]any)
+	if got, _ := authObj["human"].(string); got != "dev" {
+		t.Fatalf("expected auth.human=dev, got %q payload=%v", got, payload)
 	}
-	if got, _ := payload["dev_human_email"].(string); got != "" {
-		t.Fatalf("expected dev_human_email redacted, got %q", got)
+	if _, exists := authObj["supabase"]; exists {
+		t.Fatalf("did not expect auth.supabase for dev provider, payload=%v", payload)
 	}
 
-	adminEmails, ok := payload["super_admin_emails"].([]any)
+	adminObj, ok := payload["admin"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected super_admin_emails array, got %T", payload["super_admin_emails"])
+		t.Fatalf("expected admin object, got %T payload=%v", payload["admin"], payload)
 	}
-	if len(adminEmails) != 0 {
-		t.Fatalf("expected super_admin_emails redacted, got %v", adminEmails)
+	if _, exists := adminObj["emails"]; exists {
+		t.Fatalf("expected admin.emails redacted/omitted, got payload=%v", payload)
 	}
-
-	domains, ok := payload["super_admin_domains"].([]any)
+	domains, ok := adminObj["domains"].([]any)
 	if !ok || len(domains) != 1 || domains[0] != "molten.bot" {
-		t.Fatalf("expected super_admin_domains preserved, got %v", payload["super_admin_domains"])
+		t.Fatalf("expected admin.domains preserved, got %v payload=%v", adminObj["domains"], payload)
 	}
 }
 
@@ -357,19 +354,21 @@ func TestUIConfigReturnsSensitiveFieldsWithPrivilegedKey(t *testing.T) {
 	}
 
 	payload := decodeJSONMap(t, resp.Body.Bytes())
-	if got, _ := payload["supabase_anon_key"].(string); got != "should-leak-only-to-privileged-caller" {
-		t.Fatalf("expected supabase_anon_key for privileged caller, got %q", got)
-	}
-	if got, _ := payload["dev_human_email"].(string); got != "dev@local.test" {
-		t.Fatalf("expected dev_human_email for privileged caller, got %q", got)
+	authObj, _ := payload["auth"].(map[string]any)
+	if got, _ := authObj["human"].(string); got != "dev" {
+		t.Fatalf("expected auth.human=dev, got %q payload=%v", got, payload)
 	}
 
-	adminEmails, ok := payload["super_admin_emails"].([]any)
+	adminObj, ok := payload["admin"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected super_admin_emails array, got %T", payload["super_admin_emails"])
+		t.Fatalf("expected admin object, got %T payload=%v", payload["admin"], payload)
+	}
+	adminEmails, ok := adminObj["emails"].([]any)
+	if !ok {
+		t.Fatalf("expected admin.emails array for privileged caller, got %T payload=%v", adminObj["emails"], payload)
 	}
 	if len(adminEmails) != 2 || adminEmails[0] != "admin1@molten.bot" || adminEmails[1] != "admin2@molten.bot" {
-		t.Fatalf("expected super_admin_emails for privileged caller, got %v", adminEmails)
+		t.Fatalf("expected admin.emails for privileged caller, got %v", adminEmails)
 	}
 }
 
@@ -403,15 +402,12 @@ func TestUIConfigKeepsPrivilegedFieldsRedactedWithWrongPrivilegedKey(t *testing.
 	}
 
 	payload := decodeJSONMap(t, resp.Body.Bytes())
-	if got, _ := payload["supabase_anon_key"].(string); got != "should-not-leak" {
-		t.Fatalf("expected supabase_anon_key to remain available with wrong key, got %q", got)
+	adminObj, ok := payload["admin"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected admin object, got %T payload=%v", payload["admin"], payload)
 	}
-	if got, _ := payload["dev_human_email"].(string); got != "" {
-		t.Fatalf("expected redacted dev_human_email for wrong key, got %q", got)
-	}
-	adminEmails, ok := payload["super_admin_emails"].([]any)
-	if !ok || len(adminEmails) != 0 {
-		t.Fatalf("expected redacted super_admin_emails for wrong key, got %v", payload["super_admin_emails"])
+	if _, exists := adminObj["emails"]; exists {
+		t.Fatalf("expected redacted admin.emails for wrong key, got %v", adminObj["emails"])
 	}
 }
 
@@ -1837,6 +1833,89 @@ func TestMetadataValidationRejectsNonObjectAndOversizedPayload(t *testing.T) {
 	}, humanHeaders("alice", "alice@a.test"))
 	if tooLarge.Code != http.StatusBadRequest {
 		t.Fatalf("expected oversized metadata to return 400, got %d %s", tooLarge.Code, tooLarge.Body.String())
+	}
+}
+
+func TestMetadataValidationHonorsConfiguredMaxBytes(t *testing.T) {
+	t.Setenv("STATOCYST_MAX_METADATA_BYTES", "1024")
+
+	router := newTestRouter()
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	tooLargeValue := strings.Repeat("x", 1025)
+	tooLarge := doJSONRequest(t, router, http.MethodPatch, "/v1/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"description": tooLargeValue,
+		},
+	}, humanHeaders("alice", "alice@a.test"))
+	if tooLarge.Code != http.StatusBadRequest {
+		t.Fatalf("expected configured oversized metadata to return 400, got %d %s", tooLarge.Code, tooLarge.Body.String())
+	}
+	if !strings.Contains(tooLarge.Body.String(), "metadata exceeds 1024 bytes") {
+		t.Fatalf("expected configured limit in error, got %s", tooLarge.Body.String())
+	}
+}
+
+func TestPruneEmptyJSONObjectFieldsRemovesEmptyStringArrayAndObject(t *testing.T) {
+	input := map[string]any{
+		"empty_string": "",
+		"empty_array":  []any{},
+		"empty_obj":    map[string]any{},
+		"kept":         "value",
+		"nested": map[string]any{
+			"drop_me": "",
+			"keep_me": "ok",
+		},
+		"list": []any{
+			"",
+			map[string]any{},
+			[]any{},
+			"kept",
+			map[string]any{"drop_me": "", "keep_me": "v"},
+		},
+	}
+
+	prunedAny, err := pruneEmptyJSONObjectFields(input)
+	if err != nil {
+		t.Fatalf("prune failed: %v", err)
+	}
+	pruned, ok := prunedAny.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map after prune, got %T", prunedAny)
+	}
+
+	if _, exists := pruned["empty_string"]; exists {
+		t.Fatalf("expected empty string field removed, got %v", pruned)
+	}
+	if _, exists := pruned["empty_array"]; exists {
+		t.Fatalf("expected empty array field removed, got %v", pruned)
+	}
+	if _, exists := pruned["empty_obj"]; exists {
+		t.Fatalf("expected empty object field removed, got %v", pruned)
+	}
+	if got, _ := pruned["kept"].(string); got != "value" {
+		t.Fatalf("expected non-empty value preserved, got %v", pruned["kept"])
+	}
+	nested, _ := pruned["nested"].(map[string]any)
+	if _, exists := nested["drop_me"]; exists {
+		t.Fatalf("expected nested empty string removed, got %v", nested)
+	}
+	if got, _ := nested["keep_me"].(string); got != "ok" {
+		t.Fatalf("expected nested non-empty value preserved, got %v", nested["keep_me"])
+	}
+	list, _ := pruned["list"].([]any)
+	if len(list) != 2 {
+		t.Fatalf("expected list to retain only non-empty entries, got %v", list)
+	}
+	if got, _ := list[0].(string); got != "kept" {
+		t.Fatalf("expected first list entry kept, got %v", list[0])
+	}
+	obj, _ := list[1].(map[string]any)
+	if got, _ := obj["keep_me"].(string); got != "v" {
+		t.Fatalf("expected second list object kept with keep_me, got %v", obj)
+	}
+	if _, exists := obj["drop_me"]; exists {
+		t.Fatalf("expected empty value in list object removed, got %v", obj)
 	}
 }
 

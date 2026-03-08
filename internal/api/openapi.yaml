@@ -9,6 +9,10 @@ info:
     - Agent runtime APIs (`/v1/agents/me/*`, `/v1/messages/*`) using agent bearer tokens.
     Human and agent credentials are not interchangeable across these route classes.
     Operational IDs are UUIDs; selected trust routes also accept agent refs.
+    Empty JSON objects, arrays, and string fields are omitted from API responses to keep payloads compact.
+    API routes (`/health`, `/openapi.yaml`, `/v1/*`) support gzip compression when
+    clients send `Accept-Encoding: gzip`; compressed responses include
+    `Content-Encoding: gzip` and `Vary: Accept-Encoding`.
 servers:
   - url: http://localhost:8080
 paths:
@@ -68,9 +72,11 @@ paths:
       summary: UI auth runtime configuration
       description: |
         Runtime configuration consumed by bundled UI clients; external agents usually do not need this.
-        `supabase_anon_key` is intentionally included for browser auth bootstrap.
+        `auth.human` declares the active human auth provider.
+        When provider is `supabase`, `auth.supabase` is included and `anon_key` is intentionally exposed for browser auth bootstrap.
+        Empty string/array fields are omitted from the JSON response.
         Privileged fields are redacted by default.
-        When `UI_CONFIG_API_KEY` is configured server-side, callers can send header `X-UI-Config-Key` with the matching value to receive unredacted `dev_human_email` and `super_admin_emails`.
+        When `UI_CONFIG_API_KEY` is configured server-side, callers can send header `X-UI-Config-Key` with the matching value to receive unredacted `admin.emails`.
       parameters:
         - in: header
           name: X-UI-Config-Key
@@ -81,10 +87,61 @@ paths:
       responses:
         '200':
           description: UI config
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - auth
+                  - dev_auto_login
+                  - admin
+                  - bind_token_ttl_sec
+                  - headless_mode
+                properties:
+                  auth:
+                    type: object
+                    required: [human]
+                    properties:
+                      human:
+                        type: string
+                        enum: [dev, supabase]
+                      supabase:
+                        type: object
+                        properties:
+                          url:
+                            type: string
+                          anon_key:
+                            type: string
+                  dev_auto_login:
+                    type: boolean
+                  admin:
+                    type: object
+                    required: [review_mode, write_policy]
+                    properties:
+                      emails:
+                        type: array
+                        items:
+                          type: string
+                      domains:
+                        type: array
+                        items:
+                          type: string
+                      review_mode:
+                        type: boolean
+                      write_policy:
+                        type: string
+                        enum: [global_write]
+                  bind_token_ttl_sec:
+                    type: integer
+                  headless_mode:
+                    type: boolean
   /v1/me:
     get:
       summary: Current human identity
-      description: Human control-plane route. Returns authenticated human profile + onboarding state.
+      description: |
+        Human control-plane route.
+        Returns authenticated human profile + onboarding state, including `admin`
+        for statocyst-host administrator privileges.
       security:
         - humanAuth: []
       responses:
@@ -114,7 +171,8 @@ paths:
       summary: Update current human metadata
       description: |
         Replaces the metadata object for the authenticated human.
-        Metadata must be a JSON object and serialized size must be <= 65536 bytes.
+        Metadata must be a JSON object and serialized size must be <= configured limit
+        (`STATOCYST_MAX_METADATA_BYTES`; default 196608 bytes / 192KB).
         Hub is responsible for field-level metadata policy/validation before forwarding.
       security:
         - humanAuth: []
@@ -134,10 +192,10 @@ paths:
           description: Human metadata updated
   /v1/admin/snapshot:
     get:
-      summary: Super-admin read-only global snapshot
+      summary: Admin read-only global snapshot
       description: |
         Internal diagnostics/export endpoint across all orgs.
-        Access is granted to super-admin humans or callers presenting `X-Admin-Snapshot-Key` that matches `STATOCYST_ADMIN_SNAPSHOT_KEY`.
+        Access is granted to statocyst admins or callers presenting `X-Admin-Snapshot-Key` that matches `STATOCYST_ADMIN_SNAPSHOT_KEY`.
       parameters:
         - in: header
           name: X-Admin-Snapshot-Key
@@ -151,7 +209,7 @@ paths:
         '200':
           description: Global metadata snapshot
         '403':
-          description: Super admin required
+          description: Admin required
   /v1/public/snapshot:
     get:
       summary: Public filtered snapshot
@@ -161,6 +219,39 @@ paths:
       responses:
         '200':
           description: Public snapshot
+  /v1/entities/metadata:
+    get:
+      summary: Keyed entity metadata query
+      description: |
+        Metadata feed for website rendering across organizations, humans, and agents.
+        Access requires system header `X-Entities-Metadata-Key` matching `STATOCYST_ENTITIES_METADATA_KEY`.
+        Currently supports `public=true` filter only and returns entities whose `metadata.public` is explicitly `true`.
+        Entities without explicit public metadata are excluded.
+        Response shape is keyed objects (not arrays):
+        - `entities.organizations.<org_handle> -> { id, metadata }`
+        - `entities.humans.<human_handle> -> { id, metadata }`
+        - `entities.agents.<agent_id> -> { id, metadata }`
+      parameters:
+        - in: header
+          name: X-Entities-Metadata-Key
+          required: true
+          schema:
+            type: string
+          description: System key dedicated to this endpoint.
+        - in: query
+          name: public
+          required: true
+          schema:
+            type: boolean
+            enum: [true]
+          description: Must be `true`.
+      responses:
+        '200':
+          description: Public entity metadata
+        '401':
+          description: Missing or invalid entities metadata key
+        '400':
+          description: Invalid query (must set `public=true`)
   /v1/me/orgs:
     get:
       summary: List memberships for current human
@@ -277,7 +368,9 @@ paths:
       summary: Update organization metadata
       description: |
         Replaces the metadata object for an organization.
-        Requires owner/admin role for the org or super-admin.
+        Metadata must be a JSON object and serialized size must be <= configured limit
+        (`STATOCYST_MAX_METADATA_BYTES`; default 196608 bytes / 192KB).
+        Requires owner role for the org or statocyst admin.
         Hub is responsible for field-level metadata policy/validation before forwarding.
       security:
         - humanAuth: []
@@ -686,7 +779,8 @@ paths:
       description: |
         Supports one-time handle finalization (`handle`) and metadata replacement (`metadata`).
         Provide at least one of `handle` or `metadata`.
-        Metadata must be a JSON object and serialized size must be <= 65536 bytes.
+        Metadata must be a JSON object and serialized size must be <= configured limit
+        (`STATOCYST_MAX_METADATA_BYTES`; default 196608 bytes / 192KB).
       security:
         - agentAuth: []
       requestBody:

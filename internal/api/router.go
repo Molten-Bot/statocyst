@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -98,6 +100,7 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/v1/me/agents/bind-tokens", handler.handleMyAgentBindTokens)
 	mux.HandleFunc("/v1/me/agent-trusts", handler.handleMyAgentTrusts)
 	mux.HandleFunc("/v1/admin/snapshot", handler.handleAdminSnapshot)
+	mux.HandleFunc("/v1/entities/metadata", handler.handleEntitiesMetadata)
 	mux.HandleFunc("/v1/public/snapshot", handler.handlePublicSnapshot)
 	mux.HandleFunc("/v1/orgs", handler.handleOrgs)
 	mux.HandleFunc("/v1/orgs/", handler.handleOrgSubroutes)
@@ -119,7 +122,117 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/v1/messages/publish", handler.handlePublish)
 	mux.HandleFunc("/v1/messages/pull", handler.handlePull)
 	mux.HandleFunc("/", handler.handleUI)
-	return mux
+	return withAPICompression(mux)
+}
+
+func withAPICompression(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isAPIPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		addVaryAcceptEncoding(w.Header())
+		if !acceptsGzip(r.Header.Get("Accept-Encoding")) || strings.EqualFold(r.Method, http.MethodHead) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		gz := gzip.NewWriter(w)
+		defer func() { _ = gz.Close() }()
+
+		gzw := &gzipResponseWriter{
+			ResponseWriter: w,
+			gz:             gz,
+		}
+		next.ServeHTTP(gzw, r)
+	})
+}
+
+func isAPIPath(path string) bool {
+	return path == "/health" || path == "/openapi.yaml" || strings.HasPrefix(path, "/v1/")
+}
+
+func addVaryAcceptEncoding(h http.Header) {
+	for _, vary := range h.Values("Vary") {
+		for _, token := range strings.Split(vary, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "Accept-Encoding") {
+				return
+			}
+		}
+	}
+	h.Add("Vary", "Accept-Encoding")
+}
+
+func acceptsGzip(raw string) bool {
+	gzipQ := -1.0
+	starQ := -1.0
+
+	for _, token := range strings.Split(strings.ToLower(raw), ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		parts := strings.Split(token, ";")
+		name := strings.TrimSpace(parts[0])
+		q := 1.0
+		for _, param := range parts[1:] {
+			kv := strings.SplitN(strings.TrimSpace(param), "=", 2)
+			if len(kv) != 2 || strings.TrimSpace(kv[0]) != "q" {
+				continue
+			}
+			if parsed, err := strconv.ParseFloat(strings.TrimSpace(kv[1]), 64); err == nil {
+				q = parsed
+			}
+		}
+		switch name {
+		case "gzip":
+			gzipQ = q
+		case "*":
+			starQ = q
+		}
+	}
+
+	if gzipQ >= 0 {
+		return gzipQ > 0
+	}
+	if starQ >= 0 {
+		return starQ > 0
+	}
+	return false
+}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	gz          *gzip.Writer
+	wroteHeader bool
+}
+
+func (w *gzipResponseWriter) WriteHeader(statusCode int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	headers := w.ResponseWriter.Header()
+	if headers.Get("Content-Encoding") == "" {
+		headers.Set("Content-Encoding", "gzip")
+	}
+	headers.Del("Content-Length")
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *gzipResponseWriter) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.gz.Write(p)
+}
+
+func (w *gzipResponseWriter) Flush() {
+	_ = w.gz.Flush()
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +320,67 @@ func (h *Handler) clearQueueRuntimeError() {
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	encoded := payload
+	if pruned, err := pruneEmptyJSONObjectFields(payload); err == nil {
+		encoded = pruned
+	}
+	_ = json.NewEncoder(w).Encode(encoded)
+}
+
+func pruneEmptyJSONObjectFields(payload any) (any, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return payload, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return payload, err
+	}
+	pruned, keep := pruneEmptyObjects(decoded)
+	if !keep {
+		return map[string]any{}, nil
+	}
+	return pruned, nil
+}
+
+func pruneEmptyObjects(value any) (any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for k, v := range typed {
+			next, keep := pruneEmptyObjects(v)
+			if !keep {
+				continue
+			}
+			out[k] = next
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, true
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, v := range typed {
+			next, keep := pruneEmptyObjects(v)
+			if !keep {
+				continue
+			}
+			out = append(out, next)
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, true
+	case string:
+		if typed == "" {
+			return nil, false
+		}
+		return typed, true
+	default:
+		return value, true
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, code string, message string) {

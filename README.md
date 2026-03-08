@@ -29,19 +29,21 @@ Statocyst validates metadata as JSON object payloads with size limits, then pers
 - `HUMAN_AUTH_PROVIDER=supabase`: use Supabase JWT bearer token.
   - Requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
   - Backend validates bearer tokens via Supabase `/auth/v1/user`.
-- Super-admin identity lists:
+- Admin identity lists:
   - `SUPER_ADMIN_EMAILS=root@molten.bot,ops@molten.bot` (recommended)
   - `SUPER_ADMIN_DOMAINS=molten.bot` (broader; optional)
   - Requires verified email claim when using Supabase (`email_verified=true`).
-- Super-admin review toggle:
-  - `SUPER_ADMIN_REVIEW_MODE=false` (default): super-admin identities behave like normal users.
-  - `SUPER_ADMIN_REVIEW_MODE=true`: super-admin identities can read across orgs but remain read-only for writes.
+- Admin review toggle:
+  - `SUPER_ADMIN_REVIEW_MODE=false` (default): admin identities behave like normal users.
+  - `SUPER_ADMIN_REVIEW_MODE=true`: admin identities can read across orgs but remain read-only for writes.
 - Optional UI config privileged key:
   - `UI_CONFIG_API_KEY=<secret>` enables privileged access to sensitive `/v1/ui/config` fields for trusted setup callers.
-  - `supabase_anon_key` is intentionally returned by `/v1/ui/config` for browser auth bootstrap.
-  - Callers must send `X-UI-Config-Key: <secret>` to receive unredacted `dev_human_email` and `super_admin_emails`.
+  - `auth.supabase.anon_key` is intentionally returned by `/v1/ui/config` for browser auth bootstrap when `auth.human` is `supabase`.
+  - Callers must send `X-UI-Config-Key: <secret>` to receive unredacted `admin.emails`.
   - Without that header (or with a wrong key), only those privileged fields are redacted.
 - Bind token TTL minutes: `BIND_TOKEN_TTL_MINUTES=15` (default `15`).
+- Metadata payload max bytes (human/org/agent metadata write routes):
+  - `STATOCYST_MAX_METADATA_BYTES=196608` (default `196608`, i.e. `192KB`).
 
 ### State backend
 
@@ -69,6 +71,17 @@ Statocyst validates metadata as JSON object payloads with size limits, then pers
 go run ./cmd/statocystd
 ```
 
+Fast dev boot script (native Go, same default port):
+
+```bash
+./dev-bootup.sh
+```
+
+Notes:
+- Defaults to `STATOCYST_ADDR=:8080`, `HUMAN_AUTH_PROVIDER=dev`, `STATOCYST_UI_DEV_MODE=true`.
+- Safe to rerun: if an existing statocyst process is already listening on that port, the script stops it first.
+- You can override port with `STATOCYST_PORT=8081 ./dev-bootup.sh` (or set `STATOCYST_ADDR` directly).
+
 Optional:
 
 ```bash
@@ -94,7 +107,7 @@ Useful local keys:
 
 - `DEV_LOGIN_HUMAN_ID` and `DEV_LOGIN_HUMAN_EMAIL`: dev identity used by `/` login page in `HUMAN_AUTH_PROVIDER=dev`.
 - `DEV_LOGIN_AUTO=true`: auto-redirect from login page into `/profile` as that dev user.
-- `SUPER_ADMIN_REVIEW_MODE=true` + `SUPER_ADMIN_EMAILS=...`: test super-admin visibility/behavior locally.
+- `SUPER_ADMIN_REVIEW_MODE=true` + `SUPER_ADMIN_EMAILS=...`: test admin visibility/behavior locally.
 
 Test UI changes locally without Docker Hub:
 
@@ -134,7 +147,7 @@ Open:
 ```text
 http://localhost:8080/              # login page (human login via Supabase when enabled)
 http://localhost:8080/profile       # user profile + memberships + invite acceptance
-http://localhost:8080/organization  # org admin area (create org, invite humans, org metrics)
+http://localhost:8080/organization  # org owner area (create org, invite humans, org metrics)
 http://localhost:8080/agents        # agent lifecycle + pending agent trust approvals
 http://localhost:8080/domains       # legacy all-in-one page (kept for review)
 ```

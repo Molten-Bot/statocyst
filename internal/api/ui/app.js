@@ -74,7 +74,7 @@ function showDomainsAccessBlocked() {
   const main = document.querySelector("main");
   if (!main) return;
   main.innerHTML =
-    '<div class="banner"><strong>Domains (Legacy)</strong> is super-admin view-only. Access denied for this account.</div>';
+    '<div class="banner"><strong>Domains (Legacy)</strong> is admin view-only. Access denied for this account.</div>';
 }
 
 function disableMutatingActions() {
@@ -134,7 +134,7 @@ async function init() {
   if ($("humanEmail")) $("humanEmail").value = readStorage(DEV_EMAIL_KEY);
 
   const me = await req("/v1/me");
-  if (me.status !== 200 || !Boolean(me?.data?.is_super_admin)) {
+  if (me.status !== 200 || !Boolean(me?.data?.admin)) {
     showDomainsAccessBlocked();
     return;
   }

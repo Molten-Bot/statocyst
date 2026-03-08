@@ -82,16 +82,16 @@ const StatocystUI = (() => {
       };
     }
 
-    const adminOnlyLinks = document.querySelectorAll("[data-super-admin-only]");
+    const adminOnlyLinks = document.querySelectorAll("[data-admin-only]");
     for (const node of adminOnlyLinks) {
       node.style.display = "none";
     }
 
     req("/v1/me")
       .then((r) => {
-        const isSuperAdmin = r.status === 200 && Boolean(r?.data?.is_super_admin);
+        const isAdmin = r.status === 200 && Boolean(r?.data?.admin);
         for (const node of adminOnlyLinks) {
-          node.style.display = isSuperAdmin ? "" : "none";
+          node.style.display = isAdmin ? "" : "none";
         }
       })
       .catch(() => {

@@ -76,8 +76,8 @@ function renderProfile(me, orgs) {
   UI.$("profileIsPublic").checked = metadataPublic(human?.metadata);
   renderOrgs(orgs?.data?.memberships);
 
-  const isSuperAdmin = Boolean(me?.data?.is_super_admin);
-  UI.$("superAdminRow").style.display = isSuperAdmin ? "block" : "none";
+  const isAdmin = Boolean(me?.data?.admin);
+  UI.$("adminRow").style.display = isAdmin ? "block" : "none";
 }
 
 function setInviteStatus(message, warn = false) {
