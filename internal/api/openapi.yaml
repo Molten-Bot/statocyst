@@ -139,7 +139,7 @@ paths:
       summary: Current human identity
       description: |
         Human control-plane route.
-        Returns authenticated human profile + onboarding state, including `is_admin`
+        Returns authenticated human profile + onboarding state, including `admin`
         for statocyst-host administrator privileges.
       security:
         - humanAuth: []

@@ -76,7 +76,7 @@ function renderProfile(me, orgs) {
   UI.$("profileIsPublic").checked = metadataPublic(human?.metadata);
   renderOrgs(orgs?.data?.memberships);
 
-  const isAdmin = Boolean(me?.data?.is_admin);
+  const isAdmin = Boolean(me?.data?.admin);
   UI.$("adminRow").style.display = isAdmin ? "block" : "none";
 }
 

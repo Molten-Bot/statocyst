@@ -89,7 +89,7 @@ const StatocystUI = (() => {
 
     req("/v1/me")
       .then((r) => {
-        const isAdmin = r.status === 200 && Boolean(r?.data?.is_admin);
+        const isAdmin = r.status === 200 && Boolean(r?.data?.admin);
         for (const node of adminOnlyLinks) {
           node.style.display = isAdmin ? "" : "none";
         }

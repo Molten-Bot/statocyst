@@ -134,7 +134,7 @@ async function init() {
   if ($("humanEmail")) $("humanEmail").value = readStorage(DEV_EMAIL_KEY);
 
   const me = await req("/v1/me");
-  if (me.status !== 200 || !Boolean(me?.data?.is_admin)) {
+  if (me.status !== 200 || !Boolean(me?.data?.admin)) {
     showDomainsAccessBlocked();
     return;
   }
