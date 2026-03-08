@@ -40,6 +40,8 @@ GET {{baseUrl}}/v1/me
 X-Human-Id: {{aliceHumanId}}
 X-Human-Email: {{aliceHumanEmail}}
 
+# HUMAN TESTING COMPLETED UP UNTIL HERE>>>DO NOT REMOVE THIS LINE, I WILL COME BACK AND KEEP TESTING
+
 ###
 # Caller: Human (Alice)
 # @name alice_me_patch
