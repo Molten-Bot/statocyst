@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -122,7 +123,57 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/v1/messages/publish", handler.handlePublish)
 	mux.HandleFunc("/v1/messages/pull", handler.handlePull)
 	mux.HandleFunc("/", handler.handleUI)
-	return withAPICompression(mux)
+	return withAPICORS(withAPICompression(mux))
+}
+
+func withAPICORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isAPIPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if allowsLocalCORSOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			addVaryOrigin(w.Header())
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+
+			reqHeaders := strings.TrimSpace(r.Header.Get("Access-Control-Request-Headers"))
+			if reqHeaders != "" {
+				w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+				addVaryAccessControlRequestHeaders(w.Header())
+			} else {
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Human-Id, X-Human-Email, X-Entities-Metadata-Key, X-Org-Access-Key, X-Admin-Snapshot-Key, X-UI-Config-Key")
+			}
+			w.Header().Set("Access-Control-Max-Age", "600")
+		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func allowsLocalCORSOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	if origin == "null" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func withAPICompression(next http.Handler) http.Handler {
@@ -162,6 +213,28 @@ func addVaryAcceptEncoding(h http.Header) {
 		}
 	}
 	h.Add("Vary", "Accept-Encoding")
+}
+
+func addVaryOrigin(h http.Header) {
+	for _, vary := range h.Values("Vary") {
+		for _, token := range strings.Split(vary, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "Origin") {
+				return
+			}
+		}
+	}
+	h.Add("Vary", "Origin")
+}
+
+func addVaryAccessControlRequestHeaders(h http.Header) {
+	for _, vary := range h.Values("Vary") {
+		for _, token := range strings.Split(vary, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "Access-Control-Request-Headers") {
+				return
+			}
+		}
+	}
+	h.Add("Vary", "Access-Control-Request-Headers")
 }
 
 func acceptsGzip(raw string) bool {

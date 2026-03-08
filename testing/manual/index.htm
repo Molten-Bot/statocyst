@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Statocyst Manual API Steps (1-106)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --line: #374151;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --ok: #22c55e;
+      --bad: #f43f5e;
+      --warn: #f59e0b;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(circle at top right, #111827, #020617);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 90%, black 10%);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+    p {
+      margin: 4px 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .vars {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .varItem label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      font-family: var(--mono);
+    }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-family: var(--mono);
+    }
+    button {
+      border: 1px solid var(--line);
+      background: #1d4ed8;
+      color: white;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+    .step {
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 85%, black 15%);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .name {
+      font-weight: 700;
+      margin-right: 8px;
+      font-family: var(--mono);
+    }
+    .badge {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin-right: 6px;
+      color: #bfdbfe;
+    }
+    pre {
+      margin: 8px 0 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #030712;
+      color: #d1d5db;
+      padding: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      font-family: var(--mono);
+      max-height: 260px;
+      overflow: auto;
+    }
+    .statusOk { color: var(--ok); }
+    .statusBad { color: var(--bad); }
+    .statusWarn { color: var(--warn); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="panel">
+      <h1>Manual API Steps (endpoints.http lines 1-106)</h1>
+      <p>This page mirrors the first section of <code>endpoints.http</code> and lets you run each call with one click.</p>
+      <p>If the browser blocks requests, it is usually a CORS issue between this page origin and <code>http://localhost:8080</code>.</p>
+      <div class="row" style="margin-top:10px;">
+        <button id="runAllBtn">Run All Steps</button>
+        <button id="clearBtn" class="secondary">Clear Responses</button>
+        <span id="globalMsg" class="meta"></span>
+      </div>
+      <div id="vars" class="vars"></div>
+    </section>
+
+    <section class="panel">
+      <div class="steps" id="steps"></div>
+    </section>
+  </div>
+
+  <script>
+    "use strict";
+
+    const STORAGE_KEY = "manual_api_step_env_v1";
+    const defaults = {
+      baseUrl: "http://localhost:8080",
+      entitiesMetadataKey: "local-entities-metadata-key",
+      aliceHumanId: "alice",
+      aliceHumanEmail: "alice@a.test",
+      aliceHandle: "alice",
+      bobHumanId: "bob",
+      bobHumanEmail: "bob@b.test",
+      bobHandle: "bob",
+      alphaOrgHandle: "alpha-org",
+      betaOrgHandle: "beta-org"
+    };
+
+    const steps = [
+      { line: "17-18", caller: "Public", name: "health", method: "GET", path: "{{baseUrl}}/health" },
+      { line: "22-23", caller: "Public", name: "openapi", method: "GET", path: "{{baseUrl}}/openapi.yaml" },
+      { line: "27-28", caller: "Public", name: "ui_config", method: "GET", path: "{{baseUrl}}/v1/ui/config" },
+      {
+        line: "32-34",
+        caller: "System",
+        name: "entities_public_metadata",
+        method: "GET",
+        path: "{{baseUrl}}/v1/entities/metadata?public=true",
+        headers: { "X-Entities-Metadata-Key": "{{entitiesMetadataKey}}" }
+      },
+      {
+        line: "40-43",
+        caller: "Human (Alice)",
+        name: "alice_me_get",
+        method: "GET",
+        path: "{{baseUrl}}/v1/me",
+        headers: { "X-Human-Id": "{{aliceHumanId}}", "X-Human-Email": "{{aliceHumanEmail}}" }
+      },
+      {
+        line: "47-55",
+        caller: "Human (Alice)",
+        name: "alice_me_patch",
+        method: "PATCH",
+        path: "{{baseUrl}}/v1/me",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Human-Id": "{{aliceHumanId}}",
+          "X-Human-Email": "{{aliceHumanEmail}}"
+        },
+        body: { handle: "{{aliceHandle}}" }
+      },
+      {
+        line: "59-70",
+        caller: "Human (Alice)",
+        name: "alice_me_metadata_patch",
+        method: "PATCH",
+        path: "{{baseUrl}}/v1/me/metadata",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Human-Id": "{{aliceHumanId}}",
+          "X-Human-Email": "{{aliceHumanEmail}}"
+        },
+        body: { metadata: { public: true, testing: "Alice profile" } }
+      },
+      {
+        line: "74-77",
+        caller: "Human (Bob)",
+        name: "bob_me_get",
+        method: "GET",
+        path: "{{baseUrl}}/v1/me",
+        headers: { "X-Human-Id": "{{bobHumanId}}", "X-Human-Email": "{{bobHumanEmail}}" }
+      },
+      {
+        line: "81-89",
+        caller: "Human (Bob)",
+        name: "bob_me_patch",
+        method: "PATCH",
+        path: "{{baseUrl}}/v1/me",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Human-Id": "{{bobHumanId}}",
+          "X-Human-Email": "{{bobHumanEmail}}"
+        },
+        body: { handle: "{{bobHandle}}" }
+      },
+      {
+        line: "93-104",
+        caller: "Human (Bob)",
+        name: "bob_me_metadata_patch",
+        method: "PATCH",
+        path: "{{baseUrl}}/v1/me/metadata",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Human-Id": "{{bobHumanId}}",
+          "X-Human-Email": "{{bobHumanEmail}}"
+        },
+        body: { metadata: { public: true, description: "Bob profile" } }
+      }
+    ];
+
+    const state = {
+      env: loadEnv(),
+      responses: {}
+    };
+
+    function loadEnv() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return { ...defaults };
+        return { ...defaults, ...JSON.parse(raw) };
+      } catch (_) {
+        return { ...defaults };
+      }
+    }
+
+    function saveEnv() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.env));
+    }
+
+    function getByPath(obj, path) {
+      const parts = path.split(".");
+      let cur = obj;
+      for (const part of parts) {
+        if (!part) continue;
+        if (cur == null || typeof cur !== "object" || !(part in cur)) return "";
+        cur = cur[part];
+      }
+      return cur == null ? "" : String(cur);
+    }
+
+    function resolveToken(token) {
+      const key = token.trim();
+      if (key in state.env) return String(state.env[key]);
+
+      const m = key.match(/^([a-zA-Z0-9_]+)\.response\.body\.\$\.(.+)$/);
+      if (m) {
+        const stepName = m[1];
+        const path = m[2];
+        const saved = state.responses[stepName];
+        if (!saved || !saved.json) return "";
+        return getByPath(saved.json, path);
+      }
+      return "";
+    }
+
+    function resolveString(input) {
+      return String(input).replace(/\{\{([^}]+)\}\}/g, (_, token) => resolveToken(token));
+    }
+
+    function resolveAny(value) {
+      if (value == null) return value;
+      if (typeof value === "string") return resolveString(value);
+      if (Array.isArray(value)) return value.map(resolveAny);
+      if (typeof value === "object") {
+        const out = {};
+        for (const [k, v] of Object.entries(value)) out[k] = resolveAny(v);
+        return out;
+      }
+      return value;
+    }
+
+    function pretty(obj) {
+      return JSON.stringify(obj, null, 2);
+    }
+
+    function statusClass(code) {
+      if (code >= 200 && code < 300) return "statusOk";
+      if (code >= 400) return "statusBad";
+      return "statusWarn";
+    }
+
+    async function runStep(i) {
+      const step = steps[i];
+      const reqEl = document.getElementById("req-" + i);
+      const resEl = document.getElementById("res-" + i);
+      const btn = document.getElementById("btn-" + i);
+
+      const url = resolveString(step.path);
+      const headers = resolveAny(step.headers || {});
+      const bodyObj = step.body ? resolveAny(step.body) : null;
+      const body = bodyObj ? JSON.stringify(bodyObj) : undefined;
+
+      reqEl.textContent = pretty({
+        method: step.method,
+        url,
+        headers,
+        body: bodyObj
+      });
+
+      btn.disabled = true;
+      const t0 = performance.now();
+
+      try {
+        const resp = await fetch(url, { method: step.method, headers, body });
+        const text = await resp.text();
+        const dt = Math.round(performance.now() - t0);
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch (_) {}
+
+        state.responses[step.name] = {
+          status: resp.status,
+          text,
+          json: parsed
+        };
+
+        const payload = parsed ? pretty(parsed) : text;
+        const head = `HTTP ${resp.status} ${resp.statusText} (${dt} ms)`;
+        resEl.innerHTML = `<span class="${statusClass(resp.status)}">${head}</span>\n${escapeHtml(payload)}`;
+      } catch (err) {
+        const dt = Math.round(performance.now() - t0);
+        const msg = err && err.message ? err.message : String(err);
+        const hint = "Request failed. If this page is loaded from disk, browser CORS rules may block localhost API calls.";
+        resEl.innerHTML = `<span class="statusBad">Network/CORS error (${dt} ms)</span>\n${escapeHtml(msg)}\n${escapeHtml(hint)}`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    async function runAll() {
+      const msg = document.getElementById("globalMsg");
+      msg.textContent = "Running all steps...";
+      for (let i = 0; i < steps.length; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await runStep(i);
+      }
+      msg.textContent = "Done.";
+    }
+
+    function clearResponses() {
+      state.responses = {};
+      for (let i = 0; i < steps.length; i++) {
+        const r = document.getElementById("res-" + i);
+        if (r) r.textContent = "";
+      }
+      document.getElementById("globalMsg").textContent = "";
+    }
+
+    function renderVars() {
+      const root = document.getElementById("vars");
+      root.innerHTML = "";
+      for (const key of Object.keys(defaults)) {
+        const box = document.createElement("div");
+        box.className = "varItem";
+        const label = document.createElement("label");
+        label.textContent = key;
+        const input = document.createElement("input");
+        input.value = state.env[key] || "";
+        input.onchange = () => {
+          state.env[key] = input.value;
+          saveEnv();
+        };
+        box.appendChild(label);
+        box.appendChild(input);
+        root.appendChild(box);
+      }
+    }
+
+    function renderSteps() {
+      const root = document.getElementById("steps");
+      root.innerHTML = "";
+      steps.forEach((step, i) => {
+        const card = document.createElement("article");
+        card.className = "step";
+        card.innerHTML = `
+          <div class="head">
+            <div>
+              <span class="badge">${step.method}</span>
+              <span class="name">${step.name}</span>
+              <span class="meta">caller: ${step.caller} | lines: ${step.line}</span>
+            </div>
+            <button id="btn-${i}">Run</button>
+          </div>
+          <pre id="req-${i}" aria-label="request preview"></pre>
+          <pre id="res-${i}" aria-label="response output"></pre>
+        `;
+        root.appendChild(card);
+      });
+
+      steps.forEach((_, i) => {
+        document.getElementById("btn-" + i).onclick = () => runStep(i);
+      });
+    }
+
+    document.getElementById("runAllBtn").onclick = runAll;
+    document.getElementById("clearBtn").onclick = clearResponses;
+
+    renderVars();
+    renderSteps();
+  </script>
+</body>
+</html>
