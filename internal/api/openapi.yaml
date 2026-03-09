@@ -105,6 +105,14 @@ paths:
                       human:
                         type: string
                         enum: [dev, supabase]
+                      dev:
+                        type: object
+                        description: Included when `auth.human=dev` and local defaults are configured.
+                        properties:
+                          human_id:
+                            type: string
+                          human_email:
+                            type: string
                       supabase:
                         type: object
                         properties:
@@ -359,6 +367,8 @@ paths:
           description: Agent trust list
     post:
       summary: Create or join an agent trust request (UUIDs or agent refs)
+      description: |
+        `org_id` is optional. Set it for org-scoped initiations; omit/empty for human-owned agent trusts.
       security:
         - humanAuth: []
       requestBody:
@@ -367,7 +377,6 @@ paths:
           application/json:
             schema:
               type: object
-              required: [org_id]
               properties:
                 org_id:
                   type: string
@@ -533,6 +542,7 @@ paths:
                   type: string
                 invite_code:
                   type: string
+                  deprecated: true
               anyOf:
                 - required: [invite_id]
                 - required: [invite_code]
@@ -808,6 +818,7 @@ paths:
                   type: string
                 agent_id:
                   type: string
+                  deprecated: true
                   description: Deprecated compatibility field. Ignored by server.
       responses:
         '201':
@@ -1024,6 +1035,8 @@ paths:
   /v1/agent-trusts:
     post:
       summary: Create or join agent trust request (UUIDs or agent refs)
+      description: |
+        `org_id` is optional. Set it for org-scoped initiations; omit/empty for human-owned agent trusts.
       security:
         - humanAuth: []
       requestBody:
@@ -1032,7 +1045,6 @@ paths:
           application/json:
             schema:
               type: object
-              required: [org_id]
               properties:
                 org_id:
                   type: string

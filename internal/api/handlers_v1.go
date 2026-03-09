@@ -125,6 +125,18 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 	authConfig := map[string]any{
 		"human": h.humanAuth.Name(),
 	}
+	if h.humanAuth.Name() == "dev" {
+		devConfig := map[string]any{}
+		if devHumanID := strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_ID")); devHumanID != "" {
+			devConfig["human_id"] = devHumanID
+		}
+		if devHumanEmail := strings.ToLower(strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_EMAIL"))); devHumanEmail != "" {
+			devConfig["human_email"] = devHumanEmail
+		}
+		if len(devConfig) > 0 {
+			authConfig["dev"] = devConfig
+		}
+	}
 	if h.humanAuth.Name() == "supabase" {
 		supabaseConfig := map[string]any{}
 		if strings.TrimSpace(h.supabaseURL) != "" {

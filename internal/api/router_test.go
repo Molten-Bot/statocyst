@@ -278,6 +278,9 @@ func TestHealthReportsRuntimeDequeueFailureAndRecovery(t *testing.T) {
 }
 
 func TestUIConfigExposesAuthAndRedactsPrivilegedFields(t *testing.T) {
+	t.Setenv("DEV_LOGIN_HUMAN_ID", "dev-human")
+	t.Setenv("DEV_LOGIN_HUMAN_EMAIL", "dev@local.test")
+
 	mem := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
 	h := NewHandler(
@@ -305,6 +308,16 @@ func TestUIConfigExposesAuthAndRedactsPrivilegedFields(t *testing.T) {
 	authObj, _ := payload["auth"].(map[string]any)
 	if got, _ := authObj["human"].(string); got != "dev" {
 		t.Fatalf("expected auth.human=dev, got %q payload=%v", got, payload)
+	}
+	devObj, ok := authObj["dev"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected auth.dev object for dev provider, payload=%v", payload)
+	}
+	if got, _ := devObj["human_id"].(string); got != "dev-human" {
+		t.Fatalf("expected auth.dev.human_id=dev-human, got %q payload=%v", got, payload)
+	}
+	if got, _ := devObj["human_email"].(string); got != "dev@local.test" {
+		t.Fatalf("expected auth.dev.human_email=dev@local.test, got %q payload=%v", got, payload)
 	}
 	if _, exists := authObj["supabase"]; exists {
 		t.Fatalf("did not expect auth.supabase for dev provider, payload=%v", payload)

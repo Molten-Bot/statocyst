@@ -7,6 +7,7 @@ const $ = (id) => document.getElementById(id);
 
 let supabaseClient = null;
 let oauthEnabled = false;
+let localLoginBlockedReason = "";
 
 function setStatus(message, kind = "info") {
   const el = $("status");
@@ -88,6 +89,11 @@ async function fetchJSON(path, token = "") {
   return { status: res.status, data };
 }
 
+function readDeprecatedField(config, key) {
+  // Backward-compatible fallback for older servers that still emit legacy flat fields.
+  return config && typeof config === "object" ? config[key] : undefined;
+}
+
 async function trySavedSession() {
   const token = loadSavedToken();
   if (!token) {
@@ -152,6 +158,10 @@ async function init() {
       await startGoogleLogin();
       return;
     }
+    if (localLoginBlockedReason) {
+      setStatus(localLoginBlockedReason, "warn");
+      return;
+    }
     saveDevIdentity(devHumanID, devHumanEmail);
     window.location.assign("/profile");
   };
@@ -162,11 +172,14 @@ async function init() {
     return;
   }
 
-  const provider = String(cfg.data.human_auth_provider || "").toLowerCase();
-  const supabaseURL = String(cfg.data.supabase_url || "").trim();
-  const supabaseAnonKey = String(cfg.data.supabase_anon_key || "").trim();
-  devHumanID = String(cfg.data.dev_human_id || "").trim();
-  devHumanEmail = String(cfg.data.dev_human_email || "")
+  const authConfig = cfg?.data?.auth && typeof cfg.data.auth === "object" ? cfg.data.auth : {};
+  const provider = String(authConfig.human || readDeprecatedField(cfg.data, "human_auth_provider") || "").toLowerCase();
+  const supabaseConfig = authConfig?.supabase && typeof authConfig.supabase === "object" ? authConfig.supabase : {};
+  const supabaseURL = String(supabaseConfig.url || readDeprecatedField(cfg.data, "supabase_url") || "").trim();
+  const supabaseAnonKey = String(supabaseConfig.anon_key || readDeprecatedField(cfg.data, "supabase_anon_key") || "").trim();
+  const devConfig = authConfig?.dev && typeof authConfig.dev === "object" ? authConfig.dev : {};
+  devHumanID = String(devConfig.human_id || readDeprecatedField(cfg.data, "dev_human_id") || "").trim();
+  devHumanEmail = String(devConfig.human_email || readDeprecatedField(cfg.data, "dev_human_email") || "")
     .trim()
     .toLowerCase();
   devAutoLogin = Boolean(cfg.data.dev_auto_login);
@@ -180,10 +193,16 @@ async function init() {
   }
 
   if (provider !== "supabase") {
+    if (!devHumanID) {
+      localLoginBlockedReason = "DEV_LOGIN_HUMAN_ID is not configured; local dev login cannot continue.";
+      $("loginBtn").textContent = "Login (Dev ID Missing)";
+      setStatus(`${localLoginBlockedReason} Configure /v1/ui/config auth.dev.human_id.`, "warn");
+      return;
+    }
     if (devHumanEmail) {
       $("loginBtn").textContent = `Continue as ${devHumanEmail}`;
     } else {
-      $("loginBtn").textContent = "Login (Local Dev Skip)";
+      $("loginBtn").textContent = `Continue as ${devHumanID}`;
     }
     setStatus("Supabase auth not enabled. Login button will continue to /profile.", "warn");
     if (devAutoLogin) {

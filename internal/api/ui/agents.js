@@ -1,4 +1,5 @@
 const UI = StatocystUI;
+let agentOrgByUUID = {};
 
 function setStatus(id, message, warn = false) {
   const el = UI.$(id);
@@ -22,15 +23,6 @@ function metadataFrom(raw) {
 function metadataPublic(raw) {
   const value = metadataFrom(raw).public;
   return typeof value === "boolean" ? value : true;
-}
-
-function metadataFromDataset(raw) {
-  if (!raw) return {};
-  try {
-    return metadataFrom(JSON.parse(raw));
-  } catch (_) {
-    return {};
-  }
 }
 
 function agentOwnerLabel(agent) {
@@ -87,20 +79,20 @@ function buildAgentBindPrompt(bindToken, expiresAt, redeemURL) {
     `Bind API URL: ${redeemURL}`,
     "",
     "Instructions for agent:",
-    "1. Pick your stable agent_id handle (2-64 chars, URL-safe: a-z, 0-9, ., _, -, and not blocked).",
-    "2. Redeem the bind code with this command (replace <agent_id>):",
+    "1. Redeem the bind code with this command:",
     "",
     `curl -sS -X POST "${redeemURL}" \\`,
     "  -H 'Content-Type: application/json' \\",
-    `  -d '{"bind_token":"${bindToken}","agent_id":"<agent_id>"}'`,
+    `  -d '{"bind_token":"${bindToken}"}'`,
     "",
-    "3. Parse JSON response and return:",
+    "2. Parse JSON response and return:",
     "- agent_uuid",
     "- agent_id",
     "- org_id",
     "- token",
     "",
-    "4. Keep token secret and use it as Bearer auth for message APIs.",
+    "3. Keep token secret and use it as Bearer auth for message APIs.",
+    "4. Finalize your stable handle once with PATCH /v1/agents/me or /v1/agents/me/metadata.",
   ].join("\n");
 }
 
@@ -168,6 +160,7 @@ function syncBondSelectors(agents) {
 function renderAgents(agents) {
   const body = UI.$("agentsBody");
   body.innerHTML = "";
+  agentOrgByUUID = {};
 
   if (!Array.isArray(agents) || agents.length === 0) {
     const tr = document.createElement("tr");
@@ -183,6 +176,10 @@ function renderAgents(agents) {
   }
 
   for (const agent of agents) {
+    const agentUUID = String(agent?.agent_uuid || "").trim();
+    if (agentUUID) {
+      agentOrgByUUID[agentUUID] = String(agent?.org_id || "").trim();
+    }
     const tr = document.createElement("tr");
 
     const tdID = document.createElement("td");
@@ -223,15 +220,6 @@ function renderAgents(agents) {
     revokeBtn.dataset.agentUuid = agent.agent_uuid || "";
     revokeBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
     actionWrap.appendChild(revokeBtn);
-
-    const visibilityBtn = document.createElement("button");
-    visibilityBtn.textContent = isPublic ? "Make Private" : "Make Public";
-    visibilityBtn.dataset.agentAction = "visibility";
-    visibilityBtn.dataset.agentUuid = agent.agent_uuid || "";
-    visibilityBtn.dataset.makePublic = isPublic ? "false" : "true";
-    visibilityBtn.dataset.metadata = JSON.stringify(metadataFrom(agent.metadata));
-    visibilityBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
-    actionWrap.appendChild(visibilityBtn);
 
     tdActions.appendChild(actionWrap);
     tr.appendChild(tdActions);
@@ -305,26 +293,6 @@ async function revokeAgent(agentUUID) {
   setStatus("agentStatus", `Revoked ${agentUUID}.`);
   await loadAgents();
   await loadPendingTrusts();
-}
-
-async function setAgentVisibility(agentUUID, makePublic, currentMetadata = {}) {
-  if (!agentUUID) {
-    setStatus("agentStatus", "agent_uuid required", true);
-    return;
-  }
-  setStatus("agentStatus", `Updating visibility for ${agentUUID}...`);
-  const result = await UI.req(`/v1/agents/${encodeURIComponent(agentUUID)}/metadata`, "PATCH", {
-    metadata: {
-      ...metadataFrom(currentMetadata),
-      public: makePublic,
-    },
-  });
-  if (result.status !== 200) {
-    setStatus("agentStatus", "Could not update agent visibility.", true);
-    return;
-  }
-  setStatus("agentStatus", `Visibility updated for ${agentUUID}.`);
-  await loadAgents();
 }
 
 function renderPendingRows(edges) {
@@ -420,7 +388,9 @@ async function createTrust() {
   }
 
   setStatus("pendingStatus", "Creating bond...");
+  const orgID = agentOrgByUUID[agentUUID] || "";
   const result = await UI.req("/v1/me/agent-trusts", "POST", {
+    org_id: orgID,
     agent_uuid: agentUUID,
     peer_agent_uuid: peerAgentUUID,
   });
@@ -470,12 +440,6 @@ async function init() {
     }
     if (action === "revoke") {
       await revokeAgent(agentUUID);
-      return;
-    }
-    if (action === "visibility") {
-      const makePublic = String(button.dataset.makePublic || "false") === "true";
-      const currentMetadata = metadataFromDataset(button.dataset.metadata);
-      await setAgentVisibility(agentUUID, makePublic, currentMetadata);
       return;
     }
   });
