@@ -1236,6 +1236,71 @@ func (s *MemoryStore) RevokeAgent(agentUUID, actorHumanID string, now time.Time,
 	return nil
 }
 
+func (s *MemoryStore) DeleteAgent(agentUUID, actorHumanID string, now time.Time, isSuperAdmin bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agents[agentUUID]
+	if !ok {
+		return ErrAgentNotFound
+	}
+	if !isSuperAdmin && !s.canDeleteAgentLocked(agent, actorHumanID) {
+		return ErrUnauthorizedRole
+	}
+
+	delete(s.agentTokenIdx, agent.TokenHash)
+	if agent.OwnerHumanID != nil {
+		delete(s.humanOwnedAgentNameIdx, humanOwnedAgentNameKey(agent.OrgID, *agent.OwnerHumanID, agent.Handle))
+	} else {
+		delete(s.orgOwnedAgentNameIdx, orgOwnedAgentNameKey(agent.OrgID, agent.Handle))
+	}
+	delete(s.agentByURI, agent.AgentID)
+	delete(s.agents, agentUUID)
+
+	deletedTrustEdges := 0
+	for edgeID, edge := range s.agentTrusts {
+		if edge.LeftID != agentUUID && edge.RightID != agentUUID {
+			continue
+		}
+		delete(s.agentTrusts, edgeID)
+		delete(s.agentTrustByPair, pairKey(edge.LeftID, edge.RightID))
+		deletedTrustEdges++
+	}
+
+	purgedMessages := 0
+	for queueAgentUUID, queue := range s.queues {
+		if queueAgentUUID == agentUUID {
+			purgedMessages += len(queue)
+			delete(s.queues, queueAgentUUID)
+			continue
+		}
+		if len(queue) == 0 {
+			continue
+		}
+		filtered := queue[:0]
+		for _, msg := range queue {
+			if msg.FromAgentUUID == agentUUID || msg.ToAgentUUID == agentUUID {
+				purgedMessages++
+				continue
+			}
+			filtered = append(filtered, msg)
+		}
+		if len(filtered) == 0 {
+			delete(s.queues, queueAgentUUID)
+			continue
+		}
+		s.queues[queueAgentUUID] = filtered
+	}
+
+	s.appendAuditLocked(agent.OrgID, actorHumanID, "agent", "delete", agentUUID, map[string]any{
+		"agent_id":                agent.AgentID,
+		"deleted_agent_trusts":    deletedTrustEdges,
+		"purged_queued_messages":  purgedMessages,
+		"deleted_previous_status": agent.Status,
+	}, now)
+	return nil
+}
+
 func (s *MemoryStore) UpdateOrgMetadata(orgID string, metadata map[string]any, actorHumanID string, isSuperAdmin bool, now time.Time) (model.Organization, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2078,6 +2143,13 @@ func (s *MemoryStore) membershipRoleLocked(orgID, humanID string) string {
 
 func (s *MemoryStore) canManageAgentLocked(agent model.Agent, humanID string) bool {
 	if hasRoleAtLeast(s.membershipRoleLocked(agent.OrgID, humanID), model.RoleAdmin) {
+		return true
+	}
+	return agent.OwnerHumanID != nil && *agent.OwnerHumanID == humanID
+}
+
+func (s *MemoryStore) canDeleteAgentLocked(agent model.Agent, humanID string) bool {
+	if s.membershipRoleLocked(agent.OrgID, humanID) == model.RoleOwner {
 		return true
 	}
 	return agent.OwnerHumanID != nil && *agent.OwnerHumanID == humanID

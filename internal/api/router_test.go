@@ -1204,6 +1204,44 @@ func TestRevokedAgentCannotPublishOrPullAndQueuedMessagesArePurged(t *testing.T)
 	}
 }
 
+func TestDeleteAgentRecordRequiresAgentOwnerOrOrgOwner(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Org Agent Delete")
+	inviteBob := createInvite(t, router, "alice", "alice@a.test", orgID, "bob@b.test", "member")
+	acceptInvite(t, router, "bob", "bob@b.test", inviteBob)
+	inviteCharlie := createInvite(t, router, "alice", "alice@a.test", orgID, "charlie@c.test", "admin")
+	acceptInvite(t, router, "charlie", "charlie@c.test", inviteCharlie)
+
+	bobHumanID := currentHumanID(t, router, "bob", "bob@b.test")
+	_, agentUUID := registerAgentWithUUID(t, router, "bob", "bob@b.test", orgID, "bob-agent", bobHumanID)
+
+	adminDelete := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUID+"/record", nil, humanHeaders("charlie", "charlie@c.test"))
+	if adminDelete.Code != http.StatusForbidden {
+		t.Fatalf("expected org admin delete to be forbidden, got %d %s", adminDelete.Code, adminDelete.Body.String())
+	}
+
+	ownerDelete := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUID+"/record", nil, humanHeaders("alice", "alice@a.test"))
+	if ownerDelete.Code != http.StatusOK {
+		t.Fatalf("expected org owner delete to succeed, got %d %s", ownerDelete.Code, ownerDelete.Body.String())
+	}
+	if decodeJSONMap(t, ownerDelete.Body.Bytes())["result"] != "deleted" {
+		t.Fatalf("expected delete response to report deleted")
+	}
+
+	listResp := doJSONRequest(t, router, http.MethodGet, "/v1/me/agents", nil, humanHeaders("bob", "bob@b.test"))
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/me/agents 200 after delete, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	listPayload := decodeJSONMap(t, listResp.Body.Bytes())
+	rawAgents, _ := listPayload["agents"].([]any)
+	for _, raw := range rawAgents {
+		agent, _ := raw.(map[string]any)
+		if agent["agent_uuid"] == agentUUID {
+			t.Fatalf("expected deleted agent %q to be absent from bob list, got %v", agentUUID, agent)
+		}
+	}
+}
+
 func TestLongPollTimeout(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Org A")

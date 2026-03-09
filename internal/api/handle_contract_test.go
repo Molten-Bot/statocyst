@@ -161,6 +161,15 @@ func TestCanonicalAgentURIAndUUIDLifecycleRoutes(t *testing.T) {
 	if revoke.Code != http.StatusOK {
 		t.Fatalf("expected revoke with agent_uuid to succeed, got %d %s", revoke.Code, revoke.Body.String())
 	}
+
+	_, deleteAgentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "alpha-bot-delete", aliceHumanID)
+	deleteResp := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+deleteAgentUUID+"/record", nil, humanHeaders("alice", "alice@a.test"))
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected delete record with agent_uuid to succeed, got %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+	if decodeJSONMap(t, deleteResp.Body.Bytes())["result"] != "deleted" {
+		t.Fatalf("expected delete response to report deleted")
+	}
 }
 
 func TestPublishRequiresAgentUUIDReceiverRef(t *testing.T) {

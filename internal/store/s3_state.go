@@ -1168,6 +1168,19 @@ func (s *s3StateStore) loadTypedObjects(ctx context.Context, prefix string, fn f
 	return nil
 }
 
+func (s *s3StateStore) DeleteAgent(agentUUID, actorHumanID string, now time.Time, isSuperAdmin bool) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	if err := s.MemoryStore.DeleteAgent(agentUUID, actorHumanID, now, isSuperAdmin); err != nil {
+		return err
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *s3StateStore) listKeys(ctx context.Context, prefix string) ([]string, error) {
 	token := ""
 	out := make([]string, 0)

@@ -266,6 +266,156 @@ func TestMemoryStoreRevokeAgentPurgesTrustAndQueuedMessages(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreDeleteAgentRequiresOwnerOrOrgOwner(t *testing.T) {
+	now := time.Date(2026, 3, 8, 0, 0, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	bob := mustCreateHuman(t, mem, ids, "bob", "bob@b.test", "bob", now)
+	charlie := mustCreateHuman(t, mem, ids, "charlie", "charlie@c.test", "charlie", now)
+	org := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+
+	addMember := func(human model.Human, role string) {
+		t.Helper()
+		invite, err := mem.CreateInvite(
+			org.OrgID,
+			human.Email,
+			role,
+			alice.HumanID,
+			ids.mustID(t),
+			"invite-hash-"+strings.ToLower(role)+"-"+human.HumanID,
+			now.Add(24*time.Hour),
+			now,
+			false,
+		)
+		if err != nil {
+			t.Fatalf("CreateInvite(%q) failed: %v", role, err)
+		}
+		if _, err := mem.AcceptInvite(invite.InviteID, human.HumanID, human.Email, now, ids.next); err != nil {
+			t.Fatalf("AcceptInvite(%q) failed: %v", role, err)
+		}
+	}
+
+	addMember(bob, model.RoleMember)
+	addMember(charlie, model.RoleAdmin)
+
+	agent, err := mem.RegisterAgent(org.OrgID, "owned-bot", &bob.HumanID, "tok-owned-bot", bob.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+
+	if err := mem.DeleteAgent(agent.AgentUUID, charlie.HumanID, now.Add(time.Minute), false); !errors.Is(err, ErrUnauthorizedRole) {
+		t.Fatalf("expected org admin delete to fail with ErrUnauthorizedRole, got %v", err)
+	}
+	if err := mem.DeleteAgent(agent.AgentUUID, bob.HumanID, now.Add(2*time.Minute), false); err != nil {
+		t.Fatalf("expected agent owner delete to succeed, got %v", err)
+	}
+	if _, err := mem.GetAgentByUUID(agent.AgentUUID); !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("expected deleted agent not found, got %v", err)
+	}
+
+	agentByOwner, err := mem.RegisterAgent(org.OrgID, "owned-bot-2", &bob.HumanID, "tok-owned-bot-2", bob.HumanID, now.Add(3*time.Minute), false)
+	if err != nil {
+		t.Fatalf("RegisterAgent second agent failed: %v", err)
+	}
+	if err := mem.DeleteAgent(agentByOwner.AgentUUID, alice.HumanID, now.Add(4*time.Minute), false); err != nil {
+		t.Fatalf("expected org owner delete to succeed, got %v", err)
+	}
+	if agents := mem.ListHumanAgents(alice.HumanID); len(agents) != 0 {
+		t.Fatalf("expected org owner managed list to exclude deleted agent, got %d entries", len(agents))
+	}
+}
+
+func TestMemoryStoreDeleteAgentPurgesTrustAndQueuedMessages(t *testing.T) {
+	now := time.Date(2026, 3, 8, 1, 0, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	bob := mustCreateHuman(t, mem, ids, "bob", "bob@b.test", "bob", now)
+	orgA := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+	orgB := mustCreateOrg(t, mem, ids, bob, "org-b", "Org B", now)
+
+	agentA, err := mem.RegisterAgent(orgA.OrgID, "agent-a", &alice.HumanID, "tok-agent-a", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("register agent A failed: %v", err)
+	}
+	agentB, err := mem.RegisterAgent(orgB.OrgID, "agent-b", &bob.HumanID, "tok-agent-b", bob.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("register agent B failed: %v", err)
+	}
+
+	orgTrust, _, err := mem.CreateOrJoinOrgTrust(orgA.OrgID, orgB.OrgID, alice.HumanID, ids.mustID(t), now, false)
+	if err != nil {
+		t.Fatalf("CreateOrJoinOrgTrust failed: %v", err)
+	}
+	if _, err := mem.ApproveOrgTrust(orgTrust.EdgeID, bob.HumanID, now, false); err != nil {
+		t.Fatalf("ApproveOrgTrust failed: %v", err)
+	}
+
+	agentTrust, _, err := mem.CreateOrJoinAgentTrust(orgA.OrgID, agentA.AgentUUID, agentB.AgentUUID, alice.HumanID, ids.mustID(t), now, false)
+	if err != nil {
+		t.Fatalf("CreateOrJoinAgentTrust failed: %v", err)
+	}
+	if _, err := mem.ApproveAgentTrust(agentTrust.EdgeID, bob.HumanID, now, false); err != nil {
+		t.Fatalf("ApproveAgentTrust failed: %v", err)
+	}
+
+	if err := mem.Enqueue(context.Background(), model.Message{
+		MessageID:     ids.mustID(t),
+		FromAgentUUID: agentA.AgentUUID,
+		ToAgentUUID:   agentB.AgentUUID,
+		CreatedAt:     now,
+	}); err != nil {
+		t.Fatalf("enqueue A->B failed: %v", err)
+	}
+	if err := mem.Enqueue(context.Background(), model.Message{
+		MessageID:     ids.mustID(t),
+		FromAgentUUID: agentB.AgentUUID,
+		ToAgentUUID:   agentA.AgentUUID,
+		CreatedAt:     now,
+	}); err != nil {
+		t.Fatalf("enqueue B->A failed: %v", err)
+	}
+
+	if err := mem.DeleteAgent(agentA.AgentUUID, alice.HumanID, now.Add(time.Minute), false); err != nil {
+		t.Fatalf("DeleteAgent failed: %v", err)
+	}
+
+	snapshot := mem.AdminSnapshot()
+	for _, agent := range snapshot.Agents {
+		if agent.AgentUUID == agentA.AgentUUID {
+			t.Fatalf("expected deleted agent %q to be absent from snapshot", agentA.AgentUUID)
+		}
+	}
+	for _, edge := range snapshot.AgentTrusts {
+		if edge.EdgeID == agentTrust.EdgeID {
+			t.Fatalf("expected deleted agent trust %q to be absent from snapshot", agentTrust.EdgeID)
+		}
+	}
+
+	if _, err := mem.AgentUUIDForTokenHash("tok-agent-a"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected deleted token invalid, got %v", err)
+	}
+	if _, _, err := mem.CanPublish(agentA.AgentUUID, agentB.AgentUUID); !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("expected CanPublish with deleted sender to fail with ErrAgentNotFound, got %v", err)
+	}
+	if _, _, err := mem.CreateOrJoinAgentTrust(orgA.OrgID, agentA.AgentUUID, agentB.AgentUUID, alice.HumanID, ids.mustID(t), now, false); !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("expected trust create with deleted agent to fail with ErrAgentNotFound, got %v", err)
+	}
+	if _, ok, err := mem.Dequeue(context.Background(), agentB.AgentUUID); err != nil {
+		t.Fatalf("dequeue B failed: %v", err)
+	} else if ok {
+		t.Fatalf("expected outbound messages from deleted agent to be purged")
+	}
+	if _, ok, err := mem.Dequeue(context.Background(), agentA.AgentUUID); err != nil {
+		t.Fatalf("dequeue A failed: %v", err)
+	} else if ok {
+		t.Fatalf("expected deleted agent queue to be removed")
+	}
+}
+
 func TestMemoryStoreHandleValidationAcrossEntities(t *testing.T) {
 	now := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
 	ids := &seqID{}

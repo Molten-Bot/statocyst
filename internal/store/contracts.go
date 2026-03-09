@@ -41,6 +41,7 @@ type ControlPlaneStore interface {
 	RedeemBindToken(bindTokenHash, agentID, agentTokenHash string, now time.Time) (model.Agent, error)
 	RotateAgentToken(agentUUID, actorHumanID, tokenHash string, now time.Time, isSuperAdmin bool) error
 	RevokeAgent(agentUUID, actorHumanID string, now time.Time, isSuperAdmin bool) error
+	DeleteAgent(agentUUID, actorHumanID string, now time.Time, isSuperAdmin bool) error
 	UpdateAgentMetadata(agentUUID string, metadata map[string]any, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error)
 	UpdateAgentMetadataSelf(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error)
 	FinalizeAgentHandleSelf(agentUUID, handle string, now time.Time) (model.Agent, error)

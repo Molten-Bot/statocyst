@@ -356,6 +356,21 @@ func TestLaunchSmoke(t *testing.T) {
 		requireAgentStatus(t, agents, asString(t, agentA, "agent_uuid"), "revoked")
 		requireAgentStatus(t, agents, asString(t, agentB, "agent_uuid"), "revoked")
 	})
+
+	t.Run("Alice deletes a revoked agent record and it cannot be deleted twice", func(t *testing.T) {
+		router := newTestRouter()
+		orgID := createOrg(t, router, "alice", "alice@a.test", "Launch Agents")
+		aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+		_, agentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "launch-agent-delete", aliceHumanID)
+
+		revokeAgentForSmoke(t, router, "alice", "alice@a.test", agentUUID)
+		deleteAgentRecordForSmoke(t, router, "alice", "alice@a.test", agentUUID)
+
+		deleteAgain := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUID+"/record", nil, humanHeaders("alice", "alice@a.test"))
+		if deleteAgain.Code != http.StatusNotFound {
+			t.Fatalf("expected second delete to return 404, got %d %s", deleteAgain.Code, deleteAgain.Body.String())
+		}
+	})
 }
 
 func setHumanHandle(t *testing.T, router http.Handler, humanID, email, handle string) *httptest.ResponseRecorder {
@@ -473,6 +488,14 @@ func revokeAgentForSmoke(t *testing.T, router http.Handler, humanID, email, agen
 	resp := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUID, nil, humanHeaders(humanID, email))
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected revoke 200, got %d %s", resp.Code, resp.Body.String())
+	}
+}
+
+func deleteAgentRecordForSmoke(t *testing.T, router http.Handler, humanID, email, agentUUID string) {
+	t.Helper()
+	resp := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUID+"/record", nil, humanHeaders(humanID, email))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected delete 200, got %d %s", resp.Code, resp.Body.String())
 	}
 }
 

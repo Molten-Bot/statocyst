@@ -950,6 +950,24 @@ paths:
       responses:
         '200':
           description: Revoked
+  /v1/agents/{agent_uuid}/record:
+    delete:
+      summary: Delete agent record (human control-plane)
+      description: |
+        Permanently delete an agent record. Allowed for the owning human, the owning
+        organization owner, or a super-admin. Also purges queued messages and linked
+        agent trust edges for that agent.
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: agent_uuid
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted
   /v1/agents/{agent_uuid}/metadata:
     patch:
       summary: Human metadata update for agent profile (forbidden)

@@ -2221,6 +2221,10 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 		action = "rotate-token"
 		agentRef = strings.Trim(strings.TrimSuffix(tail, "/rotate-token"), "/")
 	}
+	if r.Method == http.MethodDelete && strings.HasSuffix(tail, "/record") {
+		action = "record"
+		agentRef = strings.Trim(strings.TrimSuffix(tail, "/record"), "/")
+	}
 	if r.Method == http.MethodPost && strings.HasSuffix(tail, "/bind") {
 		action = "bind"
 		agentRef = strings.Trim(strings.TrimSuffix(tail, "/bind"), "/")
@@ -2292,6 +2296,29 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 
 	if action == "metadata" {
 		writeError(w, http.StatusForbidden, "forbidden", "human metadata updates for agents are not allowed")
+		return
+	}
+	if action == "record" {
+		if r.Method != http.MethodDelete {
+			writeMethodNotAllowed(w)
+			return
+		}
+		if err := h.control.DeleteAgent(agentUUID, actor.Human.HumanID, h.now().UTC(), actor.IsSuperAdmin); err != nil {
+			switch {
+			case errors.Is(err, store.ErrAgentNotFound):
+				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			case errors.Is(err, store.ErrUnauthorizedRole):
+				writeError(w, http.StatusForbidden, "forbidden", "agent owner, org owner, or super-admin required")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to delete agent")
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":     "ok",
+			"agent_uuid": agentUUID,
+			"result":     "deleted",
+		})
 		return
 	}
 
