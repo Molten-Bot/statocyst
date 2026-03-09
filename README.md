@@ -128,6 +128,27 @@ docker build -t statocyst:local .
 # then point local compose (for hub) at STATOCYST_IMAGE=statocyst:local
 ```
 
+### Smoke Testing
+
+Run the English in-process launch smoke suite:
+
+```bash
+go test -run TestLaunchSmoke -v ./internal/api
+```
+
+Run the live HTTP smoke runner against a booted local server:
+
+```bash
+go run ./cmd/statocyst-smoke -base-url http://127.0.0.1:8080
+```
+
+Run the released container locally and execute the same live smoke flow:
+
+```bash
+docker build -t statocyst:local .
+bash scripts/release/run_container_smoke.sh statocyst:local
+```
+
 ## Endpoints
 
 ### Caller Contract (must stay stable)
