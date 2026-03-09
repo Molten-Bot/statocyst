@@ -35,6 +35,7 @@ type Handler struct {
 	humanAuth         auth.HumanAuthProvider
 	now               func() time.Time
 	idFactory         func() (string, error)
+	canonicalBaseURL  string
 	supabaseURL       string
 	supabaseAnonKey   string
 	adminSnapshotKey  string
@@ -62,6 +63,7 @@ func NewHandler(
 	queue store.MessageQueueStore,
 	waiters *longpoll.Waiters,
 	humanAuth auth.HumanAuthProvider,
+	canonicalBaseURL,
 	supabaseURL,
 	supabaseAnonKey,
 	adminSnapshotKey,
@@ -81,6 +83,7 @@ func NewHandler(
 		humanAuth:         humanAuth,
 		now:               time.Now,
 		idFactory:         newUUIDv7,
+		canonicalBaseURL:  normalizeCanonicalBaseURL(canonicalBaseURL),
 		supabaseURL:       strings.TrimSpace(supabaseURL),
 		supabaseAnonKey:   strings.TrimSpace(supabaseAnonKey),
 		adminSnapshotKey:  strings.TrimSpace(adminSnapshotKey),

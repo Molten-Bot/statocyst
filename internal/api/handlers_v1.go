@@ -334,10 +334,27 @@ func agentResponsePayload(agent model.Agent) map[string]any {
 	return payload
 }
 
-func agentListResponsePayload(agents []model.Agent) []map[string]any {
+func (h *Handler) meResponsePayload(human model.Human, isAdmin bool) map[string]any {
+	payload := map[string]any{
+		"human": h.humanPayload(human),
+		"admin": isAdmin,
+	}
+	if onboarding := meOnboardingPayload(human.HandleConfirmedAt); onboarding != nil {
+		payload["onboarding"] = onboarding
+	}
+	return payload
+}
+
+func (h *Handler) agentResponsePayload(agent model.Agent) map[string]any {
+	payload := agentResponsePayload(agent)
+	payload["uri"] = h.agentURI(agent)
+	return payload
+}
+
+func (h *Handler) agentListResponsePayload(agents []model.Agent) []map[string]any {
 	out := make([]map[string]any, 0, len(agents))
 	for _, agent := range agents {
-		out = append(out, agentResponsePayload(agent))
+		out = append(out, h.agentResponsePayload(agent))
 	}
 	return out
 }
@@ -351,7 +368,7 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, meResponsePayload(actor.Human, actor.IsSuperAdmin))
+		writeJSON(w, http.StatusOK, h.meResponsePayload(actor.Human, actor.IsSuperAdmin))
 		return
 	case http.MethodPatch:
 		var req updateMyProfileRequest
@@ -383,7 +400,7 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		writeJSON(w, http.StatusOK, meResponsePayload(human, actor.IsSuperAdmin))
+		writeJSON(w, http.StatusOK, h.meResponsePayload(human, actor.IsSuperAdmin))
 		return
 	default:
 		writeMethodNotAllowed(w)
@@ -423,7 +440,7 @@ func (h *Handler) handleMeMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"human": human,
+		"human": h.humanPayload(human),
 	})
 }
 
@@ -438,7 +455,7 @@ func (h *Handler) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"memberships": h.control.ListMyMemberships(actor.Human.HumanID),
+		"memberships": h.membershipWithOrgListPayload(h.control.ListMyMemberships(actor.Human.HumanID)),
 	})
 }
 
@@ -453,7 +470,7 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		agents := h.control.ListHumanAgents(actor.Human.HumanID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"agents": agentListResponsePayload(agents),
+			"agents": h.agentListResponsePayload(agents),
 		})
 		return
 	case http.MethodPost:
@@ -745,13 +762,13 @@ func (h *Handler) handleAgentMe(w http.ResponseWriter, r *http.Request) {
 		}
 
 		payload := map[string]any{
-			"agent": agentResponsePayload(agent),
+			"agent": h.agentResponsePayload(agent),
 		}
 		if organization != nil {
-			payload["organization"] = organization
+			payload["organization"] = h.organizationPayload(organization.(model.Organization))
 		}
 		if ownerHuman != nil {
-			payload["human"] = ownerHuman
+			payload["human"] = h.humanPayload(ownerHuman.(model.Human))
 		}
 
 		writeJSON(w, http.StatusOK, payload)
@@ -815,7 +832,7 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agent": agentResponsePayload(agent),
+		"agent": h.agentResponsePayload(agent),
 	})
 }
 
@@ -853,7 +870,7 @@ func (h *Handler) handleAgentMeCapabilities(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agent":         agentResponsePayload(agent),
+		"agent":         h.agentResponsePayload(agent),
 		"control_plane": h.agentControlPlanePayload(cp),
 	})
 }
@@ -893,7 +910,7 @@ func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agent":         agentResponsePayload(agent),
+		"agent":         h.agentResponsePayload(agent),
 		"control_plane": h.agentControlPlanePayload(cp),
 		"skill": map[string]any{
 			"schema_version": "1",
@@ -1044,7 +1061,7 @@ func (h *Handler) handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"snapshot": h.control.AdminSnapshot(),
+		"snapshot": h.adminSnapshotPayload(h.control.AdminSnapshot()),
 	})
 }
 
@@ -1131,7 +1148,9 @@ func (h *Handler) handleEntitiesMetadata(w http.ResponseWriter, r *http.Request)
 			key = org.OrgID
 		}
 		row := map[string]any{
-			"id": org.OrgID,
+			"id":     org.OrgID,
+			"handle": org.Handle,
+			"uri":    h.organizationURI(org),
 		}
 		if metadata := entityMetadataForRender(org.Metadata); len(metadata) > 0 {
 			row["metadata"] = metadata
@@ -1149,7 +1168,9 @@ func (h *Handler) handleEntitiesMetadata(w http.ResponseWriter, r *http.Request)
 			key = human.HumanID
 		}
 		row := map[string]any{
-			"id": human.HumanID,
+			"id":     human.HumanID,
+			"handle": human.Handle,
+			"uri":    h.humanURI(human),
 		}
 		if metadata := entityMetadataForRender(human.Metadata); len(metadata) > 0 {
 			row["metadata"] = metadata
@@ -1167,7 +1188,9 @@ func (h *Handler) handleEntitiesMetadata(w http.ResponseWriter, r *http.Request)
 			key = agent.AgentUUID
 		}
 		row := map[string]any{
-			"id": agent.AgentUUID,
+			"id":     agent.AgentUUID,
+			"handle": agent.Handle,
+			"uri":    h.agentURI(agent),
 		}
 		if metadata := entityMetadataForRender(agent.Metadata); len(metadata) > 0 {
 			row["metadata"] = metadata
@@ -1252,6 +1275,7 @@ func (h *Handler) handlePublicSnapshot(w http.ResponseWriter, r *http.Request) {
 		organizations = append(organizations, map[string]any{
 			"org_id":       org.OrgID,
 			"handle":       org.Handle,
+			"uri":          h.organizationURI(org),
 			"display_name": org.DisplayName,
 			"metadata":     snapshotMetadataPublicView(org.Metadata),
 		})
@@ -1265,6 +1289,7 @@ func (h *Handler) handlePublicSnapshot(w http.ResponseWriter, r *http.Request) {
 		humans = append(humans, map[string]any{
 			"human_id": human.HumanID,
 			"handle":   human.Handle,
+			"uri":      h.humanURI(human),
 			"metadata": snapshotMetadataPublicView(human.Metadata),
 		})
 	}
@@ -1315,10 +1340,13 @@ func (h *Handler) handlePublicSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		row := map[string]any{
-			"agent_id": agent.AgentID,
-			"org_id":   agent.OrgID,
-			"status":   agent.Status,
-			"metadata": snapshotMetadataPublicView(agent.Metadata),
+			"agent_uuid": agent.AgentUUID,
+			"agent_id":   agent.AgentID,
+			"handle":     agent.Handle,
+			"uri":        h.agentURI(agent),
+			"org_id":     agent.OrgID,
+			"status":     agent.Status,
+			"metadata":   snapshotMetadataPublicView(agent.Metadata),
 		}
 		if owner := agentOwnerPayload(agent); owner != nil {
 			row["owner"] = owner
@@ -1395,7 +1423,7 @@ func (h *Handler) handleOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"organization": org,
+		"organization": h.organizationPayload(org),
 		"membership":   membership,
 	})
 }
@@ -1471,7 +1499,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"organization": org})
+		writeJSON(w, http.StatusOK, map[string]any{"organization": h.organizationPayload(org)})
 		return
 	case "invites":
 		if len(parts) != 4 {
@@ -1694,7 +1722,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"humans": humans})
+			writeJSON(w, http.StatusOK, map[string]any{"humans": h.orgHumanViewListPayload(humans)})
 			return
 		}
 
@@ -1749,7 +1777,7 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"agents": agentListResponsePayload(agents)})
+		writeJSON(w, http.StatusOK, map[string]any{"agents": h.agentListResponsePayload(agents)})
 		return
 	case "trust-graph":
 		if r.Method != http.MethodGet {
@@ -1837,9 +1865,9 @@ func (h *Handler) handleOrgAccessHumans(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"organization": org,
+		"organization": h.organizationPayload(org),
 		"access_key":   key,
-		"humans":       humans,
+		"humans":       h.orgHumanViewListPayload(humans),
 	})
 }
 
@@ -1863,9 +1891,9 @@ func (h *Handler) handleOrgAccessAgents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"organization": org,
+		"organization": h.organizationPayload(org),
 		"access_key":   key,
-		"agents":       agentListResponsePayload(agents),
+		"agents":       h.agentListResponsePayload(agents),
 	})
 }
 
@@ -1921,7 +1949,7 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		invites := h.control.ListInvitesForHuman(actor.Human.HumanID, actor.Human.Email, actor.IsSuperAdmin)
-		writeJSON(w, http.StatusOK, map[string]any{"invites": invites})
+		writeJSON(w, http.StatusOK, map[string]any{"invites": h.inviteWithOrgListPayload(invites)})
 		return
 	}
 

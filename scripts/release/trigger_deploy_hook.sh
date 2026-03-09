@@ -8,6 +8,7 @@ Usage:
 
 Environment variables:
   DEPLOY_HOOK_BEARER_TOKEN   Optional bearer token for hook auth.
+  STATOCYST_CANONICAL_BASE_URL   Optional canonical authority passed to the deploy hook.
 USAGE
 }
 
@@ -31,7 +32,7 @@ payload="$(cat <<JSON
   "service": "statocyst",
   "environment": "${environment}",
   "image_ref": "${image_ref}",
-  "git_sha": "${git_sha}"
+  "git_sha": "${git_sha}"$(if [[ -n "${STATOCYST_CANONICAL_BASE_URL:-}" ]]; then printf ',\n  "canonical_base_url": "%s"' "${STATOCYST_CANONICAL_BASE_URL}"; fi)
 }
 JSON
 )"

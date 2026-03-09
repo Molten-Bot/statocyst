@@ -121,12 +121,23 @@ func TestCanonicalAgentURIAndUUIDLifecycleRoutes(t *testing.T) {
 	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
 	orgID := createOrg(t, router, "alice", "alice@a.test", "URI Org")
 
-	_, agentUUID, canonicalAgentID, handle := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgID, "Alpha Bot", aliceHumanID)
+	token, agentUUID, legacyAgentID, handle := registerAgentWithDetails(t, router, "alice", "alice@a.test", orgID, "Alpha Bot", aliceHumanID)
 	if handle != "alpha-bot" {
 		t.Fatalf("expected normalized handle alpha-bot, got %q", handle)
 	}
-	if strings.Count(canonicalAgentID, "/") != 2 {
-		t.Fatalf("expected human-owned canonical URI org/human/agent, got %q", canonicalAgentID)
+	if strings.Count(legacyAgentID, "/") != 2 {
+		t.Fatalf("expected legacy agent_id org/human/agent shape, got %q", legacyAgentID)
+	}
+	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if meResp.Code != http.StatusOK {
+		t.Fatalf("expected agent me to succeed, got %d %s", meResp.Code, meResp.Body.String())
+	}
+	mePayload := decodeJSONMap(t, meResp.Body.Bytes())
+	agentObj, _ := mePayload["agent"].(map[string]any)
+	if gotURI, _ := agentObj["uri"].(string); gotURI != "https://hub.molten.bot/agents/alpha-bot" {
+		t.Fatalf("expected canonical agent uri, got %q payload=%v", gotURI, agentObj)
 	}
 
 	metadata := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/"+agentUUID+"/metadata", map[string]any{

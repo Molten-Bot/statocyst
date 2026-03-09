@@ -116,6 +116,7 @@ jobs:
         env:
           DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
           DEPLOY_HOOK_BEARER_TOKEN: ${{ secrets.DEPLOY_HOOK_BEARER_TOKEN }}
+          STATOCYST_CANONICAL_BASE_URL: ${{ vars.STATOCYST_CANONICAL_BASE_URL || 'https://hub.molten-qa.site' }}
         run: |
           scripts/release/trigger_deploy_hook.sh \
             "${DEPLOY_HOOK_URL}" \

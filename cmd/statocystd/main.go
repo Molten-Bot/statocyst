@@ -70,6 +70,7 @@ func main() {
 		queueStore,
 		waiters,
 		humanAuth,
+		os.Getenv("STATOCYST_CANONICAL_BASE_URL"),
 		os.Getenv("SUPABASE_URL"),
 		os.Getenv("SUPABASE_ANON_KEY"),
 		os.Getenv("STATOCYST_ADMIN_SNAPSHOT_KEY"),

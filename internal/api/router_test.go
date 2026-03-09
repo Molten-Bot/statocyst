@@ -22,7 +22,7 @@ import (
 func newTestRouter() http.Handler {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	return NewRouter(h)
 }
 
@@ -31,7 +31,7 @@ func TestHandlerWiringWithInterfaceStores(t *testing.T) {
 	var control store.ControlPlaneStore = mem
 	var queue store.MessageQueueStore = mem
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(control, queue, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(control, queue, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	router := NewRouter(h)
 
 	health := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
@@ -59,7 +59,7 @@ func TestHandlerWiringWithInterfaceStores(t *testing.T) {
 func TestHealthReportsDegradedStorageStatus(t *testing.T) {
 	mem := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	h.SetStorageHealth(store.StorageHealthStatus{
 		StartupMode: store.StorageStartupModeDegraded,
 		State: store.StorageBackendHealth{
@@ -141,7 +141,7 @@ func TestHealthReportsRuntimeQueueFailureAndRecovery(t *testing.T) {
 		base:            mem,
 		failNextEnqueue: true,
 	}
-	h := NewHandler(mem, queue, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(mem, queue, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	h.SetStorageHealth(store.StorageHealthStatus{
 		StartupMode: store.StorageStartupModeDegraded,
 		State: store.StorageBackendHealth{
@@ -210,7 +210,7 @@ func TestHealthReportsRuntimeDequeueFailureAndRecovery(t *testing.T) {
 		base:            mem,
 		failNextDequeue: true,
 	}
-	h := NewHandler(mem, queue, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(mem, queue, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	h.SetStorageHealth(store.StorageHealthStatus{
 		StartupMode: store.StorageStartupModeDegraded,
 		State: store.StorageBackendHealth{
@@ -288,6 +288,7 @@ func TestUIConfigExposesAuthAndRedactsPrivilegedFields(t *testing.T) {
 		mem,
 		waiters,
 		auth.NewDevHumanAuthProvider(),
+		"https://hub.molten.bot",
 		"https://example.supabase.co",
 		"should-not-leak",
 		"",
@@ -348,6 +349,7 @@ func TestUIConfigReturnsSensitiveFieldsWithPrivilegedKey(t *testing.T) {
 		mem,
 		waiters,
 		auth.NewDevHumanAuthProvider(),
+		"https://hub.molten.bot",
 		"https://example.supabase.co",
 		"should-leak-only-to-privileged-caller",
 		"",
@@ -396,6 +398,7 @@ func TestUIConfigKeepsPrivilegedFieldsRedactedWithWrongPrivilegedKey(t *testing.
 		mem,
 		waiters,
 		auth.NewDevHumanAuthProvider(),
+		"https://hub.molten.bot",
 		"https://example.supabase.co",
 		"should-not-leak",
 		"",
@@ -605,6 +608,10 @@ func bindAgentWithUUIDForOwner(t *testing.T, router http.Handler, humanID, email
 	agentUUID, _ := agent["agent_uuid"].(string)
 	if agentUUID == "" {
 		t.Fatalf("agent me missing agent_uuid")
+	}
+	handle, _ := agent["handle"].(string)
+	if gotURI, _ := agent["uri"].(string); gotURI != "https://hub.molten.bot/agents/"+handle {
+		t.Fatalf("expected canonical agent uri, got %q payload=%v", gotURI, agent)
 	}
 	return token, agentUUID
 }
@@ -1498,7 +1505,7 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 func TestBindTokenExpires(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
 	h.now = func() time.Time { return now }
 	router := NewRouter(h)
@@ -1751,7 +1758,7 @@ func TestAdminSnapshotDoesNotLeakMessagePayloads(t *testing.T) {
 func TestAdminSnapshotHeaderKeyAccess(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "snapshot-secret", "", "molten.bot", true, 15*time.Minute, false)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "snapshot-secret", "", "molten.bot", true, 15*time.Minute, false)
 	router := NewRouter(h)
 
 	unauth := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, nil)
@@ -1825,6 +1832,9 @@ func TestPublicSnapshotFiltersPrivateEntities(t *testing.T) {
 	if gotOrgID, _ := org["org_id"].(string); gotOrgID != publicOrgID {
 		t.Fatalf("expected public org_id %q, got %q payload=%v", publicOrgID, gotOrgID, payload)
 	}
+	if gotURI, _ := org["uri"].(string); gotURI == "" {
+		t.Fatalf("expected public org uri, payload=%v", org)
+	}
 
 	humans, _ := snap["humans"].([]any)
 	if len(humans) != 1 {
@@ -1833,6 +1843,9 @@ func TestPublicSnapshotFiltersPrivateEntities(t *testing.T) {
 	human, _ := humans[0].(map[string]any)
 	if gotHumanID, _ := human["human_id"].(string); gotHumanID != bobHumanID {
 		t.Fatalf("expected public human_id %q, got %q payload=%v", bobHumanID, gotHumanID, payload)
+	}
+	if gotURI, _ := human["uri"].(string); gotURI == "" {
+		t.Fatalf("expected public human uri, payload=%v", human)
 	}
 
 	memberships, _ := snap["memberships"].([]any)
@@ -1852,6 +1865,9 @@ func TestPublicSnapshotFiltersPrivateEntities(t *testing.T) {
 		t.Fatalf("expected 1 public agent after owner filtering, got %d payload=%v", len(agents), payload)
 	}
 	agent, _ := agents[0].(map[string]any)
+	if gotURI, _ := agent["uri"].(string); gotURI == "" {
+		t.Fatalf("expected public agent uri, payload=%v", agent)
+	}
 	owner, _ := agent["owner"].(map[string]any)
 	if gotOwnerID, _ := owner["human_id"].(string); gotOwnerID != bobHumanID {
 		t.Fatalf("expected public agent owner.human_id %q, got %q payload=%v", bobHumanID, gotOwnerID, payload)
@@ -2085,7 +2101,7 @@ func TestUIRoutes_JavascriptAssets(t *testing.T) {
 func TestHeadlessModeDisablesUIRoutes(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
-	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "", "", "", "", "molten.bot", true, 15*time.Minute, true)
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, true)
 	router := NewRouter(h)
 
 	me := doJSONRequest(t, router, http.MethodGet, "/v1/me", nil, humanHeaders("alice", "alice@a.test"))

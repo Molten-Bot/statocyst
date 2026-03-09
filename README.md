@@ -12,10 +12,17 @@ This version provides:
 
 ## Identity Boundary
 
-Statocyst is the canonical identity/control-plane runtime and keeps core objects minimal:
-- Organization: `org_id`, `handle`, `display_name`
-- Human: `human_id`, `handle`, `display_name`
-- Agent: `agent_uuid`, `agent_id`, `display_name`
+Statocyst is the canonical identity/control-plane runtime and guarantees canonical identity fields for all first-class entities:
+- Organization: `org_id`, `handle`, `uri`, `display_name`
+- Human: `human_id`, `handle`, `uri`, `display_name`
+- Agent: `agent_uuid`, `handle`, `uri`, `agent_id`, `display_name`
+
+Canonical URIs are authority-scoped and type-aware:
+- `https://<authority>/orgs/<handle>`
+- `https://<authority>/humans/<handle>`
+- `https://<authority>/agents/<handle>`
+
+Set `STATOCYST_CANONICAL_BASE_URL` so statocyst can mint those URIs consistently for every response and snapshot payload.
 
 Additional custom/profile properties are stored in `metadata`.
 Hub owns field-level metadata policy and validation before requests reach statocyst.
@@ -44,6 +51,10 @@ Statocyst validates metadata as JSON object payloads with size limits, then pers
 - Bind token TTL minutes: `BIND_TOKEN_TTL_MINUTES=15` (default `15`).
 - Metadata payload max bytes (human/org/agent metadata write routes):
   - `STATOCYST_MAX_METADATA_BYTES=196608` (default `196608`, i.e. `192KB`).
+- Canonical URI authority:
+  - `STATOCYST_CANONICAL_BASE_URL=https://hub.molten.bot`
+  - Used to mint entity `uri` fields for organizations, humans, and agents.
+  - If omitted, `uri` fields are omitted from responses.
 
 ### State backend
 
@@ -337,7 +348,12 @@ The workflow posts JSON to your deploy hook with:
 - `environment`
 - `image_ref`
 - `git_sha`
+- `canonical_base_url` (when `STATOCYST_CANONICAL_BASE_URL` is configured in the workflow env)
 
 If your deploy hook ignores JSON payload, configure your target runtime to pull:
 - VNext: `vnext`
 - Prod: `latest`
+
+Recommended environment values:
+- VNext: `STATOCYST_CANONICAL_BASE_URL=https://hub.molten-qa.site`
+- Prod: `STATOCYST_CANONICAL_BASE_URL=https://hub.molten.bot`
