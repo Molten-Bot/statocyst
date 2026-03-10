@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenClaw Bind Agent"
   short_description: "Bind agent and return current bound peers from capabilities"
-  default_prompt: "Use $openclaw-bind-agent to redeem bind_token=<secret> and return bound_agents from capabilities."
+  default_prompt: "Use $openclaw-bind-agent with base_url=<hub_base_url> to redeem bind_token=<secret>, then persist the returned token and api_base together and return bound_agents from capabilities."

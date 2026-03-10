@@ -7,6 +7,7 @@
 - Auth header: `Authorization: Bearer <agent_token>`
 - Success: `200` with:
   - `agent.agent_uuid` (token identity)
+  - `control_plane.api_base` (canonical API base for this deployment)
   - `control_plane.can_talk_to` (bound peer UUID list available for messaging)
 
 ## Publish

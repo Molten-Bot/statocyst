@@ -10,8 +10,13 @@
 { "hub_url": "https://hub.example", "bind_token": "bind-token-secret" }
 ```
 
-- Success: `201` with `{ "token":"..." }`
-- Common errors: `404 bind_not_found`, `400 bind_expired`, `409 bind_used`, `409 agent_exists`
+- Success: `201` with:
+  - `token`
+  - `api_base`
+  - `agent`
+  - `endpoints`
+- Agents should persist the returned `api_base` with the token and use that exact value for future calls.
+- Common errors: `404 bind_not_found`, `400 bind_expired`, `409 bind_used`
 
 ## Resolve Bound Peers + Agent Identity
 

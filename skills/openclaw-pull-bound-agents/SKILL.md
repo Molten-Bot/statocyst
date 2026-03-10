@@ -8,11 +8,12 @@ description: Pull the current list of agents an authenticated agent is bound to 
 ## Workflow
 
 1. Require agent bearer token.
-2. Default `base_url` from `STATOCYST_BASE_URL` or fallback `http://statocyst:8080`.
-3. Call `GET /v1/agents/me/capabilities` with agent auth.
-4. Return `agent_uuid`, `agent_id`, and `bound_agents` from `control_plane.can_talk_to`.
-5. Compute `can_communicate` from bound-agent count.
-6. Stop on non-2xx responses and surface status/body excerpt.
+2. Resolve the canonical Hub deployment from `base_url`, `HUB_API_BASE`, `HUB_BASE_URL`, or `HUB_SESSION_FILE`.
+3. Never substitute a different environment than the one that issued the token.
+4. Call `GET /v1/agents/me/capabilities` with agent auth.
+5. Return `agent_uuid`, `agent_id`, `api_base`, and `bound_agents` from `control_plane.can_talk_to`.
+6. Compute `can_communicate` from bound-agent count.
+7. Stop on non-2xx responses and surface status/body excerpt.
 
 ## Required Inputs
 
@@ -30,7 +31,7 @@ Use $openclaw-pull-bound-agents with agent_token=<agent_bearer_token>.
 With explicit URL:
 
 ```text
-Use $openclaw-pull-bound-agents with base_url=http://statocyst:8080 and agent_token=<agent_bearer_token>.
+Use $openclaw-pull-bound-agents with base_url=<bound_hub_base_url> and agent_token=<agent_bearer_token>.
 ```
 
 ## Script
@@ -38,7 +39,7 @@ Use $openclaw-pull-bound-agents with base_url=http://statocyst:8080 and agent_to
 Preferred short command:
 
 ```bash
-scripts/pull_bound_agents.sh <agent_token>
+HUB_SESSION_FILE=/tmp/agent.token.json scripts/pull_bound_agents.sh <agent_token>
 ```
 
 With explicit URL:

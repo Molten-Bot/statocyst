@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenClaw Exchange Messages"
   short_description: "Pull bound peers and run strict two-agent round-trip messaging checks"
-  default_prompt: "Use $openclaw-exchange-messages to list bound_agents via capabilities, then verify A-to-B and B-to-A exchange for two bound agents."
+  default_prompt: "Use $openclaw-exchange-messages with the stored api_base or hub session file to list bound_agents via capabilities, then verify A-to-B and B-to-A exchange for two bound agents."

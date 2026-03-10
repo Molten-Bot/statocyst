@@ -5,21 +5,20 @@ usage() {
   cat <<USAGE
 Usage:
   bind_agent.sh <bind_token> [token_output_file]
-  bind_agent.sh <agent_id> <bind_token> [token_output_file]
   bind_agent.sh <base_url> <bind_token> [token_output_file]
-  bind_agent.sh <base_url> <agent_id> <bind_token> [token_output_file]
 
 Arguments:
-  agent_id          Optional agent identity to claim on bind
   bind_token        One-time bind token for agent bootstrap
-  token_output_file Optional path to write token. Default: /tmp/agent.token (or /tmp/<agent_id>.token when provided). Use '-' to return token in JSON output.
+  token_output_file Optional path to write token. Default: /tmp/agent.token. Use '-' to return token in JSON output.
 
 Environment:
-  STATOCYST_BASE_URL  Default base URL when not passed explicitly. Default fallback: http://statocyst:8080
+  HUB_API_BASE      Preferred canonical API base from bind/capabilities. Example: https://hub.example/v1
+  HUB_BASE_URL      Hub origin used when HUB_API_BASE is not set. Example: https://hub.example
+  HUB_SESSION_FILE  Optional JSON session file from a previous bind; used to recover api_base when no explicit URL is passed
 USAGE
 }
 
-if [[ $# -lt 1 || $# -gt 4 ]]; then
+if [[ $# -lt 1 || $# -gt 3 ]]; then
   usage >&2
   exit 1
 fi
@@ -31,46 +30,91 @@ for cmd in curl node; do
   fi
 done
 
-default_base_url="${STATOCYST_BASE_URL:-http://statocyst:8080}"
+read_session_api_base() {
+  local session_file="${HUB_SESSION_FILE:-}"
+  if [[ -z "$session_file" || ! -f "$session_file" ]]; then
+    return 0
+  fi
+  node -e '
+const fs = require("fs");
+try {
+  const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const value = String(payload.api_base || "");
+  if (value) process.stdout.write(value);
+} catch (_) {}
+' "$session_file"
+}
+
+normalize_api_base() {
+  local value="${1%/}"
+  if [[ -z "$value" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  if [[ "$value" == */v1 ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  printf '%s/v1' "$value"
+}
+
+derive_hub_base_url() {
+  local value="${1%/}"
+  if [[ "$value" == */v1 ]]; then
+    printf '%s' "${value%/v1}"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+
+session_api_base="$(read_session_api_base)"
+default_api_input="${HUB_API_BASE:-${HUB_BASE_URL:-$session_api_base}}"
 agent_id=""
 
 if [[ "$1" =~ ^https?:// ]]; then
-  base_url="${1%/}"
+  api_base="$(normalize_api_base "$1")"
+  hub_base_url="$(derive_hub_base_url "$api_base")"
   if [[ $# -eq 2 ]]; then
     bind_token="$2"
     token_output_file="/tmp/agent.token"
   elif [[ $# -eq 3 ]]; then
     bind_token="$2"
     token_output_file="$3"
-  elif [[ $# -eq 4 ]]; then
-    agent_id="$2"
-    bind_token="$3"
-    token_output_file="$4"
   else
     usage >&2
     exit 1
   fi
 else
-  base_url="${default_base_url%/}"
   if [[ $# -eq 1 ]]; then
+    api_base="$(normalize_api_base "$default_api_input")"
+    hub_base_url="$(derive_hub_base_url "$api_base")"
     bind_token="$1"
     token_output_file="/tmp/agent.token"
   elif [[ $# -eq 2 ]]; then
-    agent_id="$1"
-    bind_token="$2"
-    token_output_file="/tmp/${agent_id}.token"
-  elif [[ $# -eq 3 ]]; then
-    agent_id="$1"
-    bind_token="$2"
-    token_output_file="$3"
+    if [[ "$2" == "-" || "$2" == /* || "$2" == .* ]]; then
+      api_base="$(normalize_api_base "$default_api_input")"
+      hub_base_url="$(derive_hub_base_url "$api_base")"
+      bind_token="$1"
+      token_output_file="$2"
+    else
+      usage >&2
+      exit 1
+    fi
   else
     usage >&2
     exit 1
   fi
 fi
 
+if [[ -z "$api_base" || -z "$hub_base_url" ]]; then
+  echo "ERROR: canonical Hub API base is required. Pass <base_url>, set HUB_API_BASE/HUB_BASE_URL, or provide HUB_SESSION_FILE." >&2
+  exit 1
+fi
+
 redeem_tmp="$(mktemp)"
-trap 'rm -f "$redeem_tmp"' EXIT
+capabilities_tmp="$(mktemp)"
+session_write_err="$(mktemp)"
+trap 'rm -f "$redeem_tmp" "$capabilities_tmp" "$session_write_err"' EXIT
 
 fail_json() {
   local code="$1"
@@ -113,14 +157,13 @@ console.log("");
 
 redeem_payload="$(node -e '
 console.log(JSON.stringify({
-  hub_url: process.argv[3],
+  hub_url: process.argv[2],
   bind_token: process.argv[1],
-  agent_id: process.argv[2],
 }));
-' "$bind_token" "$agent_id" "$base_url")"
+' "$bind_token" "$hub_base_url")"
 
 redeem_status="$(curl -sS -o "$redeem_tmp" -w "%{http_code}" \
-  -X POST "$base_url/v1/agents/bind" \
+  -X POST "$api_base/agents/bind" \
   -H "Content-Type: application/json" \
   --data "$redeem_payload")"
 
@@ -148,14 +191,29 @@ console.log(p.token);
 org_id="$(node -e '
 const fs = require("fs");
 const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-console.log(String(p.org_id || ""));
+const agent = p && p.agent ? p.agent : {};
+console.log(String(agent.org_id || p.org_id || ""));
 ' "$redeem_tmp")"
 
-capabilities_tmp="$(mktemp)"
-trap 'rm -f "$redeem_tmp" "$capabilities_tmp"' EXIT
+bound_api_base="$(node -e '
+const fs = require("fs");
+const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+console.log(String(p.api_base || ""));
+' "$redeem_tmp")"
+if [[ -n "$bound_api_base" ]]; then
+  api_base="$(normalize_api_base "$bound_api_base")"
+  hub_base_url="$(derive_hub_base_url "$api_base")"
+fi
+
+endpoints_json="$(node -e '
+const fs = require("fs");
+const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const endpoints = p && p.endpoints && typeof p.endpoints === "object" ? p.endpoints : {};
+process.stdout.write(JSON.stringify(endpoints));
+' "$redeem_tmp")"
 
 cap_status="$(curl -sS -o "$capabilities_tmp" -w "%{http_code}" \
-  -X GET "$base_url/v1/agents/me/capabilities" \
+  -X GET "$api_base/agents/me/capabilities" \
   -H "Authorization: Bearer $token")"
 if [[ "$cap_status" != "200" ]]; then
   cap_code="$(parse_error_field "$capabilities_tmp" "error")"
@@ -200,34 +258,57 @@ const peers = Array.isArray(cp.can_talk_to) ? cp.can_talk_to.map(String) : [];
 console.log(JSON.stringify(peers));
 ' "$capabilities_tmp")"
 
+session_file=""
 if [[ "$token_output_file" == "-" ]]; then
   node -e '
 const out = {
   status: "ok",
-  base_url: process.argv[1],
-  agent_uuid: process.argv[2],
-  agent_id: process.argv[3],
-  org_id: process.argv[4],
-  bound_agents: JSON.parse(process.argv[5]),
-  can_communicate: JSON.parse(process.argv[5]).length > 0,
-  token: process.argv[6],
+  hub_base_url: process.argv[1],
+  api_base: process.argv[2],
+  agent_uuid: process.argv[3],
+  agent_id: process.argv[4],
+  org_id: process.argv[5],
+  bound_agents: JSON.parse(process.argv[6]),
+  can_communicate: JSON.parse(process.argv[6]).length > 0,
+  token: process.argv[7],
+  endpoints: JSON.parse(process.argv[8]),
 };
 console.log(JSON.stringify(out));
-' "$base_url" "$agent_uuid" "$agent_id" "$org_id" "$bound_agents_json" "$token"
+' "$hub_base_url" "$api_base" "$agent_uuid" "$agent_id" "$org_id" "$bound_agents_json" "$token" "$endpoints_json"
 else
   umask 077
   printf '%s\n' "$token" > "$token_output_file"
+  session_file="${token_output_file}.json"
+  if ! node -e '
+const fs = require("fs");
+const payload = {
+  hub_base_url: process.argv[1],
+  api_base: process.argv[2],
+  agent_uuid: process.argv[3],
+  agent_id: process.argv[4],
+  org_id: process.argv[5],
+  bound_agents: JSON.parse(process.argv[6]),
+  endpoints: JSON.parse(process.argv[7]),
+  token_file: process.argv[8],
+};
+fs.writeFileSync(process.argv[9], JSON.stringify(payload, null, 2) + "\n", { mode: 0o600 });
+' "$hub_base_url" "$api_base" "$agent_uuid" "$agent_id" "$org_id" "$bound_agents_json" "$endpoints_json" "$token_output_file" "$session_file" 2>"$session_write_err"; then
+    fail_json "session_write_failed" "$(tr '\n' ' ' <"$session_write_err" | sed 's/[[:space:]]\+/ /g' | sed 's/^ //;s/ $//')" "0"
+  fi
   node -e '
 const result = {
   status: "ok",
-  base_url: process.argv[1],
-  agent_uuid: process.argv[2],
-  agent_id: process.argv[3],
-  org_id: process.argv[4],
-  bound_agents: JSON.parse(process.argv[5]),
-  can_communicate: JSON.parse(process.argv[5]).length > 0,
-  token_file: process.argv[6],
+  hub_base_url: process.argv[1],
+  api_base: process.argv[2],
+  agent_uuid: process.argv[3],
+  agent_id: process.argv[4],
+  org_id: process.argv[5],
+  bound_agents: JSON.parse(process.argv[6]),
+  can_communicate: JSON.parse(process.argv[6]).length > 0,
+  token_file: process.argv[7],
+  session_file: process.argv[8],
+  endpoints: JSON.parse(process.argv[9]),
 };
 console.log(JSON.stringify(result));
-' "$base_url" "$agent_uuid" "$agent_id" "$org_id" "$bound_agents_json" "$token_output_file"
+' "$hub_base_url" "$api_base" "$agent_uuid" "$agent_id" "$org_id" "$bound_agents_json" "$token_output_file" "$session_file" "$endpoints_json"
 fi

@@ -9,6 +9,7 @@
   - `agent.agent_uuid`
   - `agent.agent_id`
   - `agent.org_id`
+  - `control_plane.api_base`
   - `control_plane.can_talk_to` (peer agent UUIDs currently reachable)
   - `control_plane.endpoints` (publish/pull/capabilities/skill URLs)
 

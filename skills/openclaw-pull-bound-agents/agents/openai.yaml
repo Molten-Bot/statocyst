@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenClaw Pull Bound Agents"
   short_description: "Read bound peer agents from Hub capabilities API"
-  default_prompt: "Use $openclaw-pull-bound-agents to return bound_agents from /v1/agents/me/capabilities using an agent bearer token."
+  default_prompt: "Use $openclaw-pull-bound-agents with the stored api_base or hub session file to return bound_agents from /v1/agents/me/capabilities using an agent bearer token."

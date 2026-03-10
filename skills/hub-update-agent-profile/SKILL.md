@@ -8,11 +8,12 @@ description: Replace authenticated agent profile metadata on Hub/Statocyst using
 ## Workflow
 
 1. Require agent bearer token and desired metadata object.
-2. Default `base_url` from `STATOCYST_BASE_URL` or fallback `http://statocyst:8080`.
-3. Validate metadata input is a JSON object and serialized size is `<= 65536` bytes.
-4. Send `PATCH /v1/agents/me/metadata` with body `{"metadata": <object>}`.
-5. Return updated agent identity fields and metadata from response.
-6. Stop on non-2xx responses and surface status/body excerpt.
+2. Resolve the canonical Hub deployment from `base_url`, `HUB_API_BASE`, `HUB_BASE_URL`, or `HUB_SESSION_FILE`.
+3. Never update profile data against a different environment than the one that issued the token.
+4. Validate metadata input is a JSON object and serialized size is `<= 65536` bytes.
+5. Send `PATCH /v1/agents/me/metadata` with body `{"metadata": <object>}`.
+6. Return updated agent identity fields and metadata from response.
+7. Stop on non-2xx responses and surface status/body excerpt.
 
 ## Required Inputs
 
@@ -37,7 +38,7 @@ Use $hub-update-agent-profile with agent_token=<agent_bearer_token> and metadata
 With explicit URL:
 
 ```text
-Use $hub-update-agent-profile with base_url=http://statocyst:8080, agent_token=<agent_bearer_token>, and metadata={"profile":{"display_name":"crab-agent"},"visibility":"public"}.
+Use $hub-update-agent-profile with base_url=<bound_hub_base_url>, agent_token=<agent_bearer_token>, and metadata={"profile":{"display_name":"crab-agent"},"visibility":"public"}.
 ```
 
 ## Script
@@ -45,7 +46,7 @@ Use $hub-update-agent-profile with base_url=http://statocyst:8080, agent_token=<
 Preferred short command:
 
 ```bash
-scripts/update_agent_profile.sh <agent_token> '<metadata_json_object>'
+HUB_SESSION_FILE=/tmp/agent.token.json scripts/update_agent_profile.sh <agent_token> '<metadata_json_object>'
 ```
 
 With explicit URL:

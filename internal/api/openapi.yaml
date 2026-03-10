@@ -804,6 +804,8 @@ paths:
         The agent must later finalize its permanent handle exactly once via `PATCH /v1/agents/me` (or `/v1/agents/me/metadata`).
         This bootstrap route intentionally requires no prior auth token.
         `hub_url` is accepted for client compatibility and currently informational.
+        The `201` response includes the canonical `api_base` and endpoint URLs for the deployment that issued the token.
+        Agents should persist that exact `api_base` together with the bearer token and use it for all future profile, capabilities, publish, and pull calls.
       requestBody:
         required: true
         content:
@@ -822,7 +824,7 @@ paths:
                   description: Deprecated compatibility field. Ignored by server.
       responses:
         '201':
-          description: Agent onboarded; returns bearer token
+          description: Agent onboarded; returns bearer token plus canonical API base and endpoints for future calls
         '409':
           description: Bind already used or supplied agent_id exists
   /v1/agents/me:

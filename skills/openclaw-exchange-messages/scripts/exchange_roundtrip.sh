@@ -4,11 +4,13 @@ set -euo pipefail
 usage() {
   cat <<USAGE
 Usage:
+  exchange_roundtrip.sh <agent_a_token> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
   exchange_roundtrip.sh <base_url> <agent_a_token> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
+  exchange_roundtrip.sh <agent_a_uuid> <agent_a_token> <agent_b_uuid> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
   exchange_roundtrip.sh <base_url> <agent_a_uuid> <agent_a_token> <agent_b_uuid> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
 
 Arguments:
-  base_url        Example: http://localhost:8080
+  base_url        Example: https://hub.example or https://hub.example/v1
   agent_a_uuid    Optional explicit sender/receiver A UUID (long form only)
   agent_a_token   Bearer token for agent A
   agent_b_uuid    Optional explicit sender/receiver B UUID (long form only)
@@ -16,10 +18,15 @@ Arguments:
   msg_a_to_b      Payload expected by B
   msg_b_to_a      Payload expected by A
   pull_timeout_ms Optional pull timeout (default: 5000)
+
+Environment:
+  HUB_API_BASE      Preferred canonical API base from bind/capabilities
+  HUB_BASE_URL      Hub origin used when HUB_API_BASE is not set
+  HUB_SESSION_FILE  Optional bind session JSON used to recover api_base when URL is omitted
 USAGE
 }
 
-if [[ $# -lt 5 || $# -gt 8 ]]; then
+if [[ $# -lt 4 || $# -gt 8 ]]; then
   usage >&2
   exit 1
 fi
@@ -31,34 +38,104 @@ for cmd in curl node; do
   fi
 done
 
+read_session_api_base() {
+  local session_file="${HUB_SESSION_FILE:-}"
+  if [[ -z "$session_file" || ! -f "$session_file" ]]; then
+    return 0
+  fi
+  node -e '
+const fs = require("fs");
+try {
+  const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const value = String(payload.api_base || "");
+  if (value) process.stdout.write(value);
+} catch (_) {}
+' "$session_file"
+}
+
+normalize_api_base() {
+  local value="${1%/}"
+  if [[ -z "$value" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  if [[ "$value" == */v1 ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  printf '%s/v1' "$value"
+}
+
+derive_hub_base_url() {
+  local value="${1%/}"
+  if [[ "$value" == */v1 ]]; then
+    printf '%s' "${value%/v1}"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+
+session_api_base="$(read_session_api_base)"
+default_api_input="${HUB_API_BASE:-${HUB_BASE_URL:-$session_api_base}}"
 mode=""
-if [[ $# -eq 5 || $# -eq 6 ]]; then
+if [[ "$1" =~ ^https?:// ]]; then
+  api_base="$(normalize_api_base "$1")"
+  if [[ $# -eq 5 || $# -eq 6 ]]; then
+    mode="short"
+    agent_a_uuid=""
+    agent_a_token="$2"
+    agent_b_uuid=""
+    agent_b_token="$3"
+    msg_a_to_b="$4"
+    msg_b_to_a="$5"
+    pull_timeout_ms="${6:-5000}"
+  elif [[ $# -eq 7 || $# -eq 8 ]]; then
+    mode="long"
+    agent_a_uuid="$2"
+    agent_a_token="$3"
+    agent_b_uuid="$4"
+    agent_b_token="$5"
+    msg_a_to_b="$6"
+    msg_b_to_a="$7"
+    pull_timeout_ms="${8:-5000}"
+  else
+    usage >&2
+    exit 1
+  fi
+elif [[ $# -eq 4 || $# -eq 5 ]]; then
   mode="short"
-  base_url="${1%/}"
+  api_base="$(normalize_api_base "$default_api_input")"
   agent_a_uuid=""
-  agent_a_token="$2"
+  agent_a_token="$1"
   agent_b_uuid=""
-  agent_b_token="$3"
-  msg_a_to_b="$4"
-  msg_b_to_a="$5"
-  pull_timeout_ms="${6:-5000}"
-elif [[ $# -eq 7 || $# -eq 8 ]]; then
+  agent_b_token="$2"
+  msg_a_to_b="$3"
+  msg_b_to_a="$4"
+  pull_timeout_ms="${5:-5000}"
+elif [[ $# -eq 6 || $# -eq 7 ]]; then
   mode="long"
-  base_url="${1%/}"
-  agent_a_uuid="$2"
-  agent_a_token="$3"
-  agent_b_uuid="$4"
-  agent_b_token="$5"
-  msg_a_to_b="$6"
-  msg_b_to_a="$7"
-  pull_timeout_ms="${8:-5000}"
+  api_base="$(normalize_api_base "$default_api_input")"
+  agent_a_uuid="$1"
+  agent_a_token="$2"
+  agent_b_uuid="$3"
+  agent_b_token="$4"
+  msg_a_to_b="$5"
+  msg_b_to_a="$6"
+  pull_timeout_ms="${7:-5000}"
 else
   usage >&2
   exit 1
 fi
 
+hub_base_url="$(derive_hub_base_url "$api_base")"
+
 if ! [[ "$pull_timeout_ms" =~ ^[0-9]+$ ]]; then
   echo "ERROR: pull_timeout_ms must be an integer" >&2
+  exit 1
+fi
+
+if [[ -z "$api_base" ]]; then
+  echo "ERROR: base URL is required. Pass <base_url>, set HUB_API_BASE/HUB_BASE_URL, or provide HUB_SESSION_FILE." >&2
   exit 1
 fi
 
@@ -95,7 +172,7 @@ fetch_capabilities() {
   local out_file="$2"
   local status
   status="$(curl -sS -o "$out_file" -w "%{http_code}" \
-    -X GET "$base_url/v1/agents/me/capabilities" \
+    -X GET "$api_base/agents/me/capabilities" \
     -H "Authorization: Bearer $token")"
   if [[ "$status" != "200" ]]; then
     local excerpt
@@ -149,7 +226,7 @@ console.log(JSON.stringify({
 
   local status
   status="$(curl -sS -o "$publish_tmp" -w "%{http_code}" \
-    -X POST "$base_url/v1/messages/publish" \
+    -X POST "$api_base/messages/publish" \
     -H "Authorization: Bearer $sender_token" \
     -H "Content-Type: application/json" \
     --data "$payload_json")"
@@ -183,7 +260,7 @@ pull_and_verify() {
 
   local status
   status="$(curl -sS -o "$pull_tmp" -w "%{http_code}" \
-    -X GET "$base_url/v1/messages/pull?timeout_ms=$pull_timeout_ms" \
+    -X GET "$api_base/messages/pull?timeout_ms=$pull_timeout_ms" \
     -H "Authorization: Bearer $receiver_token")"
 
   if [[ "$status" != "200" ]]; then
@@ -274,16 +351,18 @@ node -e '
 const result = {
   status: "ok",
   mode: process.argv[1],
-  agent_a_uuid: process.argv[2],
-  agent_b_uuid: process.argv[3],
-  agent_a_bound_agents: JSON.parse(process.argv[4]),
-  agent_b_bound_agents: JSON.parse(process.argv[5]),
+  hub_base_url: process.argv[2],
+  api_base: process.argv[3],
+  agent_a_uuid: process.argv[4],
+  agent_b_uuid: process.argv[5],
+  agent_a_bound_agents: JSON.parse(process.argv[6]),
+  agent_b_bound_agents: JSON.parse(process.argv[7]),
   bound_peer_check: "passed",
-  a_to_b_publish_message_id: process.argv[6],
-  a_to_b_pulled_message_id: process.argv[7],
-  b_to_a_publish_message_id: process.argv[8],
-  b_to_a_pulled_message_id: process.argv[9],
-  elapsed_ms: Number(process.argv[11]) - Number(process.argv[10]),
+  a_to_b_publish_message_id: process.argv[8],
+  a_to_b_pulled_message_id: process.argv[9],
+  b_to_a_publish_message_id: process.argv[10],
+  b_to_a_pulled_message_id: process.argv[11],
+  elapsed_ms: Number(process.argv[13]) - Number(process.argv[12]),
 };
 console.log(JSON.stringify(result));
-' "$mode" "$agent_a_uuid" "$agent_b_uuid" "$a_bound_json" "$b_bound_json" "$msg_id_a_to_b" "$pulled_a_to_b" "$msg_id_b_to_a" "$pulled_b_to_a" "$start_ms" "$end_ms"
+' "$mode" "$hub_base_url" "$api_base" "$agent_a_uuid" "$agent_b_uuid" "$a_bound_json" "$b_bound_json" "$msg_id_a_to_b" "$pulled_a_to_b" "$msg_id_b_to_a" "$pulled_b_to_a" "$start_ms" "$end_ms"

@@ -1015,6 +1015,12 @@ func buildAgentSkillMarkdown(cp agentControlPlaneView) string {
 	b.WriteString("- Publish outbound messages to trusted peers.\n")
 	b.WriteString("- Discover capabilities and communication graph.\n")
 	b.WriteString("- Retrieve this skill doc anytime.\n")
+	b.WriteString("- Update your own public profile metadata.\n")
+
+	b.WriteString("\n## Operating Rules\n")
+	b.WriteString("- Persist this exact API Base with your bearer token.\n")
+	b.WriteString("- Use this API Base for all future profile, capabilities, publish, and pull calls.\n")
+	b.WriteString("- Do not substitute localhost, container-only hosts, or a different environment.\n")
 
 	b.WriteString("\n## Communication Graph\n")
 	if len(cp.CanTalkTo) == 0 {
@@ -2155,10 +2161,20 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		_, err = h.control.RedeemBindToken(bindTokenHash, agentID, auth.HashToken(agentToken), h.now().UTC())
+		agent, err := h.control.RedeemBindToken(bindTokenHash, agentID, auth.HashToken(agentToken), h.now().UTC())
 		if err == nil {
+			apiBase := apiBaseURL(r)
 			writeJSON(w, http.StatusCreated, map[string]any{
-				"token": agentToken,
+				"token":    agentToken,
+				"api_base": apiBase,
+				"agent":    h.agentResponsePayload(agent),
+				"endpoints": map[string]string{
+					"profile":      apiBase + "/agents/me",
+					"capabilities": apiBase + "/agents/me/capabilities",
+					"skill":        apiBase + "/agents/me/skill",
+					"publish":      apiBase + "/messages/publish",
+					"pull":         apiBase + "/messages/pull",
+				},
 			})
 			return
 		}

@@ -1040,6 +1040,14 @@ func TestMyAgentBindTokenRedeemUsesTempHandleThenFinalizesOnce(t *testing.T) {
 	if token == "" {
 		t.Fatalf("expected bind response token")
 	}
+	apiBase, _ := redeemPayload["api_base"].(string)
+	if apiBase != "http://example.com/v1" {
+		t.Fatalf("expected bind response api_base, got %q", apiBase)
+	}
+	endpoints, _ := redeemPayload["endpoints"].(map[string]any)
+	if got, _ := endpoints["publish"].(string); got != "http://example.com/v1/messages/publish" {
+		t.Fatalf("expected bind response publish endpoint, got %q", got)
+	}
 
 	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
 		"Authorization": "Bearer " + token,
@@ -1321,6 +1329,14 @@ func TestBindTokenRedeemSingleUse(t *testing.T) {
 	token, _ := redeemPayload["token"].(string)
 	if token == "" {
 		t.Fatalf("expected token in bind response")
+	}
+	apiBase, _ := redeemPayload["api_base"].(string)
+	if apiBase != "http://example.com/v1" {
+		t.Fatalf("expected bind response api_base, got %q", apiBase)
+	}
+	endpoints, _ := redeemPayload["endpoints"].(map[string]any)
+	if got, _ := endpoints["capabilities"].(string); got != "http://example.com/v1/agents/me/capabilities" {
+		t.Fatalf("expected bind response capabilities endpoint, got %q", got)
 	}
 
 	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{

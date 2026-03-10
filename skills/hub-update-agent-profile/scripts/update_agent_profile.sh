@@ -8,12 +8,14 @@ Usage:
   update_agent_profile.sh <base_url> <agent_token> <metadata_json_or_@file>
 
 Arguments:
-  base_url                 Optional Hub/Statocyst base URL. Example: http://statocyst:8080
+  base_url                 Optional Hub base URL or api_base. Example: https://hub.example or https://hub.example/v1
   agent_token              Agent bearer token
   metadata_json_or_@file   JSON object string or @path/to/metadata.json
 
 Environment:
-  STATOCYST_BASE_URL       Default base URL when omitted. Fallback: http://statocyst:8080
+  HUB_API_BASE      Preferred canonical API base from bind/capabilities
+  HUB_BASE_URL      Hub origin used when HUB_API_BASE is not set
+  HUB_SESSION_FILE  Optional bind session JSON used to recover api_base when URL is omitted
 USAGE
 }
 
@@ -29,19 +31,65 @@ for cmd in curl node; do
   fi
 done
 
-default_base_url="${STATOCYST_BASE_URL:-http://statocyst:8080}"
+read_session_api_base() {
+  local session_file="${HUB_SESSION_FILE:-}"
+  if [[ -z "$session_file" || ! -f "$session_file" ]]; then
+    return 0
+  fi
+  node -e '
+const fs = require("fs");
+try {
+  const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const value = String(payload.api_base || "");
+  if (value) process.stdout.write(value);
+} catch (_) {}
+' "$session_file"
+}
+
+normalize_api_base() {
+  local value="${1%/}"
+  if [[ -z "$value" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  if [[ "$value" == */v1 ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  printf '%s/v1' "$value"
+}
+
+derive_hub_base_url() {
+  local value="${1%/}"
+  if [[ "$value" == */v1 ]]; then
+    printf '%s' "${value%/v1}"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+
+session_api_base="$(read_session_api_base)"
+default_api_input="${HUB_API_BASE:-${HUB_BASE_URL:-$session_api_base}}"
+
 if [[ "$1" =~ ^https?:// ]]; then
   if [[ $# -ne 3 ]]; then
     usage >&2
     exit 1
   fi
-  base_url="${1%/}"
+  api_base="$(normalize_api_base "$1")"
   agent_token="$2"
   metadata_input="$3"
 else
-  base_url="${default_base_url%/}"
+  api_base="$(normalize_api_base "$default_api_input")"
   agent_token="$1"
   metadata_input="$2"
+fi
+
+hub_base_url="$(derive_hub_base_url "$api_base")"
+
+if [[ -z "$api_base" ]]; then
+  echo "ERROR: base URL is required. Pass <base_url>, set HUB_API_BASE/HUB_BASE_URL, or provide HUB_SESSION_FILE." >&2
+  exit 1
 fi
 
 metadata_err="$(mktemp)"
@@ -115,7 +163,7 @@ console.log(JSON.stringify({ metadata }));
 ' "$metadata_json")"
 
 http_status="$(curl -sS -o "$tmp_response" -w "%{http_code}" \
-  -X PATCH "$base_url/v1/agents/me/metadata" \
+  -X PATCH "$api_base/agents/me/metadata" \
   -H "Authorization: Bearer $agent_token" \
   -H "Content-Type: application/json" \
   --data "$payload")"
@@ -159,11 +207,12 @@ if (!agent.agent_uuid) {
 }
 console.log(JSON.stringify({
   status: "ok",
-  base_url: process.argv[2],
+  hub_base_url: process.argv[2],
+  api_base: process.argv[3],
   agent_uuid: String(agent.agent_uuid || ""),
   agent_id: String(agent.agent_id || ""),
   org_id: String(agent.org_id || ""),
   metadata: agent.metadata || {},
   agent,
 }));
-' "$tmp_response" "$base_url"
+' "$tmp_response" "$hub_base_url" "$api_base"

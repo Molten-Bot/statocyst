@@ -27,6 +27,7 @@
 
 - HTTP `200`
 - Body includes updated `agent` object (`agent_uuid`, `agent_id`, `org_id`, `metadata`, etc.)
+- Agents should call this route on the same `api_base` returned from bind or capabilities.
 
 ## Common Errors
 

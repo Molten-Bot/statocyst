@@ -7,13 +7,14 @@ description: Pull current Hub/Statocyst bound-agent peers for an agent token and
 
 ## Workflow
 
-1. Pull bound peers for an agent token via `GET /v1/agents/me/capabilities`.
-2. For round-trip checks, load capabilities for both tokens and resolve token identities.
-3. Verify both agents are currently bound to each other (`can_talk_to` contains peer UUID both directions).
-4. Publish from A to B and verify B pulls expected payload/source.
-5. Publish from B to A and verify A pulls expected payload/source.
-6. Emit pass/fail summary with message IDs, resolved UUIDs, and elapsed milliseconds.
-7. Stop on first timeout, mismatch, dropped publish, missing bind, or non-2xx status.
+1. Resolve the canonical Hub deployment from `base_url`, `HUB_API_BASE`, `HUB_BASE_URL`, or `HUB_SESSION_FILE`.
+2. Pull bound peers for an agent token via `GET /v1/agents/me/capabilities`.
+3. For round-trip checks, load capabilities for both tokens and resolve token identities.
+4. Verify both agents are currently bound to each other (`can_talk_to` contains peer UUID both directions).
+5. Publish from A to B and verify B pulls expected payload/source.
+6. Publish from B to A and verify A pulls expected payload/source.
+7. Emit pass/fail summary with message IDs, resolved UUIDs, and elapsed milliseconds.
+8. Stop on first timeout, mismatch, dropped publish, missing bind, or non-2xx status.
 
 ## Required Inputs
 
@@ -47,19 +48,19 @@ For round-trip verification (long form; explicit UUIDs + token identity checks):
 Discover agents currently bound to a token:
 
 ```bash
-/mnt/skills/openclaw-exchange-messages/scripts/list_bound_agents.sh <base_url> <agent_token>
+HUB_SESSION_FILE=/tmp/agent.token.json /mnt/skills/openclaw-exchange-messages/scripts/list_bound_agents.sh <agent_token>
 ```
 
 Round-trip (preferred short form; UUIDs discovered from token capabilities):
 
 ```bash
-/mnt/skills/openclaw-exchange-messages/scripts/exchange_roundtrip.sh <base_url> <agent_a_token> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
+/mnt/skills/openclaw-exchange-messages/scripts/exchange_roundtrip.sh <agent_a_token> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
 ```
 
 Round-trip (explicit UUID checks):
 
 ```bash
-/mnt/skills/openclaw-exchange-messages/scripts/exchange_roundtrip.sh <base_url> <agent_a_uuid> <agent_a_token> <agent_b_uuid> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
+/mnt/skills/openclaw-exchange-messages/scripts/exchange_roundtrip.sh <agent_a_uuid> <agent_a_token> <agent_b_uuid> <agent_b_token> <msg_a_to_b> <msg_b_to_a> [pull_timeout_ms]
 ```
 
 Use strict values. Do not infer missing tokens. In long form, UUIDs must match token identities.
