@@ -34,25 +34,40 @@ func normalizeCanonicalBaseURL(raw string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-func buildCanonicalEntityURI(baseURL, collection, handle string) string {
+func buildCanonicalEntityPathURI(baseURL, path string) string {
 	baseURL = normalizeCanonicalBaseURL(baseURL)
-	handle = strings.TrimSpace(handle)
-	if baseURL == "" || handle == "" {
+	path = strings.TrimSpace(path)
+	if baseURL == "" || path == "" {
 		return ""
 	}
-	return baseURL + "/" + collection + "/" + url.PathEscape(handle)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return baseURL + path
+}
+
+func escapePathSegments(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parts := strings.Split(value, "/")
+	for index, part := range parts {
+		parts[index] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 func (h *Handler) organizationURI(org model.Organization) string {
-	return buildCanonicalEntityURI(h.canonicalBaseURL, "orgs", org.Handle)
+	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/o/"+url.PathEscape(strings.TrimSpace(org.Handle)))
 }
 
 func (h *Handler) humanURI(human model.Human) string {
-	return buildCanonicalEntityURI(h.canonicalBaseURL, "humans", human.Handle)
+	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/h/"+url.PathEscape(strings.TrimSpace(human.Handle)))
 }
 
 func (h *Handler) agentURI(agent model.Agent) string {
-	return buildCanonicalEntityURI(h.canonicalBaseURL, "agents", agent.Handle)
+	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/a/"+escapePathSegments(agent.AgentID))
 }
 
 func (h *Handler) organizationPayload(org model.Organization) map[string]any {
@@ -116,7 +131,7 @@ func (h *Handler) orgHumanViewPayload(view model.OrgHumanView) map[string]any {
 	return map[string]any{
 		"human_id":      view.HumanID,
 		"handle":        view.Handle,
-		"uri":           buildCanonicalEntityURI(h.canonicalBaseURL, "humans", view.Handle),
+		"uri":           buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/h/"+url.PathEscape(strings.TrimSpace(view.Handle))),
 		"email":         view.Email,
 		"role":          view.Role,
 		"status":        view.Status,

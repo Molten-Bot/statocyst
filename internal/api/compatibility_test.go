@@ -158,7 +158,7 @@ func TestAPIModelContract_OnboardingAndOrganizationShape(t *testing.T) {
 	if humanObj["handle"] != "alice" {
 		t.Fatalf("expected human.handle=alice, got %v", humanObj["handle"])
 	}
-	if gotURI, _ := humanObj["uri"].(string); gotURI != "https://hub.molten.bot/humans/alice" {
+	if gotURI, _ := humanObj["uri"].(string); gotURI != "https://hub.molten.bot/hive/h/alice" {
 		t.Fatalf("expected human.uri for alice, got %q payload=%v", gotURI, humanObj)
 	}
 	if confirmedAt, _ := humanObj["handle_confirmed_at"].(string); strings.TrimSpace(confirmedAt) == "" {
@@ -187,7 +187,7 @@ func TestAPIModelContract_OnboardingAndOrganizationShape(t *testing.T) {
 	if orgObj["handle"] != "alpha-team" {
 		t.Fatalf("expected organization.handle=alpha-team, got %v", orgObj["handle"])
 	}
-	if gotURI, _ := orgObj["uri"].(string); gotURI != "https://hub.molten.bot/orgs/alpha-team" {
+	if gotURI, _ := orgObj["uri"].(string); gotURI != "https://hub.molten.bot/hive/o/alpha-team" {
 		t.Fatalf("expected organization.uri for alpha-team, got %q payload=%v", gotURI, orgObj)
 	}
 	if orgObj["display_name"] != "Alpha Team" {
@@ -213,7 +213,7 @@ func TestAPIModelContract_OnboardingAndOrganizationShape(t *testing.T) {
 			if orgRow["handle"] != "alpha-team" || orgRow["display_name"] != "Alpha Team" {
 				t.Fatalf("unexpected org row shape: %v", orgRow)
 			}
-			if gotURI, _ := orgRow["uri"].(string); gotURI != "https://hub.molten.bot/orgs/alpha-team" {
+			if gotURI, _ := orgRow["uri"].(string); gotURI != "https://hub.molten.bot/hive/o/alpha-team" {
 				t.Fatalf("expected membership org.uri for alpha-team, got %q payload=%v", gotURI, orgRow)
 			}
 			break

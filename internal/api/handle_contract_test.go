@@ -136,7 +136,7 @@ func TestCanonicalAgentURIAndUUIDLifecycleRoutes(t *testing.T) {
 	}
 	mePayload := decodeJSONMap(t, meResp.Body.Bytes())
 	agentObj, _ := mePayload["agent"].(map[string]any)
-	if gotURI, _ := agentObj["uri"].(string); gotURI != "https://hub.molten.bot/agents/alpha-bot" {
+	if gotURI, _ := agentObj["uri"].(string); gotURI != "https://hub.molten.bot/hive/a/uri-org/alice/alpha-bot" {
 		t.Fatalf("expected canonical agent uri, got %q payload=%v", gotURI, agentObj)
 	}
 

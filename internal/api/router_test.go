@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -609,8 +610,9 @@ func bindAgentWithUUIDForOwner(t *testing.T, router http.Handler, humanID, email
 	if agentUUID == "" {
 		t.Fatalf("agent me missing agent_uuid")
 	}
-	handle, _ := agent["handle"].(string)
-	if gotURI, _ := agent["uri"].(string); gotURI != "https://hub.molten.bot/agents/"+handle {
+	gotAgentID, _ := agent["agent_id"].(string)
+	expectedURI := "https://hub.molten.bot/hive/a/" + strings.ReplaceAll(url.PathEscape(gotAgentID), "%2F", "/")
+	if gotURI, _ := agent["uri"].(string); gotURI != expectedURI {
 		t.Fatalf("expected canonical agent uri, got %q payload=%v", gotURI, agent)
 	}
 	return token, agentUUID
