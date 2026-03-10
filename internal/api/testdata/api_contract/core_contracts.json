@@ -88,9 +88,10 @@
         "payload": "fixture-ping"
       },
       "expected_status": 202,
-      "required_json_paths": ["message_id", "status"],
+      "required_json_paths": ["message_id", "status", "accepted_at", "idempotent_replay"],
       "expected_json_values": {
-        "status": "queued"
+        "status": "queued",
+        "idempotent_replay": false
       }
     },
     {

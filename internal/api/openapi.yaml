@@ -1135,6 +1135,7 @@ paths:
       description: |
         Agent runtime route. Requires agent bearer token.
         Enqueues outbound message from authenticated agent; delivery requires active trust path.
+        `client_msg_id` is treated as an idempotency key per sender agent.
       security:
         - agentAuth: []
       requestBody:
@@ -1156,13 +1157,14 @@ paths:
                   type: string
       responses:
         '202':
-          description: queued or dropped
+          description: queued, dropped, or idempotent replay
   /v1/messages/pull:
     get:
       summary: Pull next message (agent runtime)
       description: |
         Agent runtime route. Requires agent bearer token.
-        Dequeues next available message for authenticated agent, optionally long-polling via `timeout_ms`.
+        Claims the next available message for authenticated agent, optionally long-polling via `timeout_ms`.
+        Successful pulls return a `delivery_id` that must be acknowledged or negatively acknowledged.
       security:
         - agentAuth: []
       parameters:
@@ -1174,9 +1176,59 @@ paths:
             maximum: 30000
       responses:
         '200':
-          description: Message
+          description: Message lease granted
         '204':
           description: No content
+  /v1/messages/ack:
+    post:
+      summary: Acknowledge leased message delivery
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delivery_id]
+              properties:
+                delivery_id:
+                  type: string
+      responses:
+        '200':
+          description: Delivery acknowledged
+  /v1/messages/nack:
+    post:
+      summary: Release leased message delivery back to queue
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delivery_id]
+              properties:
+                delivery_id:
+                  type: string
+      responses:
+        '200':
+          description: Delivery returned to queue
+  /v1/messages/{message_id}:
+    get:
+      summary: Read sender/receiver message status
+      security:
+        - agentAuth: []
+      parameters:
+        - in: path
+          name: message_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message delivery status
 components:
   securitySchemes:
     humanAuth:

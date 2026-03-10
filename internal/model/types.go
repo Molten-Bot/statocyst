@@ -16,6 +16,11 @@ const (
 
 	OrgAccessScopeListHumans = "list_humans"
 	OrgAccessScopeListAgents = "list_agents"
+
+	MessageDeliveryQueued = "queued"
+	MessageDeliveryLeased = "leased"
+	MessageDeliveryAcked  = "acked"
+	MessageDeliveryFailed = "failed"
 )
 
 type Organization struct {
@@ -115,6 +120,38 @@ type Message struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type MessageRecord struct {
+	Message           Message    `json:"message"`
+	Status            string     `json:"status"`
+	AcceptedAt        time.Time  `json:"accepted_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	LastLeasedAt      *time.Time `json:"last_leased_at,omitempty"`
+	LeaseExpiresAt    *time.Time `json:"lease_expires_at,omitempty"`
+	AckedAt           *time.Time `json:"acked_at,omitempty"`
+	LastDeliveryID    *string    `json:"last_delivery_id,omitempty"`
+	DeliveryAttempts  int        `json:"delivery_attempts"`
+	RequeueCount      int        `json:"requeue_count"`
+	IdempotentReplays int        `json:"idempotent_replays"`
+	LastFailureReason string     `json:"last_failure_reason,omitempty"`
+	LastFailureAt     *time.Time `json:"last_failure_at,omitempty"`
+}
+
+type MessageDelivery struct {
+	DeliveryID     string    `json:"delivery_id"`
+	MessageID      string    `json:"message_id"`
+	AgentUUID      string    `json:"agent_uuid"`
+	Attempt        int       `json:"attempt"`
+	LeasedAt       time.Time `json:"leased_at"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
+}
+
+type QueueMetrics struct {
+	AvailableMessages   int        `json:"available_messages"`
+	LeasedMessages      int        `json:"leased_messages"`
+	OldestQueuedAt      *time.Time `json:"oldest_queued_at,omitempty"`
+	OldestLeaseExpiryAt *time.Time `json:"oldest_lease_expires_at,omitempty"`
+}
+
 type OrgHumanView struct {
 	HumanID      string         `json:"human_id"`
 	Handle       string         `json:"handle"`
@@ -126,16 +163,24 @@ type OrgHumanView struct {
 }
 
 type OrgStats struct {
-	OrgID           string          `json:"org_id"`
-	QueuedMessages  int64           `json:"queued_messages"`
-	DroppedMessages int64           `json:"dropped_messages"`
-	Last7Days       []OrgDailyStats `json:"last_7_days"`
+	OrgID              string          `json:"org_id"`
+	QueuedMessages     int64           `json:"queued_messages"`
+	DroppedMessages    int64           `json:"dropped_messages"`
+	AckedMessages      int64           `json:"acked_messages"`
+	ExpiredMessages    int64           `json:"expired_messages"`
+	RedeliveredMessages int64          `json:"redelivered_messages"`
+	DuplicateMessages  int64           `json:"duplicate_messages"`
+	Last7Days          []OrgDailyStats `json:"last_7_days"`
 }
 
 type OrgDailyStats struct {
-	Date            string `json:"date"`
-	QueuedMessages  int64  `json:"queued_messages"`
-	DroppedMessages int64  `json:"dropped_messages"`
+	Date                string `json:"date"`
+	QueuedMessages      int64  `json:"queued_messages"`
+	DroppedMessages     int64  `json:"dropped_messages"`
+	AckedMessages       int64  `json:"acked_messages"`
+	ExpiredMessages     int64  `json:"expired_messages"`
+	RedeliveredMessages int64  `json:"redelivered_messages"`
+	DuplicateMessages   int64  `json:"duplicate_messages"`
 }
 
 type AuditEvent struct {

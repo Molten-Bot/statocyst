@@ -46,6 +46,9 @@ var (
 	ErrBindExpired          = errors.New("bind token expired")
 	ErrBindUsed             = errors.New("bind token already used")
 	ErrAgentLimitExceeded   = errors.New("agent limit exceeded")
+	ErrMessageNotFound      = errors.New("message not found")
+	ErrMessageDeliveryNotFound = errors.New("message delivery not found")
+	ErrMessageDeliveryMismatch = errors.New("message delivery does not belong to agent")
 )
 
 type MemoryStore struct {
@@ -75,6 +78,9 @@ type MemoryStore struct {
 	// humanOwnedAgentNameIdx enforces unique human-owned agent names within org+human scope.
 	humanOwnedAgentNameIdx map[string]string
 	queues                 map[string][]model.Message
+	messageRecords         map[string]model.MessageRecord
+	messageByClientMsg     map[string]string
+	messageDeliveries      map[string]model.MessageDelivery
 
 	binds      map[string]model.BindToken
 	bindByHash map[string]string
@@ -113,6 +119,9 @@ func NewMemoryStore() *MemoryStore {
 		orgOwnedAgentNameIdx:   make(map[string]string),
 		humanOwnedAgentNameIdx: make(map[string]string),
 		queues:                 make(map[string][]model.Message),
+		messageRecords:         make(map[string]model.MessageRecord),
+		messageByClientMsg:     make(map[string]string),
+		messageDeliveries:      make(map[string]model.MessageDelivery),
 		binds:                  make(map[string]model.BindToken),
 		bindByHash:             make(map[string]string),
 		orgTrusts:              make(map[string]model.TrustEdge),
@@ -1853,24 +1862,226 @@ func (s *MemoryStore) canPublishLocked(sender, receiver model.Agent) bool {
 	return true
 }
 
+func (s *MemoryStore) CreateOrGetMessageRecord(message model.Message, acceptedAt time.Time) (model.MessageRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if strings.TrimSpace(message.MessageID) == "" {
+		return model.MessageRecord{}, false, ErrMessageNotFound
+	}
+	if message.ClientMsgID != nil {
+		if existingID, ok := s.messageByClientMsg[messageClientKey(message.FromAgentUUID, *message.ClientMsgID)]; ok {
+			record, ok := s.messageRecords[existingID]
+			if !ok {
+				delete(s.messageByClientMsg, messageClientKey(message.FromAgentUUID, *message.ClientMsgID))
+			} else {
+				record.IdempotentReplays++
+				record.UpdatedAt = acceptedAt
+				s.messageRecords[existingID] = record
+				s.incrementDuplicateLocked(record.Message.SenderOrgID, acceptedAt)
+				return record, true, nil
+			}
+		}
+	}
+
+	record := model.MessageRecord{
+		Message:    message,
+		Status:     model.MessageDeliveryQueued,
+		AcceptedAt: acceptedAt,
+		UpdatedAt:  acceptedAt,
+	}
+	s.messageRecords[message.MessageID] = record
+	if message.ClientMsgID != nil {
+		s.messageByClientMsg[messageClientKey(message.FromAgentUUID, *message.ClientMsgID)] = message.MessageID
+	}
+	return record, false, nil
+}
+
+func (s *MemoryStore) AbortMessageRecord(messageID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, ok := s.messageRecords[messageID]
+	if !ok {
+		return ErrMessageNotFound
+	}
+	delete(s.messageRecords, messageID)
+	if record.Message.ClientMsgID != nil {
+		delete(s.messageByClientMsg, messageClientKey(record.Message.FromAgentUUID, *record.Message.ClientMsgID))
+	}
+	return nil
+}
+
+func (s *MemoryStore) GetMessageRecord(messageID string) (model.MessageRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	record, ok := s.messageRecords[messageID]
+	if !ok {
+		return model.MessageRecord{}, ErrMessageNotFound
+	}
+	return record, nil
+}
+
+func (s *MemoryStore) LeaseMessage(messageID, receiverAgentUUID, deliveryID string, leasedAt, leaseExpiresAt time.Time) (model.MessageDelivery, model.MessageRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, ok := s.messageRecords[messageID]
+	if !ok {
+		return model.MessageDelivery{}, model.MessageRecord{}, ErrMessageNotFound
+	}
+	if record.Message.ToAgentUUID != receiverAgentUUID {
+		return model.MessageDelivery{}, model.MessageRecord{}, ErrMessageDeliveryMismatch
+	}
+	record.Status = model.MessageDeliveryLeased
+	record.UpdatedAt = leasedAt
+	record.LastLeasedAt = timePtr(leasedAt)
+	record.LeaseExpiresAt = timePtr(leaseExpiresAt)
+	record.DeliveryAttempts++
+	record.LastDeliveryID = stringPtr(deliveryID)
+	if record.DeliveryAttempts > 1 {
+		s.incrementRedeliveredLocked(record.Message.SenderOrgID, leasedAt)
+	}
+	delivery := model.MessageDelivery{
+		DeliveryID:     deliveryID,
+		MessageID:      record.Message.MessageID,
+		AgentUUID:      receiverAgentUUID,
+		Attempt:        record.DeliveryAttempts,
+		LeasedAt:       leasedAt,
+		LeaseExpiresAt: leaseExpiresAt,
+	}
+	s.messageRecords[messageID] = record
+	s.messageDeliveries[deliveryID] = delivery
+	return delivery, record, nil
+}
+
+func (s *MemoryStore) AckMessageDelivery(receiverAgentUUID, deliveryID string, ackedAt time.Time) (model.MessageRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delivery, ok := s.messageDeliveries[deliveryID]
+	if !ok {
+		return model.MessageRecord{}, ErrMessageDeliveryNotFound
+	}
+	if delivery.AgentUUID != receiverAgentUUID {
+		return model.MessageRecord{}, ErrMessageDeliveryMismatch
+	}
+	record, ok := s.messageRecords[delivery.MessageID]
+	if !ok {
+		delete(s.messageDeliveries, deliveryID)
+		return model.MessageRecord{}, ErrMessageNotFound
+	}
+	record.Status = model.MessageDeliveryAcked
+	record.UpdatedAt = ackedAt
+	record.AckedAt = timePtr(ackedAt)
+	record.LeaseExpiresAt = nil
+	record.LastFailureAt = nil
+	record.LastFailureReason = ""
+	delete(s.messageDeliveries, deliveryID)
+	s.messageRecords[delivery.MessageID] = record
+	s.incrementAckedLocked(record.Message.SenderOrgID, ackedAt)
+	return record, nil
+}
+
+func (s *MemoryStore) ReleaseMessageDelivery(receiverAgentUUID, deliveryID string, now time.Time, reason string) (model.Message, model.MessageRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delivery, ok := s.messageDeliveries[deliveryID]
+	if !ok {
+		return model.Message{}, model.MessageRecord{}, ErrMessageDeliveryNotFound
+	}
+	if delivery.AgentUUID != receiverAgentUUID {
+		return model.Message{}, model.MessageRecord{}, ErrMessageDeliveryMismatch
+	}
+	record, ok := s.messageRecords[delivery.MessageID]
+	if !ok {
+		delete(s.messageDeliveries, deliveryID)
+		return model.Message{}, model.MessageRecord{}, ErrMessageNotFound
+	}
+	delete(s.messageDeliveries, deliveryID)
+	record.Status = model.MessageDeliveryQueued
+	record.UpdatedAt = now
+	record.LeaseExpiresAt = nil
+	record.RequeueCount++
+	record.LastFailureReason = strings.TrimSpace(reason)
+	record.LastFailureAt = timePtr(now)
+	s.messageRecords[delivery.MessageID] = record
+	return record.Message, record, nil
+}
+
+func (s *MemoryStore) ExpireMessageLeases(now time.Time) ([]model.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.messageDeliveries) == 0 {
+		return nil, nil
+	}
+
+	deliveryIDs := make([]string, 0, len(s.messageDeliveries))
+	for deliveryID := range s.messageDeliveries {
+		deliveryIDs = append(deliveryIDs, deliveryID)
+	}
+	sort.Strings(deliveryIDs)
+
+	var out []model.Message
+	for _, deliveryID := range deliveryIDs {
+		delivery := s.messageDeliveries[deliveryID]
+		if delivery.LeaseExpiresAt.After(now) {
+			continue
+		}
+		record, ok := s.messageRecords[delivery.MessageID]
+		if !ok {
+			delete(s.messageDeliveries, deliveryID)
+			continue
+		}
+		delete(s.messageDeliveries, deliveryID)
+		record.Status = model.MessageDeliveryQueued
+		record.UpdatedAt = now
+		record.LeaseExpiresAt = nil
+		record.RequeueCount++
+		record.LastFailureReason = "lease_expired"
+		record.LastFailureAt = timePtr(now)
+		s.messageRecords[delivery.MessageID] = record
+		s.incrementExpiredLocked(record.Message.SenderOrgID, now)
+		out = append(out, record.Message)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) GetQueueMetrics() model.QueueMetrics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	metrics := model.QueueMetrics{}
+	for _, queue := range s.queues {
+		metrics.AvailableMessages += len(queue)
+		for _, message := range queue {
+			if metrics.OldestQueuedAt == nil || message.CreatedAt.Before(*metrics.OldestQueuedAt) {
+				metrics.OldestQueuedAt = timePtr(message.CreatedAt)
+			}
+		}
+	}
+	metrics.LeasedMessages = len(s.messageDeliveries)
+	for _, delivery := range s.messageDeliveries {
+		if metrics.OldestLeaseExpiryAt == nil || delivery.LeaseExpiresAt.Before(*metrics.OldestLeaseExpiryAt) {
+			metrics.OldestLeaseExpiryAt = timePtr(delivery.LeaseExpiresAt)
+		}
+	}
+	return metrics
+}
+
 func (s *MemoryStore) RecordMessageQueued(orgID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now().UTC()
-	stats := s.ensureOrgStatsLocked(orgID)
-	stats.QueuedMessages++
-	s.statsByOrg[orgID] = stats
-	s.incrementDailyLocked(orgID, now, 1, 0)
+	s.incrementQueuedLocked(orgID, time.Now().UTC())
 }
 
 func (s *MemoryStore) RecordMessageDropped(orgID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now().UTC()
-	stats := s.ensureOrgStatsLocked(orgID)
-	stats.DroppedMessages++
-	s.statsByOrg[orgID] = stats
-	s.incrementDailyLocked(orgID, now, 0, 1)
+	s.incrementDroppedLocked(orgID, time.Now().UTC())
 }
 
 func (s *MemoryStore) Enqueue(_ context.Context, message model.Message) error {
@@ -2228,7 +2439,49 @@ func (s *MemoryStore) ensureOrgStatsLocked(orgID string) model.OrgStats {
 	return stats
 }
 
-func (s *MemoryStore) incrementDailyLocked(orgID string, now time.Time, queuedDelta, droppedDelta int64) {
+func (s *MemoryStore) incrementQueuedLocked(orgID string, now time.Time) {
+	stats := s.ensureOrgStatsLocked(orgID)
+	stats.QueuedMessages++
+	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 1, 0, 0, 0, 0, 0)
+}
+
+func (s *MemoryStore) incrementDroppedLocked(orgID string, now time.Time) {
+	stats := s.ensureOrgStatsLocked(orgID)
+	stats.DroppedMessages++
+	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 0, 1, 0, 0, 0, 0)
+}
+
+func (s *MemoryStore) incrementAckedLocked(orgID string, now time.Time) {
+	stats := s.ensureOrgStatsLocked(orgID)
+	stats.AckedMessages++
+	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 0, 0, 1, 0, 0, 0)
+}
+
+func (s *MemoryStore) incrementExpiredLocked(orgID string, now time.Time) {
+	stats := s.ensureOrgStatsLocked(orgID)
+	stats.ExpiredMessages++
+	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 0, 0, 0, 1, 0, 0)
+}
+
+func (s *MemoryStore) incrementRedeliveredLocked(orgID string, now time.Time) {
+	stats := s.ensureOrgStatsLocked(orgID)
+	stats.RedeliveredMessages++
+	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 0, 0, 0, 0, 1, 0)
+}
+
+func (s *MemoryStore) incrementDuplicateLocked(orgID string, now time.Time) {
+	stats := s.ensureOrgStatsLocked(orgID)
+	stats.DuplicateMessages++
+	s.statsByOrg[orgID] = stats
+	s.incrementDailyLocked(orgID, now, 0, 0, 0, 0, 0, 1)
+}
+
+func (s *MemoryStore) incrementDailyLocked(orgID string, now time.Time, queuedDelta, droppedDelta, ackedDelta, expiredDelta, redeliveredDelta, duplicateDelta int64) {
 	dayKey := now.Format("2006-01-02")
 	perOrg, ok := s.statsDaily[orgID]
 	if !ok {
@@ -2239,6 +2492,10 @@ func (s *MemoryStore) incrementDailyLocked(orgID string, now time.Time, queuedDe
 	day.Date = dayKey
 	day.QueuedMessages += queuedDelta
 	day.DroppedMessages += droppedDelta
+	day.AckedMessages += ackedDelta
+	day.ExpiredMessages += expiredDelta
+	day.RedeliveredMessages += redeliveredDelta
+	day.DuplicateMessages += duplicateDelta
 	perOrg[dayKey] = day
 }
 
@@ -2252,14 +2509,32 @@ func (s *MemoryStore) last7DaysLocked(orgID string, now time.Time) []model.OrgDa
 		row, ok := perOrg[dayKey]
 		if !ok {
 			row = model.OrgDailyStats{
-				Date:            dayKey,
-				QueuedMessages:  0,
-				DroppedMessages: 0,
+				Date:                dayKey,
+				QueuedMessages:      0,
+				DroppedMessages:     0,
+				AckedMessages:       0,
+				ExpiredMessages:     0,
+				RedeliveredMessages: 0,
+				DuplicateMessages:   0,
 			}
 		}
 		out = append(out, row)
 	}
 	return out
+}
+
+func messageClientKey(senderAgentUUID, clientMsgID string) string {
+	return strings.TrimSpace(senderAgentUUID) + "\x00" + strings.TrimSpace(clientMsgID)
+}
+
+func timePtr(value time.Time) *time.Time {
+	out := value
+	return &out
+}
+
+func stringPtr(value string) *string {
+	out := value
+	return &out
 }
 
 func deriveInviteStatus(invite model.Invite, now time.Time) model.Invite {

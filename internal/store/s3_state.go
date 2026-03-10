@@ -74,6 +74,31 @@ type s3PersistQueueMessage struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type s3PersistMessageRecord struct {
+	Message           s3PersistQueueMessage `json:"message"`
+	Status            string                `json:"status"`
+	AcceptedAt        time.Time             `json:"accepted_at"`
+	UpdatedAt         time.Time             `json:"updated_at"`
+	LastLeasedAt      *time.Time            `json:"last_leased_at,omitempty"`
+	LeaseExpiresAt    *time.Time            `json:"lease_expires_at,omitempty"`
+	AckedAt           *time.Time            `json:"acked_at,omitempty"`
+	LastDeliveryID    *string               `json:"last_delivery_id,omitempty"`
+	DeliveryAttempts  int                   `json:"delivery_attempts"`
+	RequeueCount      int                   `json:"requeue_count"`
+	IdempotentReplays int                   `json:"idempotent_replays"`
+	LastFailureReason string                `json:"last_failure_reason,omitempty"`
+	LastFailureAt     *time.Time            `json:"last_failure_at,omitempty"`
+}
+
+type s3PersistMessageDelivery struct {
+	DeliveryID     string    `json:"delivery_id"`
+	MessageID      string    `json:"message_id"`
+	AgentUUID      string    `json:"agent_uuid"`
+	Attempt        int       `json:"attempt"`
+	LeasedAt       time.Time `json:"leased_at"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
+}
+
 type s3PersistInvite struct {
 	InviteID     string     `json:"invite_id"`
 	OrgID        string     `json:"org_id"`
@@ -719,6 +744,8 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	pAudit := s.prefixed("state/audit")
 	pPersonalOrgs := s.prefixed("state/personal_orgs")
 	pQueues := s.prefixed("state/queues")
+	pMessages := s.prefixed("state/messages")
+	pMessageLeases := s.prefixed("state/message_leases")
 
 	for id, human := range s.MemoryStore.humans {
 		add(pHumans, s.objectKey(pHumans, escapeKeySegment(id)+".json"), human)
@@ -776,6 +803,12 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 			)
 		}
 	}
+	for messageID, record := range s.MemoryStore.messageRecords {
+		add(pMessages, s.objectKey(pMessages, escapeKeySegment(messageID)+".json"), persistMessageRecord(record))
+	}
+	for deliveryID, delivery := range s.MemoryStore.messageDeliveries {
+		add(pMessageLeases, s.objectKey(pMessageLeases, escapeKeySegment(deliveryID)+".json"), persistMessageDelivery(delivery))
+	}
 
 	pIdxHumanAuth := s.prefixed("idx/humans/by_auth")
 	pIdxHumanHandle := s.prefixed("idx/humans/by_handle")
@@ -787,6 +820,7 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	pIdxAgentURI := s.prefixed("idx/agents/by_uri")
 	pIdxOrgTrustPair := s.prefixed("idx/org_trusts/by_pair")
 	pIdxAgentTrustPair := s.prefixed("idx/agent_trusts/by_pair")
+	pIdxMessageClient := s.prefixed("idx/messages/by_client")
 
 	for key, humanID := range s.MemoryStore.humanByAuthKey {
 		parts := strings.SplitN(key, "\x00", 2)
@@ -828,6 +862,13 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 		left, right := decodePairIndexKey(key)
 		add(pIdxAgentTrustPair, s.objectKey(pIdxAgentTrustPair, escapeKeySegment(left)+"_"+escapeKeySegment(right)+".json"), s3IndexValue{Value: edgeID})
 	}
+	for key, messageID := range s.MemoryStore.messageByClientMsg {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		add(pIdxMessageClient, s.objectKey(pIdxMessageClient, escapeKeySegment(parts[0]), escapeKeySegment(parts[1])+".json"), s3IndexValue{Value: messageID})
+	}
 
 	return desired
 }
@@ -848,6 +889,8 @@ func (s *s3StateStore) persistedPrefixes() []s3KeyDescriptor {
 		{Prefix: s.prefixed("state/audit")},
 		{Prefix: s.prefixed("state/personal_orgs")},
 		{Prefix: s.prefixed("state/queues")},
+		{Prefix: s.prefixed("state/messages")},
+		{Prefix: s.prefixed("state/message_leases")},
 		{Prefix: s.prefixed("idx/humans/by_auth")},
 		{Prefix: s.prefixed("idx/humans/by_handle")},
 		{Prefix: s.prefixed("idx/orgs/by_handle")},
@@ -858,6 +901,7 @@ func (s *s3StateStore) persistedPrefixes() []s3KeyDescriptor {
 		{Prefix: s.prefixed("idx/agents/by_uri")},
 		{Prefix: s.prefixed("idx/org_trusts/by_pair")},
 		{Prefix: s.prefixed("idx/agent_trusts/by_pair")},
+		{Prefix: s.prefixed("idx/messages/by_client")},
 	}
 }
 
@@ -878,6 +922,8 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	pAudit := s.prefixed("state/audit")
 	pPersonalOrgs := s.prefixed("state/personal_orgs")
 	pQueues := s.prefixed("state/queues")
+	pMessages := s.prefixed("state/messages")
+	pMessageLeases := s.prefixed("state/message_leases")
 
 	if err := s.loadTypedObjects(ctx, pHumans, func(key string, body []byte) error {
 		var value model.Human
@@ -1091,6 +1137,32 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.loadTypedObjects(ctx, pMessages, func(key string, body []byte) error {
+		var value s3PersistMessageRecord
+		if err := json.Unmarshal(body, &value); err != nil {
+			return err
+		}
+		record := value.toModel()
+		if strings.TrimSpace(record.Message.MessageID) != "" {
+			loaded.messageRecords[record.Message.MessageID] = record
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := s.loadTypedObjects(ctx, pMessageLeases, func(key string, body []byte) error {
+		var value s3PersistMessageDelivery
+		if err := json.Unmarshal(body, &value); err != nil {
+			return err
+		}
+		delivery := value.toModel()
+		if strings.TrimSpace(delivery.DeliveryID) != "" {
+			loaded.messageDeliveries[delivery.DeliveryID] = delivery
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	for agentUUID, queue := range loaded.queues {
 		sort.Slice(queue, func(i, j int) bool {
 			if queue[i].CreatedAt.Equal(queue[j].CreatedAt) {
@@ -1149,8 +1221,15 @@ func rebuildStateIndexesLocked(mem *MemoryStore) {
 	mem.bindByHash = make(map[string]string)
 	mem.orgTrustByPair = make(map[string]string)
 	mem.agentTrustByPair = make(map[string]string)
+	mem.messageByClientMsg = make(map[string]string)
 	if mem.queues == nil {
 		mem.queues = make(map[string][]model.Message)
+	}
+	if mem.messageRecords == nil {
+		mem.messageRecords = make(map[string]model.MessageRecord)
+	}
+	if mem.messageDeliveries == nil {
+		mem.messageDeliveries = make(map[string]model.MessageDelivery)
 	}
 
 	for orgID, org := range mem.orgs {
@@ -1203,6 +1282,12 @@ func rebuildStateIndexesLocked(mem *MemoryStore) {
 	for edgeID, edge := range mem.agentTrusts {
 		mem.agentTrustByPair[pairKey(edge.LeftID, edge.RightID)] = edgeID
 	}
+	for messageID, record := range mem.messageRecords {
+		if record.Message.ClientMsgID == nil {
+			continue
+		}
+		mem.messageByClientMsg[messageClientKey(record.Message.FromAgentUUID, *record.Message.ClientMsgID)] = messageID
+	}
 }
 
 func (s *s3StateStore) loadTypedObjects(ctx context.Context, prefix string, fn func(key string, body []byte) error) error {
@@ -1236,6 +1321,103 @@ func (s *s3StateStore) DeleteAgent(agentUUID, actorHumanID string, now time.Time
 		return err
 	}
 	return nil
+}
+
+func (s *s3StateStore) CreateOrGetMessageRecord(message model.Message, acceptedAt time.Time) (model.MessageRecord, bool, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	record, replay, err := s.MemoryStore.CreateOrGetMessageRecord(message, acceptedAt)
+	if err != nil {
+		return model.MessageRecord{}, false, err
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return model.MessageRecord{}, false, err
+	}
+	return record, replay, nil
+}
+
+func (s *s3StateStore) AbortMessageRecord(messageID string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	if err := s.MemoryStore.AbortMessageRecord(messageID); err != nil {
+		return err
+	}
+	return s.persistAll(context.Background())
+}
+
+func (s *s3StateStore) GetMessageRecord(messageID string) (model.MessageRecord, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.MemoryStore.GetMessageRecord(messageID)
+}
+
+func (s *s3StateStore) LeaseMessage(messageID, receiverAgentUUID, deliveryID string, leasedAt, leaseExpiresAt time.Time) (model.MessageDelivery, model.MessageRecord, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	delivery, record, err := s.MemoryStore.LeaseMessage(messageID, receiverAgentUUID, deliveryID, leasedAt, leaseExpiresAt)
+	if err != nil {
+		return model.MessageDelivery{}, model.MessageRecord{}, err
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return model.MessageDelivery{}, model.MessageRecord{}, err
+	}
+	return delivery, record, nil
+}
+
+func (s *s3StateStore) AckMessageDelivery(receiverAgentUUID, deliveryID string, ackedAt time.Time) (model.MessageRecord, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	record, err := s.MemoryStore.AckMessageDelivery(receiverAgentUUID, deliveryID, ackedAt)
+	if err != nil {
+		return model.MessageRecord{}, err
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return model.MessageRecord{}, err
+	}
+	return record, nil
+}
+
+func (s *s3StateStore) ReleaseMessageDelivery(receiverAgentUUID, deliveryID string, now time.Time, reason string) (model.Message, model.MessageRecord, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	message, record, err := s.MemoryStore.ReleaseMessageDelivery(receiverAgentUUID, deliveryID, now, reason)
+	if err != nil {
+		return model.Message{}, model.MessageRecord{}, err
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return model.Message{}, model.MessageRecord{}, err
+	}
+	return message, record, nil
+}
+
+func (s *s3StateStore) ExpireMessageLeases(now time.Time) ([]model.Message, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	messages, err := s.MemoryStore.ExpireMessageLeases(now)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return nil, nil
+	}
+	if err := s.persistAll(context.Background()); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+func (s *s3StateStore) GetQueueMetrics() model.QueueMetrics {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	return s.MemoryStore.GetQueueMetrics()
 }
 
 func (s *s3StateStore) Enqueue(ctx context.Context, message model.Message) error {
@@ -1499,6 +1681,64 @@ func persistQueueMessage(v model.Message) s3PersistQueueMessage {
 		Payload:       v.Payload,
 		ClientMsgID:   v.ClientMsgID,
 		CreatedAt:     v.CreatedAt,
+	}
+}
+
+func persistMessageRecord(v model.MessageRecord) s3PersistMessageRecord {
+	return s3PersistMessageRecord{
+		Message:           persistQueueMessage(v.Message),
+		Status:            v.Status,
+		AcceptedAt:        v.AcceptedAt,
+		UpdatedAt:         v.UpdatedAt,
+		LastLeasedAt:      v.LastLeasedAt,
+		LeaseExpiresAt:    v.LeaseExpiresAt,
+		AckedAt:           v.AckedAt,
+		LastDeliveryID:    v.LastDeliveryID,
+		DeliveryAttempts:  v.DeliveryAttempts,
+		RequeueCount:      v.RequeueCount,
+		IdempotentReplays: v.IdempotentReplays,
+		LastFailureReason: v.LastFailureReason,
+		LastFailureAt:     v.LastFailureAt,
+	}
+}
+
+func (v s3PersistMessageRecord) toModel() model.MessageRecord {
+	return model.MessageRecord{
+		Message:           v.Message.toModel(),
+		Status:            v.Status,
+		AcceptedAt:        v.AcceptedAt,
+		UpdatedAt:         v.UpdatedAt,
+		LastLeasedAt:      v.LastLeasedAt,
+		LeaseExpiresAt:    v.LeaseExpiresAt,
+		AckedAt:           v.AckedAt,
+		LastDeliveryID:    v.LastDeliveryID,
+		DeliveryAttempts:  v.DeliveryAttempts,
+		RequeueCount:      v.RequeueCount,
+		IdempotentReplays: v.IdempotentReplays,
+		LastFailureReason: v.LastFailureReason,
+		LastFailureAt:     v.LastFailureAt,
+	}
+}
+
+func persistMessageDelivery(v model.MessageDelivery) s3PersistMessageDelivery {
+	return s3PersistMessageDelivery{
+		DeliveryID:     v.DeliveryID,
+		MessageID:      v.MessageID,
+		AgentUUID:      v.AgentUUID,
+		Attempt:        v.Attempt,
+		LeasedAt:       v.LeasedAt,
+		LeaseExpiresAt: v.LeaseExpiresAt,
+	}
+}
+
+func (v s3PersistMessageDelivery) toModel() model.MessageDelivery {
+	return model.MessageDelivery{
+		DeliveryID:     v.DeliveryID,
+		MessageID:      v.MessageID,
+		AgentUUID:      v.AgentUUID,
+		Attempt:        v.Attempt,
+		LeasedAt:       v.LeasedAt,
+		LeaseExpiresAt: v.LeaseExpiresAt,
 	}
 }
 

@@ -518,6 +518,164 @@ func TestS3StateStore_PersistsQueueRoundTripAndDeletePurge(t *testing.T) {
 	}
 }
 
+func TestS3StateStore_PersistsMessageRecordsAndLeases(t *testing.T) {
+	fake := newFakeS3State()
+	server := fake.server("state-bucket")
+	defer server.Close()
+
+	store := &s3StateStore{
+		MemoryStore: NewMemoryStore(),
+		httpClient:  server.Client(),
+		endpoint:    server.URL,
+		bucket:      "state-bucket",
+		region:      "us-east-1",
+		prefix:      "statocyst-state",
+		pathStyle:   true,
+	}
+	if err := store.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("loadFromS3 empty failed: %v", err)
+	}
+
+	now := time.Date(2026, 3, 5, 14, 45, 0, 0, time.UTC)
+	id := &idGen{}
+	alice, err := store.UpsertHuman("dev", "alice-sub", "alice@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman(alice) failed: %v", err)
+	}
+	bob, err := store.UpsertHuman("dev", "bob-sub", "bob@b.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman(bob) failed: %v", err)
+	}
+	org, _, err := store.CreateOrg("org-a", "Org A", alice.HumanID, id.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	invite, err := store.CreateInvite(org.OrgID, bob.Email, model.RoleMember, alice.HumanID, id.MustID(t), "invite-secret", now.Add(time.Hour), now, false)
+	if err != nil {
+		t.Fatalf("CreateInvite failed: %v", err)
+	}
+	if _, err := store.AcceptInvite(invite.InviteID, bob.HumanID, bob.Email, now, id.Next); err != nil {
+		t.Fatalf("AcceptInvite failed: %v", err)
+	}
+	aliceOwner := alice.HumanID
+	bobOwner := bob.HumanID
+	agentA, err := store.RegisterAgent(org.OrgID, "agent-a", &aliceOwner, "agent-a-token", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent(agent-a) failed: %v", err)
+	}
+	agentB, err := store.RegisterAgent(org.OrgID, "agent-b", &bobOwner, "agent-b-token", bob.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent(agent-b) failed: %v", err)
+	}
+
+	clientMsgID := "client-msg-1"
+	message := model.Message{
+		MessageID:     "msg-lease-1",
+		FromAgentUUID: agentA.AgentUUID,
+		ToAgentUUID:   agentB.AgentUUID,
+		FromAgentID:   agentA.AgentID,
+		ToAgentID:     agentB.AgentID,
+		SenderOrgID:   org.OrgID,
+		ReceiverOrgID: org.OrgID,
+		ContentType:   "text/plain",
+		Payload:       "hello lease",
+		ClientMsgID:   &clientMsgID,
+		CreatedAt:     now.Add(time.Minute),
+	}
+
+	record, replay, err := store.CreateOrGetMessageRecord(message, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("CreateOrGetMessageRecord failed: %v", err)
+	}
+	if replay {
+		t.Fatalf("expected first CreateOrGetMessageRecord call to not replay")
+	}
+	if err := store.Enqueue(context.Background(), message); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	dequeued, ok, err := store.Dequeue(context.Background(), agentB.AgentUUID)
+	if err != nil {
+		t.Fatalf("Dequeue failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected queued message for agent-b")
+	}
+	if dequeued.MessageID != message.MessageID {
+		t.Fatalf("expected dequeued message %q, got %q", message.MessageID, dequeued.MessageID)
+	}
+
+	leasedAt := now.Add(3 * time.Minute)
+	leaseExpiresAt := leasedAt.Add(60 * time.Second)
+	delivery, leasedRecord, err := store.LeaseMessage(message.MessageID, agentB.AgentUUID, "delivery-1", leasedAt, leaseExpiresAt)
+	if err != nil {
+		t.Fatalf("LeaseMessage failed: %v", err)
+	}
+	if leasedRecord.Status != model.MessageDeliveryLeased {
+		t.Fatalf("expected leased status, got %q", leasedRecord.Status)
+	}
+
+	if !fake.hasKey("statocyst-state/state/messages/") {
+		t.Fatalf("expected persisted message record objects")
+	}
+	if !fake.hasKey("statocyst-state/state/message_leases/") {
+		t.Fatalf("expected persisted message lease objects")
+	}
+	if !fake.hasKey("statocyst-state/idx/messages/by_client/") {
+		t.Fatalf("expected persisted client message index objects")
+	}
+
+	reloaded := &s3StateStore{
+		MemoryStore: NewMemoryStore(),
+		httpClient:  server.Client(),
+		endpoint:    server.URL,
+		bucket:      "state-bucket",
+		region:      "us-east-1",
+		prefix:      "statocyst-state",
+		pathStyle:   true,
+	}
+	if err := reloaded.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("reload loadFromS3 failed: %v", err)
+	}
+
+	gotRecord, err := reloaded.GetMessageRecord(record.Message.MessageID)
+	if err != nil {
+		t.Fatalf("GetMessageRecord after reload failed: %v", err)
+	}
+	if gotRecord.Status != model.MessageDeliveryLeased {
+		t.Fatalf("expected reloaded leased status, got %q", gotRecord.Status)
+	}
+	if gotRecord.LastDeliveryID == nil || *gotRecord.LastDeliveryID != delivery.DeliveryID {
+		t.Fatalf("expected reloaded delivery id %q, got %#v", delivery.DeliveryID, gotRecord.LastDeliveryID)
+	}
+	if gotRecord.LeaseExpiresAt == nil || !gotRecord.LeaseExpiresAt.Equal(leaseExpiresAt) {
+		t.Fatalf("expected reloaded lease expiry %v, got %#v", leaseExpiresAt, gotRecord.LeaseExpiresAt)
+	}
+	if gotRecord.Message.ClientMsgID == nil || *gotRecord.Message.ClientMsgID != clientMsgID {
+		t.Fatalf("expected reloaded client msg id %q, got %#v", clientMsgID, gotRecord.Message.ClientMsgID)
+	}
+
+	metrics := reloaded.GetQueueMetrics()
+	if metrics.AvailableMessages != 0 {
+		t.Fatalf("expected no available messages after reload, got %d", metrics.AvailableMessages)
+	}
+	if metrics.LeasedMessages != 1 {
+		t.Fatalf("expected 1 leased message after reload, got %d", metrics.LeasedMessages)
+	}
+	if metrics.OldestLeaseExpiryAt == nil || !metrics.OldestLeaseExpiryAt.Equal(leaseExpiresAt) {
+		t.Fatalf("expected oldest lease expiry %v, got %#v", leaseExpiresAt, metrics.OldestLeaseExpiryAt)
+	}
+
+	ackedAt := now.Add(4 * time.Minute)
+	ackedRecord, err := reloaded.AckMessageDelivery(agentB.AgentUUID, delivery.DeliveryID, ackedAt)
+	if err != nil {
+		t.Fatalf("AckMessageDelivery after reload failed: %v", err)
+	}
+	if ackedRecord.Status != model.MessageDeliveryAcked {
+		t.Fatalf("expected acked status after reload, got %q", ackedRecord.Status)
+	}
+}
+
 func TestS3StateStore_IncrementalPersistAvoidsFullResync(t *testing.T) {
 	fake := newFakeS3State()
 	server := fake.server("state-bucket")

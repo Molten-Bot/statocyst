@@ -714,9 +714,42 @@ func publish(t *testing.T, router http.Handler, senderToken, toAgentUUID, payloa
 	}, map[string]string{"Authorization": "Bearer " + senderToken})
 }
 
+func publishWithClientMsgID(t *testing.T, router http.Handler, senderToken, toAgentUUID, payload, clientMsgID string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doJSONRequest(t, router, http.MethodPost, "/v1/messages/publish", map[string]string{
+		"to_agent_uuid": toAgentUUID,
+		"content_type":  "text/plain",
+		"payload":       payload,
+		"client_msg_id": clientMsgID,
+	}, map[string]string{"Authorization": "Bearer " + senderToken})
+}
+
 func pull(t *testing.T, router http.Handler, token string, timeoutMS int) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/messages/pull?timeout_ms=%d", timeoutMS), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	return resp
+}
+
+func ackDelivery(t *testing.T, router http.Handler, token, deliveryID string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doJSONRequest(t, router, http.MethodPost, "/v1/messages/ack", map[string]string{
+		"delivery_id": deliveryID,
+	}, map[string]string{"Authorization": "Bearer " + token})
+}
+
+func nackDelivery(t *testing.T, router http.Handler, token, deliveryID string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doJSONRequest(t, router, http.MethodPost, "/v1/messages/nack", map[string]string{
+		"delivery_id": deliveryID,
+	}, map[string]string{"Authorization": "Bearer " + token})
+}
+
+func messageStatus(t *testing.T, router http.Handler, token, messageID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/messages/"+messageID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -1506,6 +1539,181 @@ func TestConcurrentPublishPull(t *testing.T) {
 	}
 	if seen != total {
 		t.Fatalf("expected %d messages, got %d", total, seen)
+	}
+}
+
+func TestPublishClientMsgIDIsIdempotent(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	first := publishWithClientMsgID(t, router, tokenA, agentUUIDB, "hello-once", "client-1")
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("expected first publish 202, got %d %s", first.Code, first.Body.String())
+	}
+	firstPayload := decodeJSONMap(t, first.Body.Bytes())
+	if firstPayload["idempotent_replay"] != false {
+		t.Fatalf("expected first publish to not be replay")
+	}
+
+	second := publishWithClientMsgID(t, router, tokenA, agentUUIDB, "hello-once", "client-1")
+	if second.Code != http.StatusAccepted {
+		t.Fatalf("expected second publish 202, got %d %s", second.Code, second.Body.String())
+	}
+	secondPayload := decodeJSONMap(t, second.Body.Bytes())
+	if secondPayload["idempotent_replay"] != true {
+		t.Fatalf("expected second publish to be an idempotent replay")
+	}
+	if secondPayload["message_id"] != firstPayload["message_id"] {
+		t.Fatalf("expected replay to reuse message_id, got first=%v second=%v", firstPayload["message_id"], secondPayload["message_id"])
+	}
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	messageObj, _ := pullPayload["message"].(map[string]any)
+	if got := messageObj["message_id"]; got != firstPayload["message_id"] {
+		t.Fatalf("expected first queued message only once, got %v want %v", got, firstPayload["message_id"])
+	}
+
+	secondPull := pull(t, router, tokenB, 0)
+	if secondPull.Code != http.StatusNoContent {
+		t.Fatalf("expected duplicate publish to avoid a second queue entry, got %d %s", secondPull.Code, secondPull.Body.String())
+	}
+}
+
+func TestPullAckAndStatusLifecycle(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	pubResp := publishWithClientMsgID(t, router, tokenA, agentUUIDB, "hello-ack", "client-ack")
+	if pubResp.Code != http.StatusAccepted {
+		t.Fatalf("expected publish 202, got %d %s", pubResp.Code, pubResp.Body.String())
+	}
+	pubPayload := decodeJSONMap(t, pubResp.Body.Bytes())
+	messageID, _ := pubPayload["message_id"].(string)
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	deliveryObj, _ := pullPayload["delivery"].(map[string]any)
+	if deliveryObj["delivery_id"] == nil {
+		t.Fatalf("expected delivery_id in pull response, got %v", pullPayload)
+	}
+	if deliveryObj["attempt"] != float64(1) {
+		t.Fatalf("expected first delivery attempt to be 1, got %v", deliveryObj["attempt"])
+	}
+
+	statusResp := messageStatus(t, router, tokenA, messageID)
+	if statusResp.Code != http.StatusOK {
+		t.Fatalf("expected sender message status 200, got %d %s", statusResp.Code, statusResp.Body.String())
+	}
+	statusPayload := decodeJSONMap(t, statusResp.Body.Bytes())
+	if statusPayload["status"] != model.MessageDeliveryLeased {
+		t.Fatalf("expected leased status after pull, got %v", statusPayload["status"])
+	}
+
+	ackResp := ackDelivery(t, router, tokenB, deliveryObj["delivery_id"].(string))
+	if ackResp.Code != http.StatusOK {
+		t.Fatalf("expected ack 200, got %d %s", ackResp.Code, ackResp.Body.String())
+	}
+	ackPayload := decodeJSONMap(t, ackResp.Body.Bytes())
+	if ackPayload["status"] != model.MessageDeliveryAcked {
+		t.Fatalf("expected acked status, got %v", ackPayload["status"])
+	}
+	if ackPayload["acked_at"] == nil {
+		t.Fatalf("expected acked_at in ack payload")
+	}
+
+	finalStatus := messageStatus(t, router, tokenA, messageID)
+	if finalStatus.Code != http.StatusOK {
+		t.Fatalf("expected final sender status 200, got %d %s", finalStatus.Code, finalStatus.Body.String())
+	}
+	finalPayload := decodeJSONMap(t, finalStatus.Body.Bytes())
+	if finalPayload["status"] != model.MessageDeliveryAcked {
+		t.Fatalf("expected acked final status, got %v", finalPayload["status"])
+	}
+}
+
+func TestNackRequeuesMessageWithNewAttempt(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	pubResp := publish(t, router, tokenA, agentUUIDB, "hello-nack")
+	if pubResp.Code != http.StatusAccepted {
+		t.Fatalf("expected publish 202, got %d %s", pubResp.Code, pubResp.Body.String())
+	}
+	pubPayload := decodeJSONMap(t, pubResp.Body.Bytes())
+
+	firstPull := pull(t, router, tokenB, 0)
+	if firstPull.Code != http.StatusOK {
+		t.Fatalf("expected first pull 200, got %d %s", firstPull.Code, firstPull.Body.String())
+	}
+	firstPayload := decodeJSONMap(t, firstPull.Body.Bytes())
+	deliveryObj, _ := firstPayload["delivery"].(map[string]any)
+
+	nackResp := nackDelivery(t, router, tokenB, deliveryObj["delivery_id"].(string))
+	if nackResp.Code != http.StatusOK {
+		t.Fatalf("expected nack 200, got %d %s", nackResp.Code, nackResp.Body.String())
+	}
+	nackPayload := decodeJSONMap(t, nackResp.Body.Bytes())
+	if nackPayload["status"] != model.MessageDeliveryQueued {
+		t.Fatalf("expected queued status after nack, got %v", nackPayload["status"])
+	}
+
+	secondPull := pull(t, router, tokenB, 0)
+	if secondPull.Code != http.StatusOK {
+		t.Fatalf("expected second pull 200, got %d %s", secondPull.Code, secondPull.Body.String())
+	}
+	secondPayload := decodeJSONMap(t, secondPull.Body.Bytes())
+	secondMessageObj, _ := secondPayload["message"].(map[string]any)
+	secondDeliveryObj, _ := secondPayload["delivery"].(map[string]any)
+	if secondMessageObj["message_id"] != pubPayload["message_id"] {
+		t.Fatalf("expected same message_id after nack requeue, got %v want %v", secondMessageObj["message_id"], pubPayload["message_id"])
+	}
+	if secondDeliveryObj["attempt"] != float64(2) {
+		t.Fatalf("expected second attempt after nack, got %v", secondDeliveryObj["attempt"])
+	}
+}
+
+func TestExpiredLeaseRequeuesOnNextPull(t *testing.T) {
+	mem := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	h.now = func() time.Time { return now }
+	router := NewRouter(h)
+
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	pubResp := publish(t, router, tokenA, agentUUIDB, "hello-expire")
+	if pubResp.Code != http.StatusAccepted {
+		t.Fatalf("expected publish 202, got %d %s", pubResp.Code, pubResp.Body.String())
+	}
+	pubPayload := decodeJSONMap(t, pubResp.Body.Bytes())
+
+	firstPull := pull(t, router, tokenB, 0)
+	if firstPull.Code != http.StatusOK {
+		t.Fatalf("expected first pull 200, got %d %s", firstPull.Code, firstPull.Body.String())
+	}
+
+	now = now.Add(defaultMessageLease + time.Second)
+
+	secondPull := pull(t, router, tokenB, 0)
+	if secondPull.Code != http.StatusOK {
+		t.Fatalf("expected expired lease to requeue on next pull, got %d %s", secondPull.Code, secondPull.Body.String())
+	}
+	secondPayload := decodeJSONMap(t, secondPull.Body.Bytes())
+	secondMessageObj, _ := secondPayload["message"].(map[string]any)
+	secondDeliveryObj, _ := secondPayload["delivery"].(map[string]any)
+	if secondMessageObj["message_id"] != pubPayload["message_id"] {
+		t.Fatalf("expected same message after expiry requeue, got %v want %v", secondMessageObj["message_id"], pubPayload["message_id"])
+	}
+	if secondDeliveryObj["attempt"] != float64(2) {
+		t.Fatalf("expected attempt 2 after lease expiry, got %v", secondDeliveryObj["attempt"])
 	}
 }
 

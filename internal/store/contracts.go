@@ -70,6 +70,14 @@ type ControlPlaneStore interface {
 	GetOrgStats(orgID, requesterHumanID string, isSuperAdmin bool) (model.OrgStats, error)
 	AdminSnapshot() model.AdminSnapshot
 	CanPublish(senderAgentUUID, receiverAgentUUID string) (string, string, error)
+	CreateOrGetMessageRecord(message model.Message, acceptedAt time.Time) (model.MessageRecord, bool, error)
+	AbortMessageRecord(messageID string) error
+	GetMessageRecord(messageID string) (model.MessageRecord, error)
+	LeaseMessage(messageID, receiverAgentUUID, deliveryID string, leasedAt, leaseExpiresAt time.Time) (model.MessageDelivery, model.MessageRecord, error)
+	AckMessageDelivery(receiverAgentUUID, deliveryID string, ackedAt time.Time) (model.MessageRecord, error)
+	ReleaseMessageDelivery(receiverAgentUUID, deliveryID string, now time.Time, reason string) (model.Message, model.MessageRecord, error)
+	ExpireMessageLeases(now time.Time) ([]model.Message, error)
+	GetQueueMetrics() model.QueueMetrics
 	RecordMessageQueued(orgID string)
 	RecordMessageDropped(orgID string)
 }

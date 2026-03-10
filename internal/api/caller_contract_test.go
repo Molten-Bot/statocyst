@@ -32,6 +32,11 @@ func TestCallerContract_AgentRuntimeEndpointsRejectHumanHeaders(t *testing.T) {
 
 	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/messages/pull?timeout_ms=0", nil, headers)
 	requireUnauthorized(t, pullResp)
+
+	ackResp := doJSONRequest(t, router, http.MethodPost, "/v1/messages/ack", map[string]any{
+		"delivery_id": "delivery-1",
+	}, headers)
+	requireUnauthorized(t, ackResp)
 }
 
 func TestCallerContract_HumanControlPlaneEndpointsRejectAgentToken(t *testing.T) {
@@ -92,6 +97,9 @@ func TestOpenAPICallerContractSecuritySchemes(t *testing.T) {
 		{Method: http.MethodGet, Path: "/v1/agents/me/skill"}:        {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/messages/publish"}:      {"agentAuth"},
 		{Method: http.MethodGet, Path: "/v1/messages/pull"}:          {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/messages/ack"}:          {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/messages/nack"}:         {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/messages/{message_id}"}:  {"agentAuth"},
 	}
 
 	for op, want := range expected {

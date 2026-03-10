@@ -133,6 +133,7 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/v1/agent-trusts/", handler.handleAgentTrustByID)
 	mux.HandleFunc("/v1/messages/publish", handler.handlePublish)
 	mux.HandleFunc("/v1/messages/pull", handler.handlePull)
+	mux.HandleFunc("/v1/messages/", handler.handleMessageSubroutes)
 	mux.HandleFunc("/", handler.handleUI)
 	router := withAPICompression(mux)
 	if opts.EnableLocalCORS {
@@ -344,6 +345,15 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	queuePayload := map[string]any{
 		"backend": health.Queue.Backend,
 		"healthy": health.Queue.Healthy,
+	}
+	queueMetrics := h.control.GetQueueMetrics()
+	queuePayload["available_messages"] = queueMetrics.AvailableMessages
+	queuePayload["leased_messages"] = queueMetrics.LeasedMessages
+	if queueMetrics.OldestQueuedAt != nil {
+		queuePayload["oldest_queued_at"] = queueMetrics.OldestQueuedAt
+	}
+	if queueMetrics.OldestLeaseExpiryAt != nil {
+		queuePayload["oldest_lease_expires_at"] = queueMetrics.OldestLeaseExpiryAt
 	}
 	if strings.TrimSpace(health.Queue.Error) != "" {
 		queuePayload["error"] = health.Queue.Error
