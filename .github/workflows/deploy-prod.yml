@@ -44,7 +44,7 @@ jobs:
       - test
     outputs:
       image_ref: ${{ steps.image.outputs.image_ref }}
-      promoted_date: ${{ steps.release_date.outputs.promote_date }}
+      promoted_date: ${{ steps.release_meta.outputs.promote_date }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,9 +77,11 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Resolve release date
-        id: release_date
-        run: echo "promote_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - name: Resolve release metadata
+        id: release_meta
+        run: |
+          echo "promote_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve source vnext image
         id: resolve_source
@@ -102,13 +104,15 @@ jobs:
       - name: Promote vnext digest to prod tags
         env:
           IMAGE_REPO: ${{ steps.dockerhub.outputs.image_repo }}
-          PROMOTE_DATE: ${{ steps.release_date.outputs.promote_date }}
+          PROMOTE_DATE: ${{ steps.release_meta.outputs.promote_date }}
+          SHORT_SHA: ${{ steps.release_meta.outputs.short_sha }}
           SOURCE_DIGEST: ${{ steps.resolve_source.outputs.source_digest }}
           SOURCE_REF: ${{ steps.resolve_source.outputs.source_ref }}
         run: |
           docker buildx imagetools create \
             -t "${IMAGE_REPO}:${PROMOTE_DATE}" \
             -t "${IMAGE_REPO}:latest" \
+            -t "${IMAGE_REPO}:sha-${SHORT_SHA}" \
             "${SOURCE_REF}"
 
           promoted_digest="$(docker buildx imagetools inspect "${IMAGE_REPO}:${PROMOTE_DATE}" | awk '/^Digest:/ {print $2; exit}')"
@@ -119,7 +123,7 @@ jobs:
 
       - name: Export image reference
         id: image
-        run: echo "image_ref=${{ steps.dockerhub.outputs.image_repo }}:${{ steps.release_date.outputs.promote_date }}" >> "$GITHUB_OUTPUT"
+        run: echo "image_ref=${{ steps.dockerhub.outputs.image_repo }}:${{ steps.release_meta.outputs.promote_date }}" >> "$GITHUB_OUTPUT"
 
   smoke-image:
     runs-on: ubuntu-latest
@@ -199,7 +203,7 @@ jobs:
             "${DEPLOY_HOOK_URL}" \
             "prod" \
             "${{ needs.promote-and-tag.outputs.image_ref }}" \
-            "${{ needs.promote-and-tag.outputs.promoted_date }}"
+            "${{ github.sha }}"
 
       - name: Optional Prod health check
         if: ${{ steps.deploy_hook.outputs.enabled == 'true' && vars.HEALTHCHECK_URL != '' }}

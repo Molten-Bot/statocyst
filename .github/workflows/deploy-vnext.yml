@@ -70,9 +70,11 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Resolve release date
-        id: release_date
-        run: echo "release_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - name: Resolve image metadata
+        id: image_meta
+        run: |
+          echo "release_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
         id: build
@@ -83,11 +85,12 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: |
             ${{ steps.dockerhub.outputs.image_repo }}:vnext
-            ${{ steps.dockerhub.outputs.image_repo }}:vnext-${{ steps.release_date.outputs.release_date }}
+            ${{ steps.dockerhub.outputs.image_repo }}:vnext-${{ steps.image_meta.outputs.release_date }}
+            ${{ steps.dockerhub.outputs.image_repo }}:sha-${{ steps.image_meta.outputs.short_sha }}
 
       - name: Export image reference
         id: image
-        run: echo "image_ref=${{ steps.dockerhub.outputs.image_repo }}:vnext-${{ steps.release_date.outputs.release_date }}" >> "$GITHUB_OUTPUT"
+        run: echo "image_ref=${{ steps.dockerhub.outputs.image_repo }}:vnext-${{ steps.image_meta.outputs.release_date }}" >> "$GITHUB_OUTPUT"
 
   smoke-image:
     runs-on: ubuntu-latest
