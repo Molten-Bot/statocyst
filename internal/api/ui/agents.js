@@ -252,6 +252,7 @@ async function createBindCode() {
   }
 
   const token = String(result?.data?.bind_token || "").trim();
+  const connectPrompt = String(result?.data?.connect_prompt || "").trim();
   const expiresAt = formatDateTime(result?.data?.expires_at);
   const redeemURL = `${window.location.origin}/v1/agents/bind`;
   if (!token) {
@@ -259,7 +260,7 @@ async function createBindCode() {
     return;
   }
 
-  setBindCodeStatus(buildAgentBindPrompt(token, expiresAt, redeemURL));
+  setBindCodeStatus(connectPrompt || buildAgentBindPrompt(token, expiresAt, redeemURL));
 }
 
 async function rotateAgent(agentUUID) {

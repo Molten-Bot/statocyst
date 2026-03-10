@@ -1093,6 +1093,34 @@ func TestMyAgentBindTokenRedeemUsesTempHandleThenFinalizesOnce(t *testing.T) {
 	}
 }
 
+func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
+	router := newTestRouter()
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create my bind token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	createPayload := decodeJSONMap(t, createResp.Body.Bytes())
+	bindToken, _ := createPayload["bind_token"].(string)
+	if bindToken == "" {
+		t.Fatalf("bind_token missing")
+	}
+	connectPrompt, _ := createPayload["connect_prompt"].(string)
+	if !strings.Contains(connectPrompt, bindToken) {
+		t.Fatalf("expected connect prompt to contain bind token, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "http://example.com/v1/agents/bind") {
+		t.Fatalf("expected connect prompt to contain bind api url, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "http://example.com/v1/agents/me/skill") {
+		t.Fatalf("expected connect prompt to contain skill url, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "Bind Scope: Personal") {
+		t.Fatalf("expected personal scope in connect prompt, got %q", connectPrompt)
+	}
+}
+
 func TestTrustLifecycleAndBlockPrecedence(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, orgTrustID, _, _, agentUUIDB := setupTrustedAgents(t, router)
@@ -1613,6 +1641,9 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if !strings.Contains(skillContent, "SKILL: Statocyst Agent Control Plane") {
 		t.Fatalf("expected skill header, got %q", skillContent)
 	}
+	if !strings.Contains(skillContent, "Onboarding Checklist") {
+		t.Fatalf("expected onboarding checklist in skill, got %q", skillContent)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/agents/me/skill?format=markdown", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenA)
@@ -1627,6 +1658,15 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(mdResp.Body.String(), "You can currently talk to") {
 		t.Fatalf("expected communication section in markdown skill, got %q", mdResp.Body.String())
+	}
+	if !strings.Contains(mdResp.Body.String(), "PATCH http://example.com/v1/agents/me") {
+		t.Fatalf("expected handle finalize guidance in markdown skill, got %q", mdResp.Body.String())
+	}
+	if !strings.Contains(mdResp.Body.String(), "http://example.com/v1/messages/publish") {
+		t.Fatalf("expected publish guidance in markdown skill, got %q", mdResp.Body.String())
+	}
+	if !strings.Contains(mdResp.Body.String(), "http://example.com/v1/messages/pull?timeout_ms=5000") {
+		t.Fatalf("expected pull guidance in markdown skill, got %q", mdResp.Body.String())
 	}
 }
 

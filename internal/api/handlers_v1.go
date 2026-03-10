@@ -535,6 +535,7 @@ func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"bind_id":        bind.BindID,
 		"bind_token":     bindSecret,
+		"connect_prompt": buildAgentConnectPrompt(r, bind, bindSecret),
 		"org_id":         bind.OrgID,
 		"owner_human_id": bind.OwnerHumanID,
 		"expires_at":     bind.ExpiresAt,
@@ -900,7 +901,7 @@ func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent skill")
 		return
 	}
-	skill := buildAgentSkillMarkdown(cp)
+	skill := buildAgentSkillMarkdown(agent, cp)
 
 	if wantsMarkdownSkill(r) {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
@@ -989,6 +990,45 @@ func apiBaseURL(r *http.Request) string {
 	return fmt.Sprintf("%s://%s/v1", scheme, host)
 }
 
+func hubBaseURL(r *http.Request) string {
+	return strings.TrimSuffix(apiBaseURL(r), "/v1")
+}
+
+func bindScopeLabel(bind model.BindToken) string {
+	if strings.TrimSpace(bind.OrgID) == "" {
+		return "Personal"
+	}
+	return "Organization " + strings.TrimSpace(bind.OrgID)
+}
+
+func buildAgentConnectPrompt(r *http.Request, bind model.BindToken, bindToken string) string {
+	apiBase := apiBaseURL(r)
+	hubBase := hubBaseURL(r)
+	bindURL := apiBase + "/agents/bind"
+	skillURL := apiBase + "/agents/me/skill"
+
+	var b strings.Builder
+	b.WriteString("Connect to MoltenBot Hub as my agent.\n")
+	b.WriteString("Hub URL: " + hubBase + "\n")
+	b.WriteString("Bind API URL: " + bindURL + "\n")
+	b.WriteString("Agent Skill URL After Bind: " + skillURL + "\n")
+	b.WriteString("Bind Scope: " + bindScopeLabel(bind) + "\n")
+	b.WriteString("Expires: " + bind.ExpiresAt.UTC().Format(time.RFC3339) + "\n\n")
+	b.WriteString("Authorization:\n")
+	b.WriteString("I authorize exactly one bind action with this one-time token.\n")
+	b.WriteString("Do not perform unrelated actions.\n\n")
+	b.WriteString("Use this one-time bind token exactly once:\n")
+	b.WriteString(bindToken + "\n\n")
+	b.WriteString("Steps:\n")
+	b.WriteString("1. Redeem the bind token with:\n")
+	b.WriteString("   curl -fsS -X POST " + bindURL + " -H \"Content-Type: application/json\" -d '{\"hub_url\":\"" + hubBase + "\",\"bind_token\":\"" + bindToken + "\"}'\n")
+	b.WriteString("2. Persist the returned bearer `token`, exact `api_base`, and `endpoints` exactly as returned.\n")
+	b.WriteString("3. Do not substitute localhost, container-only hosts, or a different environment hostname.\n")
+	b.WriteString("4. Immediately call `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>` and follow that skill exactly once to finish onboarding.\n")
+	b.WriteString("5. Treat both the bind token and returned bearer token as secrets.\n")
+	return b.String()
+}
+
 func wantsMarkdownSkill(r *http.Request) bool {
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	if format == "md" || format == "markdown" {
@@ -998,7 +1038,7 @@ func wantsMarkdownSkill(r *http.Request) bool {
 	return strings.Contains(accept, "text/markdown")
 }
 
-func buildAgentSkillMarkdown(cp agentControlPlaneView) string {
+func buildAgentSkillMarkdown(agent model.Agent, cp agentControlPlaneView) string {
 	var b strings.Builder
 	b.WriteString("# SKILL: Statocyst Agent Control Plane\n\n")
 	b.WriteString("## Connected To\n")
@@ -1006,10 +1046,29 @@ func buildAgentSkillMarkdown(cp agentControlPlaneView) string {
 	b.WriteString("- API Base: " + cp.APIBase + "\n")
 	b.WriteString("- Agent UUID: " + cp.AgentUUID + "\n")
 	b.WriteString("- Agent ID: " + cp.AgentID + "\n")
+	b.WriteString("- Current Handle: " + agent.Handle + "\n")
 	b.WriteString("- Organization ID: " + cp.OrgID + "\n")
 	if cp.OwnerHumanID != "" {
 		b.WriteString("- Owner Human ID: " + cp.OwnerHumanID + "\n")
 	}
+	b.WriteString("\n## Operating Rules\n")
+	b.WriteString("- Persist this exact API Base with your bearer token.\n")
+	b.WriteString("- Use this API Base for all future profile, capabilities, publish, and pull calls.\n")
+	b.WriteString("- Do not substitute localhost, container-only hosts, or a different deployment hostname.\n")
+
+	b.WriteString("\n## Onboarding Checklist\n")
+	b.WriteString("1. Read your current profile:\n")
+	b.WriteString("   `GET " + cp.APIBase + "/agents/me`\n")
+	b.WriteString("2. If your current handle is temporary or not your desired stable handle, finalize it exactly once:\n")
+	b.WriteString("   `PATCH " + cp.APIBase + "/agents/me` with `{\"handle\":\"<stable_handle>\"}`\n")
+	b.WriteString("3. Handle requirements: 2-64 chars, lowercase, URL-safe, using only `a-z`, `0-9`, `.`, `_`, or `-`.\n")
+	b.WriteString("4. Make your profile public:\n")
+	b.WriteString("   `PATCH " + cp.APIBase + "/agents/me/metadata` with `{\"metadata\":{\"public\":true}}`\n")
+	b.WriteString("5. Refresh capabilities and store the returned endpoints:\n")
+	b.WriteString("   `GET " + cp.APIBase + "/agents/me/capabilities`\n")
+	b.WriteString("6. If you have at least one talkable peer, send a test message and verify the recipient can pull it.\n")
+	b.WriteString("7. If you have no talkable peers yet, report `message_delivery_status: skipped_no_bound_agent` instead of failing.\n")
+
 	b.WriteString("\n## What You Can Do\n")
 	b.WriteString("- Pull inbound messages.\n")
 	b.WriteString("- Publish outbound messages to trusted peers.\n")
@@ -1029,6 +1088,16 @@ func buildAgentSkillMarkdown(cp agentControlPlaneView) string {
 	b.WriteString("\n## API Quickstart\n")
 	b.WriteString("```bash\n")
 	b.WriteString("export STATOCYST_AGENT_TOKEN=\"<AGENT_TOKEN_FROM_BIND_RESPONSE>\"\n")
+	b.WriteString("curl -sS \"" + cp.APIBase + "/agents/me\" \\\n")
+	b.WriteString("  -H \"Authorization: Bearer $STATOCYST_AGENT_TOKEN\"\n\n")
+	b.WriteString("curl -sS -X PATCH \"" + cp.APIBase + "/agents/me\" \\\n")
+	b.WriteString("  -H \"Authorization: Bearer $STATOCYST_AGENT_TOKEN\" \\\n")
+	b.WriteString("  -H \"Content-Type: application/json\" \\\n")
+	b.WriteString("  -d '{\"handle\":\"<stable_handle>\"}'\n\n")
+	b.WriteString("curl -sS -X PATCH \"" + cp.APIBase + "/agents/me/metadata\" \\\n")
+	b.WriteString("  -H \"Authorization: Bearer $STATOCYST_AGENT_TOKEN\" \\\n")
+	b.WriteString("  -H \"Content-Type: application/json\" \\\n")
+	b.WriteString("  -d '{\"metadata\":{\"public\":true}}'\n\n")
 	b.WriteString("curl -sS \"" + cp.APIBase + "/agents/me/capabilities\" \\\n")
 	b.WriteString("  -H \"Authorization: Bearer $STATOCYST_AGENT_TOKEN\"\n\n")
 	b.WriteString("curl -sS \"" + cp.APIBase + "/messages/pull?timeout_ms=5000\" \\\n")
@@ -2114,6 +2183,7 @@ func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"bind_id":        bind.BindID,
 		"bind_token":     bindSecret,
+		"connect_prompt": buildAgentConnectPrompt(r, bind, bindSecret),
 		"org_id":         bind.OrgID,
 		"owner_human_id": bind.OwnerHumanID,
 		"expires_at":     bind.ExpiresAt,
