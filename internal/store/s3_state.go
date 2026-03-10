@@ -60,6 +60,20 @@ type s3PersonalOrgValue struct {
 	OrgID string `json:"org_id"`
 }
 
+type s3PersistQueueMessage struct {
+	MessageID     string    `json:"message_id"`
+	FromAgentUUID string    `json:"from_agent_uuid"`
+	ToAgentUUID   string    `json:"to_agent_uuid"`
+	FromAgentID   string    `json:"from_agent_id,omitempty"`
+	ToAgentID     string    `json:"to_agent_id,omitempty"`
+	SenderOrgID   string    `json:"sender_org_id"`
+	ReceiverOrgID string    `json:"receiver_org_id"`
+	ContentType   string    `json:"content_type"`
+	Payload       string    `json:"payload"`
+	ClientMsgID   *string   `json:"client_msg_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type s3PersistInvite struct {
 	InviteID     string     `json:"invite_id"`
 	OrgID        string     `json:"org_id"`
@@ -704,6 +718,7 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	pStatsDaily := s.prefixed("state/stats_daily")
 	pAudit := s.prefixed("state/audit")
 	pPersonalOrgs := s.prefixed("state/personal_orgs")
+	pQueues := s.prefixed("state/queues")
 
 	for id, human := range s.MemoryStore.humans {
 		add(pHumans, s.objectKey(pHumans, escapeKeySegment(id)+".json"), human)
@@ -751,6 +766,15 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	}
 	for humanID, orgID := range s.MemoryStore.personalOrgByHuman {
 		add(pPersonalOrgs, s.objectKey(pPersonalOrgs, escapeKeySegment(humanID)+".json"), s3PersonalOrgValue{OrgID: orgID})
+	}
+	for agentUUID, queue := range s.MemoryStore.queues {
+		for _, message := range queue {
+			add(
+				pQueues,
+				s.objectKey(pQueues, escapeKeySegment(agentUUID), queueMessageObjectName(message)),
+				persistQueueMessage(message),
+			)
+		}
 	}
 
 	pIdxHumanAuth := s.prefixed("idx/humans/by_auth")
@@ -823,6 +847,7 @@ func (s *s3StateStore) persistedPrefixes() []s3KeyDescriptor {
 		{Prefix: s.prefixed("state/stats_daily")},
 		{Prefix: s.prefixed("state/audit")},
 		{Prefix: s.prefixed("state/personal_orgs")},
+		{Prefix: s.prefixed("state/queues")},
 		{Prefix: s.prefixed("idx/humans/by_auth")},
 		{Prefix: s.prefixed("idx/humans/by_handle")},
 		{Prefix: s.prefixed("idx/orgs/by_handle")},
@@ -852,6 +877,7 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	pStatsDaily := s.prefixed("state/stats_daily")
 	pAudit := s.prefixed("state/audit")
 	pPersonalOrgs := s.prefixed("state/personal_orgs")
+	pQueues := s.prefixed("state/queues")
 
 	if err := s.loadTypedObjects(ctx, pHumans, func(key string, body []byte) error {
 		var value model.Human
@@ -1043,6 +1069,37 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.loadTypedObjects(ctx, pQueues, func(key string, body []byte) error {
+		relative, ok := trimObjectKeyPrefix(key, pQueues)
+		if !ok {
+			return nil
+		}
+		parts := strings.Split(relative, "/")
+		if len(parts) != 2 {
+			return nil
+		}
+		agentUUID, err := url.PathUnescape(parts[0])
+		if err != nil || strings.TrimSpace(agentUUID) == "" {
+			return nil
+		}
+		var value s3PersistQueueMessage
+		if err := json.Unmarshal(body, &value); err != nil {
+			return err
+		}
+		loaded.queues[agentUUID] = append(loaded.queues[agentUUID], value.toModel())
+		return nil
+	}); err != nil {
+		return err
+	}
+	for agentUUID, queue := range loaded.queues {
+		sort.Slice(queue, func(i, j int) bool {
+			if queue[i].CreatedAt.Equal(queue[j].CreatedAt) {
+				return queue[i].MessageID < queue[j].MessageID
+			}
+			return queue[i].CreatedAt.Before(queue[j].CreatedAt)
+		})
+		loaded.queues[agentUUID] = queue
+	}
 
 	for orgID, events := range loaded.auditByOrg {
 		sort.Slice(events, func(i, j int) bool {
@@ -1179,6 +1236,30 @@ func (s *s3StateStore) DeleteAgent(agentUUID, actorHumanID string, now time.Time
 		return err
 	}
 	return nil
+}
+
+func (s *s3StateStore) Enqueue(ctx context.Context, message model.Message) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	if err := s.MemoryStore.Enqueue(ctx, message); err != nil {
+		return err
+	}
+	return s.persistAll(ctx)
+}
+
+func (s *s3StateStore) Dequeue(ctx context.Context, agentUUID string) (model.Message, bool, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	message, ok, err := s.MemoryStore.Dequeue(ctx, agentUUID)
+	if err != nil || !ok {
+		return message, ok, err
+	}
+	if err := s.persistAll(ctx); err != nil {
+		return model.Message{}, false, err
+	}
+	return message, true, nil
 }
 
 func (s *s3StateStore) listKeys(ctx context.Context, prefix string) ([]string, error) {
@@ -1405,6 +1486,38 @@ func (v s3PersistInvite) toModel() model.Invite {
 	}
 }
 
+func persistQueueMessage(v model.Message) s3PersistQueueMessage {
+	return s3PersistQueueMessage{
+		MessageID:     v.MessageID,
+		FromAgentUUID: v.FromAgentUUID,
+		ToAgentUUID:   v.ToAgentUUID,
+		FromAgentID:   v.FromAgentID,
+		ToAgentID:     v.ToAgentID,
+		SenderOrgID:   v.SenderOrgID,
+		ReceiverOrgID: v.ReceiverOrgID,
+		ContentType:   v.ContentType,
+		Payload:       v.Payload,
+		ClientMsgID:   v.ClientMsgID,
+		CreatedAt:     v.CreatedAt,
+	}
+}
+
+func (v s3PersistQueueMessage) toModel() model.Message {
+	return model.Message{
+		MessageID:     v.MessageID,
+		FromAgentUUID: v.FromAgentUUID,
+		ToAgentUUID:   v.ToAgentUUID,
+		FromAgentID:   v.FromAgentID,
+		ToAgentID:     v.ToAgentID,
+		SenderOrgID:   v.SenderOrgID,
+		ReceiverOrgID: v.ReceiverOrgID,
+		ContentType:   v.ContentType,
+		Payload:       v.Payload,
+		ClientMsgID:   v.ClientMsgID,
+		CreatedAt:     v.CreatedAt,
+	}
+}
+
 func persistAgent(v model.Agent) s3PersistAgent {
 	return s3PersistAgent{
 		AgentUUID:         v.AgentUUID,
@@ -1495,4 +1608,18 @@ func (v s3PersistOrgAccessKey) toModel() model.OrgAccessKey {
 		RevokedAt:  v.RevokedAt,
 		TokenHash:  v.TokenHash,
 	}
+}
+
+func queueMessageObjectName(message model.Message) string {
+	id := strings.TrimSpace(message.MessageID)
+	if id == "" {
+		id = hashKey(fmt.Sprintf(
+			"%s\x00%s\x00%s\x00%s",
+			message.FromAgentUUID,
+			message.ToAgentUUID,
+			message.ContentType,
+			message.CreatedAt.UTC().Format(time.RFC3339Nano),
+		))
+	}
+	return escapeKeySegment(message.CreatedAt.UTC().Format(time.RFC3339Nano)+"_"+id) + ".json"
 }

@@ -137,6 +137,30 @@ func TestNewStoresFromEnv_S3StateConfigured(t *testing.T) {
 	}
 }
 
+func TestNewStoresFromEnv_S3StateAlsoHandlesS3Queue(t *testing.T) {
+	server := newFakeS3StoreServer(t)
+	defer server.Close()
+
+	t.Setenv("STATOCYST_STATE_BACKEND", "s3")
+	t.Setenv("STATOCYST_QUEUE_BACKEND", "s3")
+	t.Setenv("STATOCYST_STATE_S3_ENDPOINT", server.URL)
+	t.Setenv("STATOCYST_STATE_S3_BUCKET", "state-bucket")
+	t.Setenv("STATOCYST_STATE_S3_PREFIX", "statocyst-state")
+	t.Setenv("STATOCYST_STATE_S3_PATH_STYLE", "true")
+
+	control, queue, err := NewStoresFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	state, ok := control.(*s3StateStore)
+	if !ok {
+		t.Fatalf("expected s3 state control store, got %T", control)
+	}
+	if queue != state {
+		t.Fatalf("expected queue to reuse s3 state store when state backend=s3")
+	}
+}
+
 func TestNewStoresFromEnv_S3StateAuthRequiredEndpointFailsStartup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")

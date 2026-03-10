@@ -142,16 +142,20 @@ func NewStoresFromEnvWithMode(mode StorageStartupMode) (ControlPlaneStore, Messa
 
 	var queueStore MessageQueueStore
 	if queueBackend == "s3" {
-		queue, queueErr := NewS3QueueStoreFromEnv()
-		if queueErr != nil {
-			health.Queue.Healthy = false
-			health.Queue.Error = queueErr.Error()
-			if mode == StorageStartupModeStrict {
-				return nil, nil, health, queueErr
-			}
-			queueStore = mem
+		if state, ok := controlStore.(*s3StateStore); ok && stateQueueStore == state {
+			queueStore = state
 		} else {
-			queueStore = queue
+			queue, queueErr := NewS3QueueStoreFromEnv()
+			if queueErr != nil {
+				health.Queue.Healthy = false
+				health.Queue.Error = queueErr.Error()
+				if mode == StorageStartupModeStrict {
+					return nil, nil, health, queueErr
+				}
+				queueStore = mem
+			} else {
+				queueStore = queue
+			}
 		}
 	} else {
 		queueStore = stateQueueStore

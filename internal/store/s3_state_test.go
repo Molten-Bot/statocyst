@@ -380,6 +380,144 @@ func TestS3StateStore_ReloadRebuildsIndexesFromPrimaryState(t *testing.T) {
 	}
 }
 
+func TestS3StateStore_PersistsQueueRoundTripAndDeletePurge(t *testing.T) {
+	fake := newFakeS3State()
+	server := fake.server("state-bucket")
+	defer server.Close()
+
+	store := &s3StateStore{
+		MemoryStore: NewMemoryStore(),
+		httpClient:  server.Client(),
+		endpoint:    server.URL,
+		bucket:      "state-bucket",
+		region:      "us-east-1",
+		prefix:      "statocyst-state",
+		pathStyle:   true,
+	}
+	if err := store.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("loadFromS3 empty failed: %v", err)
+	}
+
+	now := time.Date(2026, 3, 5, 14, 30, 0, 0, time.UTC)
+	id := &idGen{}
+	alice, err := store.UpsertHuman("dev", "alice-sub", "alice@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman(alice) failed: %v", err)
+	}
+	bob, err := store.UpsertHuman("dev", "bob-sub", "bob@b.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman(bob) failed: %v", err)
+	}
+	org, _, err := store.CreateOrg("org-a", "Org A", alice.HumanID, id.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	invite, err := store.CreateInvite(org.OrgID, bob.Email, model.RoleMember, alice.HumanID, id.MustID(t), "invite-secret", now.Add(time.Hour), now, false)
+	if err != nil {
+		t.Fatalf("CreateInvite failed: %v", err)
+	}
+	if _, err := store.AcceptInvite(invite.InviteID, bob.HumanID, bob.Email, now, id.Next); err != nil {
+		t.Fatalf("AcceptInvite failed: %v", err)
+	}
+	aliceOwner := alice.HumanID
+	bobOwner := bob.HumanID
+	agentA, err := store.RegisterAgent(org.OrgID, "agent-a", &aliceOwner, "agent-a-token", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent(agent-a) failed: %v", err)
+	}
+	agentB, err := store.RegisterAgent(org.OrgID, "agent-b", &bobOwner, "agent-b-token", bob.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent(agent-b) failed: %v", err)
+	}
+
+	msg1 := model.Message{
+		MessageID:     "msg-1",
+		FromAgentUUID: agentA.AgentUUID,
+		ToAgentUUID:   agentB.AgentUUID,
+		FromAgentID:   agentA.AgentID,
+		ToAgentID:     agentB.AgentID,
+		SenderOrgID:   org.OrgID,
+		ReceiverOrgID: org.OrgID,
+		ContentType:   "text/plain",
+		Payload:       "hello",
+		CreatedAt:     now.Add(time.Minute),
+	}
+	msg2 := model.Message{
+		MessageID:     "msg-2",
+		FromAgentUUID: agentB.AgentUUID,
+		ToAgentUUID:   agentA.AgentUUID,
+		FromAgentID:   agentB.AgentID,
+		ToAgentID:     agentA.AgentID,
+		SenderOrgID:   org.OrgID,
+		ReceiverOrgID: org.OrgID,
+		ContentType:   "text/plain",
+		Payload:       "world",
+		CreatedAt:     now.Add(2 * time.Minute),
+	}
+	if err := store.Enqueue(context.Background(), msg1); err != nil {
+		t.Fatalf("Enqueue(msg1) failed: %v", err)
+	}
+	if err := store.Enqueue(context.Background(), msg2); err != nil {
+		t.Fatalf("Enqueue(msg2) failed: %v", err)
+	}
+
+	queueKeys := fake.keysWithPrefix("statocyst-state/state/queues/")
+	if len(queueKeys) != 2 {
+		t.Fatalf("expected 2 persisted queue objects, got %d", len(queueKeys))
+	}
+
+	reloaded := &s3StateStore{
+		MemoryStore: NewMemoryStore(),
+		httpClient:  server.Client(),
+		endpoint:    server.URL,
+		bucket:      "state-bucket",
+		region:      "us-east-1",
+		prefix:      "statocyst-state",
+		pathStyle:   true,
+	}
+	if err := reloaded.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("reload loadFromS3 failed: %v", err)
+	}
+
+	got, ok, err := reloaded.Dequeue(context.Background(), agentB.AgentUUID)
+	if err != nil {
+		t.Fatalf("Dequeue(agent-b) failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected queued message for agent-b")
+	}
+	if got.MessageID != msg1.MessageID {
+		t.Fatalf("expected first dequeued message %q, got %q", msg1.MessageID, got.MessageID)
+	}
+
+	if err := reloaded.DeleteAgent(agentA.AgentUUID, alice.HumanID, now.Add(3*time.Minute), false); err != nil {
+		t.Fatalf("DeleteAgent(agent-a) failed: %v", err)
+	}
+
+	reloadedAgain := &s3StateStore{
+		MemoryStore: NewMemoryStore(),
+		httpClient:  server.Client(),
+		endpoint:    server.URL,
+		bucket:      "state-bucket",
+		region:      "us-east-1",
+		prefix:      "statocyst-state",
+		pathStyle:   true,
+	}
+	if err := reloadedAgain.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("reload after delete failed: %v", err)
+	}
+
+	if queue := reloadedAgain.MemoryStore.queues[agentA.AgentUUID]; len(queue) != 0 {
+		t.Fatalf("expected deleted agent queue purged, got %d messages", len(queue))
+	}
+	if queue := reloadedAgain.MemoryStore.queues[agentB.AgentUUID]; len(queue) != 0 {
+		t.Fatalf("expected messages referencing deleted agent purged, got %d messages", len(queue))
+	}
+	if keys := fake.keysWithPrefix("statocyst-state/state/queues/"); len(keys) != 0 {
+		t.Fatalf("expected queue objects removed after delete, got %d", len(keys))
+	}
+}
+
 func TestS3StateStore_IncrementalPersistAvoidsFullResync(t *testing.T) {
 	fake := newFakeS3State()
 	server := fake.server("state-bucket")
