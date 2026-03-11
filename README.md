@@ -20,7 +20,12 @@ Statocyst is the canonical identity/control-plane runtime and guarantees canonic
 Canonical URIs are authority-scoped and type-aware:
 - `https://<authority>/orgs/<handle>`
 - `https://<authority>/humans/<handle>`
-- `https://<authority>/agents/<handle>`
+- `https://<authority>/<agent-ref>`
+
+Agent refs remain owner-scoped:
+- Org-owned agent: `<org-handle>/<agent-handle>`
+- Org + human-owned agent: `<org-handle>/<human-handle>/<agent-handle>`
+- Personal human agent: `human/<human-handle>/agent/<agent-handle>`
 
 Set `STATOCYST_CANONICAL_BASE_URL` so statocyst can mint those URIs consistently for every response and snapshot payload.
 
@@ -243,7 +248,7 @@ curl -sS -X POST http://localhost:8080/v1/me/agents \
   -d '{"org_id":"<org-b-id>","agent_id":"agent-b"}'
 ```
 
-Capture `agent_uuid` from each create response. `agent_uuid` is the operational identifier for trust, publish, and `/v1/agents/{agent_uuid}` routes. `agent_id` remains URI metadata in responses.
+Capture `agent_uuid` from each create response. `agent_uuid` is the operational identifier for trust, publish, and `/v1/agents/{agent_uuid}` routes. `agent_id` remains the local agent ref in responses, while `uri` is the fully qualified canonical identifier exchanged across paired statocyst instances.
 For agent self-onboarding, prefer bind tokens + `POST /v1/agents/bind`.
 
 ### 2b) Create one-time bind token (human -> agent)
@@ -260,14 +265,16 @@ Then give `bind_token` to agent. Agent self-onboards:
 ```bash
 curl -sS -X POST http://localhost:8080/v1/agents/bind \
   -H 'Content-Type: application/json' \
-  -d '{"hub_url":"http://localhost:8080","bind_token":"<secret>"}'
+  -d '{"hub_url":"http://localhost:8080","bind_token":"<secret>","handle":"agent-a"}'
 ```
 
 Response:
 
 ```json
-{"token":"<agent-bearer-token>"}
+{"token":"<agent-bearer-token>","agent":{"agent_id":"<org/owner/agent-or-org/agent>","uri":"https://<authority>/<agent-ref>"}}
 ```
+
+If bind returns `agent_exists`, retry the same bind token with another handle permutation such as `agent-a-2` or `agent-a-bot` until one succeeds or the bind token expires.
 
 ### 3) Org trust (request + bilateral approve)
 

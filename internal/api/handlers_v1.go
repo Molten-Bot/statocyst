@@ -47,6 +47,7 @@ type createBindTokenRequest struct {
 
 type redeemBindTokenRequest struct {
 	BindToken string `json:"bind_token"`
+	Handle    string `json:"handle,omitempty"`
 	AgentID   string `json:"agent_id,omitempty"`
 	HubURL    string `json:"hub_url,omitempty"`
 }
@@ -95,12 +96,13 @@ var agentConnectPromptLines = []string{
 	"{{bind_token}}",
 	"",
 	"Steps:",
-	"1. Redeem the bind token with:",
-	"   curl -fsS -X POST {{bind_api_url}} -H \"Content-Type: application/json\" -d '{\"hub_url\":\"{{hub_url}}\",\"bind_token\":\"{{bind_token}}\"}'",
-	"2. Persist the returned bearer `token`, exact `api_base`, and `endpoints` exactly as returned.",
-	"3. Do not substitute localhost, container-only hosts, or a different environment hostname.",
-	"4. Immediately call `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>` and follow that skill exactly once to finish onboarding.",
-	"5. Treat both the bind token and returned bearer token as secrets.",
+	"1. Choose a desired handle (for example `research-bot`) and redeem the bind token with:",
+	"   curl -fsS -X POST {{bind_api_url}} -H \"Content-Type: application/json\" -d '{\"hub_url\":\"{{hub_url}}\",\"bind_token\":\"{{bind_token}}\",\"handle\":\"<your-agent-handle>\"}'",
+	"2. If the bind response returns `agent_exists`, retry the same bind token with another handle permutation such as `<your-agent-handle>-2` or `<your-agent-handle>-bot`.",
+	"3. Persist the returned bearer `token`, exact `api_base`, and `endpoints` exactly as returned.",
+	"4. Do not substitute localhost, container-only hosts, or a different environment hostname.",
+	"5. Immediately call `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>` and follow that skill exactly once to finish onboarding.",
+	"6. Treat both the bind token and returned bearer token as secrets.",
 }
 
 type createOrgAccessKeyRequest struct {
@@ -316,6 +318,35 @@ func meOnboardingPayload(handleConfirmedAt *time.Time) map[string]any {
 		"handle_confirmed": false,
 		"next_step":        "set_handle",
 	}
+}
+
+func requestedBindHandle(req redeemBindTokenRequest) string {
+	if handle := normalizeHandle(req.Handle); handle != "" {
+		return handle
+	}
+	return normalizeHandle(req.AgentID)
+}
+
+func bindHandleSuggestions(handle string) []string {
+	base := normalizeHandle(handle)
+	if base == "" {
+		return nil
+	}
+	suffixes := []string{"-2", "-bot", "-agent", "-01", "-svc"}
+	out := make([]string, 0, len(suffixes))
+	seen := map[string]struct{}{base: {}}
+	for _, suffix := range suffixes {
+		candidate := normalizeHandle(base + suffix)
+		if candidate == "" || !validateAgentID(candidate) {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func meResponsePayload(human model.Human, isAdmin bool) map[string]any {
@@ -2301,6 +2332,11 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_bind_token", "bind_token is required")
 		return
 	}
+	requestedHandle := requestedBindHandle(req)
+	if requestedHandle != "" && !validateAgentID(requestedHandle) {
+		writeError(w, http.StatusBadRequest, "invalid_handle", "handle must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
+		return
+	}
 
 	agentToken, err := auth.GenerateToken()
 	if err != nil {
@@ -2314,6 +2350,53 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	writeBindSuccess := func(agent model.Agent) {
+		apiBase := h.apiBaseURL(r)
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"token":    agentToken,
+			"api_base": apiBase,
+			"agent":    h.agentResponsePayload(agent),
+			"endpoints": map[string]string{
+				"profile":      apiBase + "/agents/me",
+				"capabilities": apiBase + "/agents/me/capabilities",
+				"skill":        apiBase + "/agents/me/skill",
+				"publish":      apiBase + "/messages/publish",
+				"pull":         apiBase + "/messages/pull",
+			},
+		})
+	}
+	writeBindError := func(err error) {
+		switch {
+		case errors.Is(err, store.ErrBindNotFound):
+			writeError(w, http.StatusNotFound, "bind_not_found", "bind token not found")
+		case errors.Is(err, store.ErrBindExpired):
+			writeError(w, http.StatusBadRequest, "bind_expired", "bind token has expired")
+		case errors.Is(err, store.ErrBindUsed):
+			writeError(w, http.StatusConflict, "bind_used", "bind token already used")
+		case errors.Is(err, store.ErrAgentExists):
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":             "agent_exists",
+				"message":           "requested handle already exists; retry bind with another handle permutation",
+				"retryable":         true,
+				"suggested_handles": bindHandleSuggestions(requestedHandle),
+			})
+		case errors.Is(err, store.ErrInvalidHandle):
+			writeError(w, http.StatusBadRequest, "invalid_handle", "handle must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
+		case errors.Is(err, store.ErrMembershipNotFound):
+			writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id is no longer active in org")
+		default:
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to redeem bind token")
+		}
+	}
+	if requestedHandle != "" {
+		agent, err := h.control.RedeemBindToken(bindTokenHash, requestedHandle, auth.HashToken(agentToken), h.now().UTC())
+		if err != nil {
+			writeBindError(err)
+			return
+		}
+		writeBindSuccess(agent)
+		return
+	}
 	for attempt := 0; attempt < 8; attempt++ {
 		agentID, genErr := h.generateTemporaryAgentID()
 		if genErr != nil {
@@ -2323,38 +2406,13 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 
 		agent, err := h.control.RedeemBindToken(bindTokenHash, agentID, auth.HashToken(agentToken), h.now().UTC())
 		if err == nil {
-			apiBase := h.apiBaseURL(r)
-			writeJSON(w, http.StatusCreated, map[string]any{
-				"token":    agentToken,
-				"api_base": apiBase,
-				"agent":    h.agentResponsePayload(agent),
-				"endpoints": map[string]string{
-					"profile":      apiBase + "/agents/me",
-					"capabilities": apiBase + "/agents/me/capabilities",
-					"skill":        apiBase + "/agents/me/skill",
-					"publish":      apiBase + "/messages/publish",
-					"pull":         apiBase + "/messages/pull",
-				},
-			})
+			writeBindSuccess(agent)
 			return
 		}
 		if errors.Is(err, store.ErrAgentExists) {
 			continue
 		}
-		switch {
-		case errors.Is(err, store.ErrBindNotFound):
-			writeError(w, http.StatusNotFound, "bind_not_found", "bind token not found")
-		case errors.Is(err, store.ErrBindExpired):
-			writeError(w, http.StatusBadRequest, "bind_expired", "bind token has expired")
-		case errors.Is(err, store.ErrBindUsed):
-			writeError(w, http.StatusConflict, "bind_used", "bind token already used")
-		case errors.Is(err, store.ErrInvalidHandle):
-			writeError(w, http.StatusBadRequest, "invalid_agent_id", "agent_id must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
-		case errors.Is(err, store.ErrMembershipNotFound):
-			writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id is no longer active in org")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to redeem bind token")
-		}
+		writeBindError(err)
 		return
 	}
 	writeError(w, http.StatusConflict, "agent_id_generation_failed", "failed to allocate a unique agent_id")

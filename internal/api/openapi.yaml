@@ -944,8 +944,10 @@ paths:
       summary: Agent self-onboarding (bind token -> bearer token)
       description: |
         Primary onboarding route for agent runtimes.
-        Redeems one-time `bind_token` and assigns a temporary server-generated `agent_id`.
-        The agent must later finalize its permanent handle exactly once via `PATCH /v1/agents/me` (or `/v1/agents/me/metadata`).
+        Redeems one-time `bind_token` using the requested `handle` when supplied.
+        If no `handle` is supplied, statocyst falls back to a temporary server-generated handle.
+        A duplicate requested handle returns `409 agent_exists` and the same bind token may be retried with another handle permutation until it succeeds or expires.
+        The agent may later finalize its permanent handle exactly once via `PATCH /v1/agents/me` (or `/v1/agents/me/metadata`) when the initial bind used a temporary handle.
         This bootstrap route intentionally requires no prior auth token.
         `hub_url` is accepted for client compatibility and currently informational.
         The `201` response includes the canonical `api_base` and endpoint URLs for the deployment that issued the token.
@@ -962,15 +964,18 @@ paths:
                   type: string
                 bind_token:
                   type: string
+                handle:
+                  type: string
+                  description: Preferred agent handle to claim during bind.
                 agent_id:
                   type: string
                   deprecated: true
-                  description: Deprecated compatibility field. Ignored by server.
+                  description: Deprecated compatibility alias for `handle`.
       responses:
         '201':
           description: Agent onboarded; returns bearer token plus canonical API base and endpoints for future calls
         '409':
-          description: Bind already used or supplied agent_id exists
+          description: Bind already used or requested handle exists
   /v1/agents/me:
     get:
       summary: Read authenticated agent profile with human/org context

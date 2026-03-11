@@ -194,10 +194,13 @@ func TestLaunchSmoke(t *testing.T) {
 		orgID := createOrg(t, router, "alice", "alice@a.test", "Launch Agents")
 
 		bindToken := createMyBindToken(t, router, "alice", "alice@a.test", orgID)
-		token := redeemBindToken(t, router, bindToken, "temporary-agent-name")
+		token := redeemBindToken(t, router, bindToken, "launch-agent-a")
 		agent := currentAgent(t, router, token)
 		if agent["status"] != "active" {
 			t.Fatalf("expected bound agent active, got %v payload=%v", agent["status"], agent)
+		}
+		if agent["handle"] != "launch-agent-a" {
+			t.Fatalf("expected bound agent handle launch-agent-a, got %v payload=%v", agent["handle"], agent)
 		}
 	})
 
@@ -206,7 +209,7 @@ func TestLaunchSmoke(t *testing.T) {
 		orgID := createOrg(t, router, "alice", "alice@a.test", "Launch Agents")
 
 		bindToken := createMyBindToken(t, router, "alice", "alice@a.test", orgID)
-		token := redeemBindToken(t, router, bindToken, "temporary-agent-name")
+		token := redeemBindToken(t, router, bindToken, "launch-agent-a")
 		resp := patchAgentHandle(t, router, token, "launch-agent-a")
 		agent := requireEntity(t, decodeJSONMap(t, resp.Body.Bytes()), "agent")
 		if agent["handle"] != "launch-agent-a" {
@@ -214,23 +217,26 @@ func TestLaunchSmoke(t *testing.T) {
 		}
 	})
 
-	t.Run("Alice creates a bind token and the agent tries to add an existing handle and gets an error", func(t *testing.T) {
+	t.Run("Alice creates a bind token and the agent gets duplicate handle suggestions during bind", func(t *testing.T) {
 		router := newTestRouter()
 		orgID := createOrg(t, router, "alice", "alice@a.test", "Launch Agents")
 		aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
 		registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "launch-agent-a", aliceHumanID)
 
 		bindToken := createMyBindToken(t, router, "alice", "alice@a.test", orgID)
-		token := redeemBindToken(t, router, bindToken, "temporary-agent-name")
-		resp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
-			"handle": "launch-agent-a",
-		}, map[string]string{
-			"Authorization": "Bearer " + token,
-		})
+		resp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
+			"bind_token": bindToken,
+			"handle":     "launch-agent-a",
+		}, nil)
 		if resp.Code != http.StatusConflict {
 			t.Fatalf("expected duplicate agent handle 409, got %d %s", resp.Code, resp.Body.String())
 		}
-		requireErrorCode(t, decodeJSONMap(t, resp.Body.Bytes()), "agent_exists")
+		payload := decodeJSONMap(t, resp.Body.Bytes())
+		requireErrorCode(t, payload, "agent_exists")
+		suggested, _ := payload["suggested_handles"].([]any)
+		if len(suggested) == 0 {
+			t.Fatalf("expected duplicate bind suggestions, got %v", payload["suggested_handles"])
+		}
 	})
 
 	t.Run("Alice creates a bind token and the agent adds profile metadata", func(t *testing.T) {
@@ -468,7 +474,7 @@ func redeemBindToken(t *testing.T, router http.Handler, bindToken, agentID strin
 	t.Helper()
 	resp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
 		"bind_token": bindToken,
-		"agent_id":   agentID,
+		"handle":     agentID,
 	}, nil)
 	if resp.Code != http.StatusCreated {
 		t.Fatalf("expected bind token redeem 201, got %d %s", resp.Code, resp.Body.String())

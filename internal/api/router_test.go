@@ -577,7 +577,7 @@ func bindAgentWithUUIDForOwner(t *testing.T, router http.Handler, humanID, email
 
 	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
 		"bind_token": bindToken,
-		"agent_id":   agentID,
+		"handle":     agentID,
 	}, nil)
 	if redeemResp.Code != http.StatusCreated {
 		t.Fatalf("bind redeem failed: %d %s", redeemResp.Code, redeemResp.Body.String())
@@ -586,16 +586,6 @@ func bindAgentWithUUIDForOwner(t *testing.T, router http.Handler, humanID, email
 	token, _ := redeemPayload["token"].(string)
 	if token == "" {
 		t.Fatalf("bind response missing token")
-	}
-
-	// Bind redeem now ignores supplied agent_id; finalize desired handle explicitly.
-	finalizeResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
-		"handle": agentID,
-	}, map[string]string{
-		"Authorization": "Bearer " + token,
-	})
-	if finalizeResp.Code != http.StatusOK {
-		t.Fatalf("agent finalize handle failed: %d %s", finalizeResp.Code, finalizeResp.Body.String())
 	}
 
 	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, map[string]string{
@@ -611,7 +601,7 @@ func bindAgentWithUUIDForOwner(t *testing.T, router http.Handler, humanID, email
 		t.Fatalf("agent me missing agent_uuid")
 	}
 	gotAgentID, _ := agent["agent_id"].(string)
-	expectedURI := "https://hub.molten.bot/hive/a/" + strings.ReplaceAll(url.PathEscape(gotAgentID), "%2F", "/")
+	expectedURI := "https://hub.molten.bot/" + strings.ReplaceAll(url.PathEscape(gotAgentID), "%2F", "/")
 	if gotURI, _ := agent["uri"].(string); gotURI != expectedURI {
 		t.Fatalf("expected canonical agent uri, got %q payload=%v", gotURI, agent)
 	}
@@ -642,7 +632,7 @@ func registerMyAgent(t *testing.T, router http.Handler, humanID, email, orgID, a
 
 	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
 		"bind_token": bindToken,
-		"agent_id":   agentID,
+		"handle":     agentID,
 	}, nil)
 	if redeemResp.Code != http.StatusCreated {
 		t.Fatalf("redeem my bind token failed: %d %s", redeemResp.Code, redeemResp.Body.String())
@@ -651,15 +641,6 @@ func registerMyAgent(t *testing.T, router http.Handler, humanID, email, orgID, a
 	token, _ := redeemPayload["token"].(string)
 	if token == "" {
 		t.Fatalf("redeem response missing token")
-	}
-
-	finalizeResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
-		"handle": agentID,
-	}, map[string]string{
-		"Authorization": "Bearer " + token,
-	})
-	if finalizeResp.Code != http.StatusOK {
-		t.Fatalf("finalize my agent handle failed: %d %s", finalizeResp.Code, finalizeResp.Body.String())
 	}
 
 	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, map[string]string{
@@ -1049,7 +1030,7 @@ func TestMyAgentsAndImmediateSelfBond(t *testing.T) {
 	}
 }
 
-func TestMyAgentBindTokenRedeemUsesTempHandleThenFinalizesOnce(t *testing.T) {
+func TestMyAgentBindTokenRedeemUsesRequestedHandle(t *testing.T) {
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
 	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
@@ -1065,7 +1046,7 @@ func TestMyAgentBindTokenRedeemUsesTempHandleThenFinalizesOnce(t *testing.T) {
 	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]string{
 		"hub_url":    "https://hub.molten-qa.site",
 		"bind_token": bindToken,
-		"agent_id":   "alice-agent-picked-name",
+		"handle":     "alice-agent-picked-name",
 	}, nil)
 	if redeemResp.Code != http.StatusCreated {
 		t.Fatalf("redeem bind token failed: %d %s", redeemResp.Code, redeemResp.Body.String())
@@ -1097,8 +1078,12 @@ func TestMyAgentBindTokenRedeemUsesTempHandleThenFinalizesOnce(t *testing.T) {
 		t.Fatalf("expected capabilities payload agent_uuid")
 	}
 	initialAgentID, _ := capsAgent["agent_id"].(string)
-	if !strings.Contains(initialAgentID, "/tmp-") {
-		t.Fatalf("expected bind redeem to create temporary handle URI, got %q", initialAgentID)
+	if !strings.HasSuffix(initialAgentID, "/alice-agent-picked-name") {
+		t.Fatalf("expected bind redeem to use requested handle, got %q", initialAgentID)
+	}
+	initialURI, _ := capsAgent["uri"].(string)
+	if initialURI != "https://hub.molten.bot/human/alice/agent/alice-agent-picked-name" {
+		t.Fatalf("expected fully qualified canonical agent uri, got %q", initialURI)
 	}
 
 	firstFinalize := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
@@ -1136,6 +1121,47 @@ func TestMyAgentBindTokenRedeemUsesTempHandleThenFinalizesOnce(t *testing.T) {
 	}
 }
 
+func TestMyAgentBindTokenRedeemDuplicateHandleReturnsSuggestions(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Bind Duplicate")
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "launch-agent-a", aliceHumanID)
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{
+		"org_id": orgID,
+	}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create my bind token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	bindToken, _ := decodeJSONMap(t, createResp.Body.Bytes())["bind_token"].(string)
+	if bindToken == "" {
+		t.Fatalf("bind_token missing")
+	}
+
+	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
+		"bind_token": bindToken,
+		"handle":     "launch-agent-a",
+	}, nil)
+	if redeemResp.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate handle bind to return 409, got %d %s", redeemResp.Code, redeemResp.Body.String())
+	}
+	redeemPayload := decodeJSONMap(t, redeemResp.Body.Bytes())
+	if redeemPayload["error"] != "agent_exists" {
+		t.Fatalf("expected agent_exists, got %v payload=%v", redeemPayload["error"], redeemPayload)
+	}
+	if retryable, _ := redeemPayload["retryable"].(bool); !retryable {
+		t.Fatalf("expected retryable duplicate bind response, got %v payload=%v", redeemPayload["retryable"], redeemPayload)
+	}
+	suggestedHandles, _ := redeemPayload["suggested_handles"].([]any)
+	if len(suggestedHandles) == 0 {
+		t.Fatalf("expected suggested_handles in duplicate bind response, got %v", redeemPayload["suggested_handles"])
+	}
+	got, _ := suggestedHandles[0].(string)
+	if got = strings.TrimSpace(got); got == "" || got == "launch-agent-a" {
+		t.Fatalf("expected first suggested handle to differ from original, got %q", got)
+	}
+}
+
 func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
@@ -1161,6 +1187,12 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	}
 	if !strings.Contains(connectPrompt, "Bind Scope: Personal") {
 		t.Fatalf("expected personal scope in connect prompt, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "\"handle\":\"<your-agent-handle>\"") {
+		t.Fatalf("expected connect prompt to instruct agent to pass desired handle, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "agent_exists") || !strings.Contains(connectPrompt, "<your-agent-handle>-2") {
+		t.Fatalf("expected connect prompt to explain duplicate retry permutations, got %q", connectPrompt)
 	}
 }
 

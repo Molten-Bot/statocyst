@@ -227,8 +227,8 @@ func TestPeerIngressRejectsInvalidSignature(t *testing.T) {
 	body, _ := json.Marshal(peerInboundEnvelope{
 		Message: model.Message{
 			MessageID:    "019cd9f1-e91f-7e03-9d21-5667f024b90b",
-			FromAgentURI: "https://alpha.example/hive/a/org-alpha/agent-a",
-			ToAgentURI:   "https://beta.example/hive/a/org-beta/agent-b",
+			FromAgentURI: "https://alpha.example/org-alpha/agent-a",
+			ToAgentURI:   "https://beta.example/org-beta/agent-b",
 			ContentType:  "text/plain",
 			Payload:      "bad-signature",
 			CreatedAt:    time.Now().UTC(),
@@ -251,8 +251,8 @@ func TestPeerIngressRejectsTransitiveTarget(t *testing.T) {
 	body, _ := json.Marshal(peerInboundEnvelope{
 		Message: model.Message{
 			MessageID:    "019cd9f1-e91f-7e03-9d21-5667f024b90c",
-			FromAgentURI: "https://alpha.example/hive/a/org-alpha/agent-a",
-			ToAgentURI:   "https://gamma.example/hive/a/org-gamma/agent-c",
+			FromAgentURI: "https://alpha.example/org-alpha/agent-a",
+			ToAgentURI:   "https://gamma.example/org-gamma/agent-c",
 			ContentType:  "text/plain",
 			Payload:      "no-transit",
 			CreatedAt:    time.Now().UTC(),

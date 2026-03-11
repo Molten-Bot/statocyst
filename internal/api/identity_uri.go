@@ -59,15 +59,15 @@ func escapePathSegments(value string) string {
 }
 
 func (h *Handler) organizationURI(org model.Organization) string {
-	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/o/"+url.PathEscape(strings.TrimSpace(org.Handle)))
+	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/orgs/"+url.PathEscape(strings.TrimSpace(org.Handle)))
 }
 
 func (h *Handler) humanURI(human model.Human) string {
-	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/h/"+url.PathEscape(strings.TrimSpace(human.Handle)))
+	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/humans/"+url.PathEscape(strings.TrimSpace(human.Handle)))
 }
 
 func (h *Handler) agentURI(agent model.Agent) string {
-	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/a/"+escapePathSegments(agent.AgentID))
+	return buildCanonicalEntityPathURI(h.canonicalBaseURL, "/"+escapePathSegments(agent.AgentID))
 }
 
 func (h *Handler) organizationPayload(org model.Organization) map[string]any {
@@ -131,7 +131,7 @@ func (h *Handler) orgHumanViewPayload(view model.OrgHumanView) map[string]any {
 	return map[string]any{
 		"human_id":      view.HumanID,
 		"handle":        view.Handle,
-		"uri":           buildCanonicalEntityPathURI(h.canonicalBaseURL, "/hive/h/"+url.PathEscape(strings.TrimSpace(view.Handle))),
+		"uri":           buildCanonicalEntityPathURI(h.canonicalBaseURL, "/humans/"+url.PathEscape(strings.TrimSpace(view.Handle))),
 		"email":         view.Email,
 		"role":          view.Role,
 		"status":        view.Status,

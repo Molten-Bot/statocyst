@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -3207,11 +3208,17 @@ func remoteAgentTrustKey(localAgentUUID, peerID, remoteAgentURI string) string {
 }
 
 func agentRefFromURI(agentURI string) string {
-	const marker = "/hive/a/"
 	agentURI = strings.TrimSpace(agentURI)
-	index := strings.Index(agentURI, marker)
-	if index < 0 {
+	parsed, err := url.Parse(agentURI)
+	if err != nil {
 		return ""
 	}
-	return strings.Trim(strings.TrimSpace(agentURI[index+len(marker):]), "/")
+	path := strings.Trim(strings.TrimSpace(parsed.Path), "/")
+	if path == "" {
+		return ""
+	}
+	if strings.HasPrefix(path, "orgs/") || strings.HasPrefix(path, "humans/") {
+		return ""
+	}
+	return path
 }

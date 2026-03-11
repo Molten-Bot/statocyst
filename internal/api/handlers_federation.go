@@ -504,11 +504,14 @@ func splitCanonicalAgentURI(raw string) (string, string, error) {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return "", "", errors.New("missing scheme or host")
 	}
-	const prefix = "/hive/a/"
-	if !strings.HasPrefix(parsed.Path, prefix) {
+	path := strings.Trim(strings.TrimSpace(parsed.Path), "/")
+	if path == "" {
 		return "", "", errors.New("invalid agent uri path")
 	}
-	ref, err := url.PathUnescape(strings.TrimPrefix(parsed.Path, prefix))
+	if strings.HasPrefix(path, "orgs/") || strings.HasPrefix(path, "humans/") {
+		return "", "", errors.New("invalid agent uri path")
+	}
+	ref, err := url.PathUnescape(path)
 	if err != nil {
 		return "", "", err
 	}
