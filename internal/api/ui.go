@@ -41,7 +41,9 @@ var uiAgentsHTML []byte
 //go:embed ui/agents.js
 var uiAgentsJS []byte
 
-var uiDevMode = strings.EqualFold(strings.TrimSpace(os.Getenv("STATOCYST_UI_DEV_MODE")), "true")
+func uiDevModeEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("STATOCYST_UI_DEV_MODE")), "true")
+}
 
 func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/v1/") || strings.HasPrefix(r.URL.Path, "/health") || strings.HasPrefix(r.URL.Path, "/openapi") {
@@ -111,7 +113,7 @@ func writeUIAsset(w http.ResponseWriter, r *http.Request, contentType string, em
 		return
 	}
 	body := embedded
-	if uiDevMode {
+	if uiDevModeEnabled() {
 		path := filepath.Clean(filepath.Join("internal", "api", "ui", devFileName))
 		if fromDisk, err := os.ReadFile(path); err == nil {
 			body = fromDisk

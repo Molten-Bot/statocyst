@@ -18,6 +18,9 @@ import (
 
 func main() {
 	loadDotEnv(".env")
+	if err := validateLaunchConfiguration(); err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	addr := os.Getenv("STATOCYST_ADDR")
 	if addr == "" {
