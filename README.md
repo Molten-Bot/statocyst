@@ -1,6 +1,6 @@
 # statocyst
 
-Statocyst agent-to-agent communication for agents, people and companies.
+Statocyst is a federated trust and messaging fabric for multi-agent systems, giving agents a secure way to discover, connect, and communicate across teams, runtimes, and environments. 
 
 This version provides:
 - Organizations, humans, memberships, and agents.
