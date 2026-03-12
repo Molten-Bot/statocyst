@@ -67,4 +67,34 @@ func TestBootstrapHandlerReturnsUnavailableForApplicationRoutes(t *testing.T) {
 	if resp.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected /v1/me 503 during startup, got %d body=%s", resp.Code, resp.Body.String())
 	}
+	if got := resp.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("expected Retry-After=1 for startup response, got %q", got)
+	}
+}
+
+func TestBootstrapHandlerReturnsUnavailableForOpenAPIWhileStarting(t *testing.T) {
+	handler := newBootstrapHandler(store.StorageStartupModeDegraded, "s3", "s3")
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected /openapi.yaml 503 during startup, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("expected Retry-After=1 for openapi startup response, got %q", got)
+	}
+}
+
+func TestBootstrapHandlerPingAllowsHeadBeforeReady(t *testing.T) {
+	handler := newBootstrapHandler(store.StorageStartupModeDegraded, "s3", "s3")
+
+	req := httptest.NewRequest(http.MethodHead, "/ping", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("expected HEAD /ping 204 before ready, got %d", resp.Code)
+	}
 }

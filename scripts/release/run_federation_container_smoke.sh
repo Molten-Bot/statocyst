@@ -29,14 +29,20 @@ STATOCYST_ALPHA_PORT="${ALPHA_PORT}" \
 STATOCYST_BETA_PORT="${BETA_PORT}" \
 docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d >/dev/null
 
-wait_for_health() {
+wait_for_ping() {
   local base_url="$1"
   local label="$2"
   local attempts=0
-  until curl -fsS "${base_url}/health" >/dev/null 2>&1; do
+  while true; do
+    local code
+    code="$(curl -sS -o /dev/null -w "%{http_code}" "${base_url}/ping" || true)"
+    if [[ "${code}" == "200" || "${code}" == "204" ]]; then
+      return 0
+    fi
+
     attempts=$((attempts + 1))
     if [[ "${attempts}" -ge 30 ]]; then
-      echo "ERROR: ${label} did not become healthy at ${base_url}" >&2
+      echo "ERROR: ${label} did not become live at ${base_url}/ping" >&2
       STATOCYST_IMAGE="${IMAGE_REF}" \
       STATOCYST_ALPHA_PORT="${ALPHA_PORT}" \
       STATOCYST_BETA_PORT="${BETA_PORT}" \
@@ -47,8 +53,58 @@ wait_for_health() {
   done
 }
 
-wait_for_health "${ALPHA_BASE_URL}" "alpha"
-wait_for_health "${BETA_BASE_URL}" "beta"
+wait_for_ready_health() {
+  local base_url="$1"
+  local label="$2"
+  local attempts=0
+  local body_file
+  body_file="$(mktemp)"
+  trap 'rm -f "${body_file}"; cleanup' EXIT
+
+  while true; do
+    local code
+    code="$(curl -sS -o "${body_file}" -w "%{http_code}" "${base_url}/health" || true)"
+    if [[ "${code}" == "200" ]]; then
+      if python3 - "${body_file}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+if str(payload.get("boot_status", "")).strip().lower() == "starting":
+    raise SystemExit(1)
+if str(payload.get("status", "")).strip().lower() != "ok":
+    raise SystemExit(1)
+PY
+      then
+        rm -f "${body_file}"
+        trap cleanup EXIT
+        return 0
+      fi
+    fi
+
+    attempts=$((attempts + 1))
+    if [[ "${attempts}" -ge 30 ]]; then
+      echo "ERROR: ${label} did not become ready at ${base_url}/health" >&2
+      if [[ -s "${body_file}" ]]; then
+        head -c 512 "${body_file}" >&2 || true
+        echo >&2
+      fi
+      STATOCYST_IMAGE="${IMAGE_REF}" \
+      STATOCYST_ALPHA_PORT="${ALPHA_PORT}" \
+      STATOCYST_BETA_PORT="${BETA_PORT}" \
+      docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" logs >&2 || true
+      exit 1
+    fi
+    sleep 1
+  done
+}
+
+wait_for_ping "${ALPHA_BASE_URL}" "alpha"
+wait_for_ping "${BETA_BASE_URL}" "beta"
+wait_for_ready_health "${ALPHA_BASE_URL}" "alpha"
+wait_for_ready_health "${BETA_BASE_URL}" "beta"
 
 go run ./cmd/statocyst-federation-smoke \
   -alpha-base-url "${ALPHA_BASE_URL}" \
