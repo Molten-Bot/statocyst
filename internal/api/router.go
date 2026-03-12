@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,6 +109,7 @@ func NewRouter(handler *Handler) http.Handler {
 
 func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", handlePing)
 	mux.HandleFunc("/health", handler.handleHealthz)
 	mux.HandleFunc("/openapi.yaml", handler.handleOpenAPIYAML)
 	mux.HandleFunc("/v1/ui/config", handler.handleUIConfig)
@@ -162,8 +164,8 @@ func (h *Handler) SetHeadlessModeRedirectURL(raw string) {
 
 func withPeerOutboxProcessing(handler *Handler, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isAPIPath(r.URL.Path) && r.URL.Path != "/v1/peer/messages" {
-			handler.processPeerOutboxes(r.Context(), 16)
+		if strings.HasPrefix(r.URL.Path, "/v1/") && r.URL.Path != "/v1/peer/messages" {
+			go handler.processPeerOutboxes(context.WithoutCancel(r.Context()), 16)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -408,6 +410,14 @@ func (w *gzipResponseWriter) Flush() {
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+func handlePing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeMethodNotAllowed(w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {

@@ -16,6 +16,15 @@ info:
 servers:
   - url: http://localhost:8080
 paths:
+  /ping:
+    get:
+      summary: Lightweight liveness ping
+      description: |
+        Minimal liveness endpoint intended for container startup and wake probes.
+        Returns HTTP 204 as soon as the HTTP listener is ready, even while storage hydration is still in progress.
+      responses:
+        '204':
+          description: Listener is accepting requests
   /health:
     get:
       summary: Health check (liveness with dependency details)
@@ -34,6 +43,9 @@ paths:
                   status:
                     type: string
                     enum: [ok, degraded]
+                  boot_status:
+                    type: string
+                    enum: [starting]
                   storage:
                     type: object
                     required: [startup_mode, state, queue]

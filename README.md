@@ -76,6 +76,7 @@ Statocyst validates metadata as JSON object payloads with size limits, then pers
 - Startup mode:
   - `STATOCYST_STORAGE_STARTUP_MODE=strict` (default): startup fails when configured storage backends are invalid/unreachable.
   - `STATOCYST_STORAGE_STARTUP_MODE=degraded`: startup falls back to memory for failing backends and reports dependency failures in `/health`.
+  - The HTTP listener now comes up before S3 hydration completes; use `/ping` for liveness and `/health` for dependency/readiness details.
 
 ### Queue backend
 
@@ -176,7 +177,7 @@ and A<->B agent messaging over the bridge.
 
 ### Caller Contract (must stay stable)
 
-- `Public` (no auth): `/health`, `/openapi.yaml`.
+- `Public` (no auth): `/ping`, `/health`, `/openapi.yaml`.
 - `Human control-plane auth`: `/v1/me*`, `/v1/org*`, `/v1/agent-trusts*`, `/v1/org-trusts*`, `/v1/agents/{agent_uuid}*`, `/v1/agents/bind-tokens`.
 - `Agent bootstrap` (no prior auth): `POST /v1/agents/bind` with one-time `bind_token`.
 - `Agent runtime auth`: `/v1/agents/me/capabilities`, `/v1/agents/me/skill`, `/v1/messages/publish`, `/v1/messages/pull` using agent bearer token.
@@ -186,14 +187,21 @@ Caller credentials are intentionally separated: human credentials are for contro
 ### Health and spec
 
 ```bash
+curl -i http://localhost:8080/ping
 curl -sS http://localhost:8080/health
 curl -sS http://localhost:8080/openapi.yaml
 ```
 
-`/health` is now liveness-oriented:
+`/ping` is the lightweight liveness route:
+- Returns HTTP `204` as soon as the HTTP listener is accepting requests.
+- Intended for container startup and wake probes.
+- Does not perform storage checks, peer delivery work, compression, or CORS handling.
+
+`/health` reports runtime dependency health:
 - Always HTTP `200` while web server is running.
 - `status: ok` when configured storage dependencies are healthy.
 - `status: degraded` when one or more configured dependencies are unhealthy.
+- `boot_status: starting` is included while the server is still hydrating configured storage backends.
 - Includes per-backend detail under `storage.state` and `storage.queue` (`backend`, `healthy`, and optional `error`).
 
 ### UI

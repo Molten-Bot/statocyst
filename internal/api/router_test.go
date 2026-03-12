@@ -57,6 +57,21 @@ func TestHandlerWiringWithInterfaceStores(t *testing.T) {
 	}
 }
 
+func TestPingReturnsNoContent(t *testing.T) {
+	router := newTestRouter()
+
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("expected /ping 204, got %d %s", resp.Code, resp.Body.String())
+	}
+	if resp.Body.Len() != 0 {
+		t.Fatalf("expected /ping empty body, got %q", resp.Body.String())
+	}
+}
+
 func TestHealthReportsDegradedStorageStatus(t *testing.T) {
 	mem := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()

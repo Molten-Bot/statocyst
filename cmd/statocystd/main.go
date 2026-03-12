@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,21 +33,6 @@ func main() {
 		log.Fatalf("storage startup mode configuration error: %v", err)
 	}
 
-	controlStore, queueStore, storageHealth, err := store.NewStoresFromEnvWithMode(storageStartupMode)
-	if err != nil {
-		log.Fatalf("storage backend configuration error: %v", err)
-	}
-	if storageHealth.OverallStatus() != "ok" {
-		log.Printf(
-			"storage backend degraded: mode=%s state_backend=%s state_error=%q queue_backend=%s queue_error=%q",
-			storageHealth.StartupMode,
-			storageHealth.State.Backend,
-			storageHealth.State.Error,
-			storageHealth.Queue.Backend,
-			storageHealth.Queue.Error,
-		)
-	}
-
 	waiters := longpoll.NewWaiters()
 	humanAuth := auth.NewHumanAuthProviderFromEnv()
 	bindTTL := 15 * time.Minute
@@ -72,37 +58,66 @@ func main() {
 	if err != nil {
 		log.Fatalf("CORS allowed origins configuration error: %v", err)
 	}
-	handler := api.NewHandler(
-		controlStore,
-		queueStore,
-		waiters,
-		humanAuth,
-		os.Getenv("STATOCYST_CANONICAL_BASE_URL"),
-		os.Getenv("SUPABASE_URL"),
-		os.Getenv("SUPABASE_ANON_KEY"),
-		os.Getenv("STATOCYST_ADMIN_SNAPSHOT_KEY"),
-		os.Getenv("SUPER_ADMIN_EMAILS"),
-		os.Getenv("SUPER_ADMIN_DOMAINS"),
-		superAdminReviewMode,
-		bindTTL,
-		headlessMode,
+	bootstrap := newBootstrapHandler(
+		storageStartupMode,
+		configuredBackendFromEnv(os.Getenv("STATOCYST_STATE_BACKEND"), "memory"),
+		configuredBackendFromEnv(os.Getenv("STATOCYST_QUEUE_BACKEND"), "memory"),
 	)
-	handler.SetHeadlessModeRedirectURL(os.Getenv("STATOCYST_HEADLESS_MODE_URL"))
-	handler.SetStorageHealth(storageHealth)
-	router := api.NewRouterWithOptions(handler, api.RouterOptions{
-		EnableLocalCORS:    enableLocalCORS,
-		AllowedCORSOrigins: allowedCORSOrigins,
-	})
 
 	server := &http.Server{
 		Addr:    addr,
-		Handler: router,
+		Handler: bootstrap,
 	}
 
-	log.Printf("statocyst listening on %s", addr)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listen failed: %v", err)
+	}
+
+	go func() {
+		controlStore, queueStore, storageHealth, storeErr := store.NewStoresFromEnvWithMode(storageStartupMode)
+		if storeErr != nil {
+			log.Fatalf("storage backend configuration error: %v", storeErr)
+		}
+		if storageHealth.OverallStatus() != "ok" {
+			log.Printf(
+				"storage backend degraded: mode=%s state_backend=%s state_error=%q queue_backend=%s queue_error=%q",
+				storageHealth.StartupMode,
+				storageHealth.State.Backend,
+				storageHealth.State.Error,
+				storageHealth.Queue.Backend,
+				storageHealth.Queue.Error,
+			)
+		}
+
+		handler := api.NewHandler(
+			controlStore,
+			queueStore,
+			waiters,
+			humanAuth,
+			os.Getenv("STATOCYST_CANONICAL_BASE_URL"),
+			os.Getenv("SUPABASE_URL"),
+			os.Getenv("SUPABASE_ANON_KEY"),
+			os.Getenv("STATOCYST_ADMIN_SNAPSHOT_KEY"),
+			os.Getenv("SUPER_ADMIN_EMAILS"),
+			os.Getenv("SUPER_ADMIN_DOMAINS"),
+			superAdminReviewMode,
+			bindTTL,
+			headlessMode,
+		)
+		handler.SetHeadlessModeRedirectURL(os.Getenv("STATOCYST_HEADLESS_MODE_URL"))
+		handler.SetStorageHealth(storageHealth)
+		bootstrap.SetReady(api.NewRouterWithOptions(handler, api.RouterOptions{
+			EnableLocalCORS:    enableLocalCORS,
+			AllowedCORSOrigins: allowedCORSOrigins,
+		}))
+		log.Printf("statocyst runtime ready")
+	}()
+
+	log.Printf("statocyst listening on %s", listener.Addr().String())
 	log.Printf("local CORS enabled: %t", enableLocalCORS)
 	log.Printf("configured CORS origins: %d", len(allowedCORSOrigins))
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server failed: %v", err)
 	}
 }
