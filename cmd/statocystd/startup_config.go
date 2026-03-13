@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"statocyst/internal/api"
+	"statocyst/internal/auth"
 	"statocyst/internal/store"
 )
 
@@ -191,6 +192,15 @@ func collectLaunchDiagnostics(lookup func(string) (string, bool)) ([]launchDiagn
 	case "supabase":
 		requireEnv(lookup, &diagnostics, &failures, "SUPABASE_URL", "Supabase auth provider cannot validate bearer tokens without the project URL")
 		requireEnv(lookup, &diagnostics, &failures, "SUPABASE_ANON_KEY", "Supabase auth provider cannot validate bearer tokens without the anon key")
+		if key := envValue(lookup, "SUPABASE_ANON_KEY"); key != "" && !auth.IsSafeSupabaseBrowserKey(key) {
+			failures = append(failures, "SUPABASE_ANON_KEY")
+			diagnostics = append(diagnostics, launchDiagnostic{
+				level:   "ERROR",
+				name:    "SUPABASE_ANON_KEY",
+				value:   key,
+				message: "must be a browser-safe Supabase anon/publishable key; secret or service-role keys are not allowed",
+			})
+		}
 	}
 
 	if stateBackend == "s3" {

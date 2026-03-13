@@ -172,7 +172,7 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(h.supabaseURL) != "" {
 			supabaseConfig["url"] = h.supabaseURL
 		}
-		if strings.TrimSpace(h.supabaseAnonKey) != "" {
+		if auth.IsSafeSupabaseBrowserKey(h.supabaseAnonKey) {
 			supabaseConfig["anon_key"] = h.supabaseAnonKey
 		}
 		if len(supabaseConfig) > 0 {

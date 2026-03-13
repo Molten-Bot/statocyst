@@ -31,6 +31,37 @@ func TestCollectLaunchDiagnostics_FailsWhenSupabaseRequiredVarsMissing(t *testin
 	assertDiagnosticContains(t, diagnostics, "ERROR", "SUPABASE_ANON_KEY", "cannot validate bearer tokens")
 }
 
+func TestCollectLaunchDiagnostics_FailsWhenSupabaseAnonKeyIsSecretLike(t *testing.T) {
+	diagnostics, err := collectLaunchDiagnostics(mapLookup(map[string]string{
+		"HUMAN_AUTH_PROVIDER": "supabase",
+		"SUPABASE_URL":        "https://example.supabase.co",
+		"SUPABASE_ANON_KEY":   "sb_secret_not_allowed",
+	}))
+	if err == nil {
+		t.Fatal("expected error for secret-class SUPABASE_ANON_KEY")
+	}
+	if !strings.Contains(err.Error(), "SUPABASE_ANON_KEY") {
+		t.Fatalf("expected SUPABASE_ANON_KEY in error, got %v", err)
+	}
+	assertDiagnosticContains(t, diagnostics, "ERROR", "SUPABASE_ANON_KEY", "browser-safe Supabase anon/publishable key")
+}
+
+func TestCollectLaunchDiagnostics_AcceptsSupabasePublishableKey(t *testing.T) {
+	diagnostics, err := collectLaunchDiagnostics(mapLookup(map[string]string{
+		"HUMAN_AUTH_PROVIDER": "supabase",
+		"SUPABASE_URL":        "https://example.supabase.co",
+		"SUPABASE_ANON_KEY":   "sb_publishable_ok",
+	}))
+	if err != nil {
+		t.Fatalf("expected no error for publishable key, got %v", err)
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.level == "ERROR" && diagnostic.name == "SUPABASE_ANON_KEY" {
+			t.Fatalf("did not expect SUPABASE_ANON_KEY error diagnostic, got %+v", diagnostic)
+		}
+	}
+}
+
 func TestCollectLaunchDiagnostics_FailsWhenS3BackendsMissingRequiredVars(t *testing.T) {
 	diagnostics, err := collectLaunchDiagnostics(mapLookup(map[string]string{
 		"STATOCYST_STATE_BACKEND": "s3",

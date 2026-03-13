@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -712,7 +713,17 @@ func decodeJSON(r *http.Request, out any) error {
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(out)
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	// Force EOF so the request stream is fully consumed before responding.
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("invalid JSON request")
+		}
+		return err
+	}
+	return nil
 }
 
 func validateAgentID(agentID string) bool {

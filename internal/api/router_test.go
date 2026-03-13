@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -211,6 +212,53 @@ func TestAPICORSRejectsUnknownOrigin(t *testing.T) {
 
 	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("expected unknown origin to be blocked, got %q", got)
+	}
+}
+
+type eofTrackingBody struct {
+	reader     io.Reader
+	reachedEOF bool
+}
+
+func (b *eofTrackingBody) Read(p []byte) (int, error) {
+	n, err := b.reader.Read(p)
+	if err == io.EOF {
+		b.reachedEOF = true
+	}
+	return n, err
+}
+
+func (b *eofTrackingBody) Close() error {
+	return nil
+}
+
+func TestDecodeJSONConsumesBodyToEOF(t *testing.T) {
+	body := &eofTrackingBody{reader: strings.NewReader(`{"value":"ok"}   `)}
+	req := httptest.NewRequest(http.MethodPost, "/v1/test", nil)
+	req.Body = body
+
+	var payload struct {
+		Value string `json:"value"`
+	}
+	if err := decodeJSON(req, &payload); err != nil {
+		t.Fatalf("decodeJSON failed: %v", err)
+	}
+	if payload.Value != "ok" {
+		t.Fatalf("expected decoded value ok, got %q", payload.Value)
+	}
+	if !body.reachedEOF {
+		t.Fatalf("expected decodeJSON to read request body to EOF")
+	}
+}
+
+func TestDecodeJSONRejectsMultipleJSONValues(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/test", strings.NewReader(`{"value":"ok"} {"value":"second"}`))
+
+	var payload struct {
+		Value string `json:"value"`
+	}
+	if err := decodeJSON(req, &payload); err == nil {
+		t.Fatalf("expected decodeJSON to reject multiple JSON values")
 	}
 }
 
@@ -590,6 +638,78 @@ func TestUIConfigKeepsPrivilegedFieldsRedactedWithWrongPrivilegedKey(t *testing.
 	}
 	if _, exists := adminObj["emails"]; exists {
 		t.Fatalf("expected redacted admin.emails for wrong key, got %v", adminObj["emails"])
+	}
+}
+
+func TestUIConfigSupabaseOmitsSecretKey(t *testing.T) {
+	mem := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(
+		mem,
+		mem,
+		waiters,
+		auth.NewSupabaseAuthProvider("https://example.supabase.co", "sb_secret_should_not_leak"),
+		"https://hub.molten.bot",
+		"https://example.supabase.co",
+		"sb_secret_should_not_leak",
+		"",
+		"",
+		"",
+		false,
+		15*time.Minute,
+		false,
+	)
+	router := NewRouter(h)
+
+	resp := doJSONRequest(t, router, http.MethodGet, "/v1/ui/config", nil, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/ui/config 200, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	authObj, _ := payload["auth"].(map[string]any)
+	supabaseObj, ok := authObj["supabase"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected auth.supabase object, payload=%v", payload)
+	}
+	if _, exists := supabaseObj["anon_key"]; exists {
+		t.Fatalf("expected auth.supabase.anon_key omitted for secret key, payload=%v", payload)
+	}
+}
+
+func TestUIConfigSupabaseIncludesBrowserSafeKey(t *testing.T) {
+	mem := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(
+		mem,
+		mem,
+		waiters,
+		auth.NewSupabaseAuthProvider("https://example.supabase.co", "sb_publishable_safe"),
+		"https://hub.molten.bot",
+		"https://example.supabase.co",
+		"sb_publishable_safe",
+		"",
+		"",
+		"",
+		false,
+		15*time.Minute,
+		false,
+	)
+	router := NewRouter(h)
+
+	resp := doJSONRequest(t, router, http.MethodGet, "/v1/ui/config", nil, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/ui/config 200, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	authObj, _ := payload["auth"].(map[string]any)
+	supabaseObj, ok := authObj["supabase"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected auth.supabase object, payload=%v", payload)
+	}
+	if got, _ := supabaseObj["anon_key"].(string); got != "sb_publishable_safe" {
+		t.Fatalf("expected safe anon_key in ui config, got %q payload=%v", got, payload)
 	}
 }
 

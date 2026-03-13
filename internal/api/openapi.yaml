@@ -85,7 +85,7 @@ paths:
       description: |
         Runtime configuration consumed by bundled UI clients; external agents usually do not need this.
         `auth.human` declares the active human auth provider.
-        When provider is `supabase`, `auth.supabase` is included and `anon_key` is intentionally exposed for browser auth bootstrap.
+        When provider is `supabase`, `auth.supabase` is included and `anon_key` is returned only when configured with a browser-safe Supabase key (publishable/anon). Secret/service-role keys are never exposed.
         Empty string/array fields and null-valued fields are omitted from the JSON response.
         Privileged fields are redacted by default.
         When `UI_CONFIG_API_KEY` is configured server-side, callers can send header `X-UI-Config-Key` with the matching value to receive unredacted `admin.emails`.
