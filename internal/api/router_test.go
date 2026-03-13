@@ -2969,21 +2969,165 @@ func TestErrorPayloadIncludesRequestCorrelationMetadata(t *testing.T) {
 	}
 }
 
-func TestAgentMutatingRouteRejectsUnsupportedMediaType(t *testing.T) {
+func TestAgentMutatingRoutesRejectUnsupportedMediaType(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, agentUUIDB, _, _, _, _ := setupTrustedAgents(t, router)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages/publish", strings.NewReader(fmt.Sprintf(`{"to_agent_uuid":"%s","content_type":"text/plain","payload":"hello"}`, agentUUIDB)))
-	req.Header.Set("Authorization", "Bearer "+tokenA)
-	req.Header.Set("Content-Type", "text/plain")
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusUnsupportedMediaType {
-		t.Fatalf("expected 415 unsupported media type, got %d %s", resp.Code, resp.Body.String())
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		token  string
+	}{
+		{
+			name:   "bind",
+			method: http.MethodPost,
+			path:   "/v1/agents/bind",
+			body:   `{"bind_token":"x"}`,
+		},
+		{
+			name:   "agent profile patch",
+			method: http.MethodPatch,
+			path:   "/v1/agents/me",
+			body:   `{"metadata":{"public":true}}`,
+			token:  tokenA,
+		},
+		{
+			name:   "agent metadata patch",
+			method: http.MethodPatch,
+			path:   "/v1/agents/me/metadata",
+			body:   `{"metadata":{"public":true}}`,
+			token:  tokenA,
+		},
+		{
+			name:   "publish",
+			method: http.MethodPost,
+			path:   "/v1/messages/publish",
+			body:   fmt.Sprintf(`{"to_agent_uuid":"%s","content_type":"text/plain","payload":"hello"}`, agentUUIDB),
+			token:  tokenA,
+		},
+		{
+			name:   "ack",
+			method: http.MethodPost,
+			path:   "/v1/messages/ack",
+			body:   `{"delivery_id":"delivery-1"}`,
+		},
+		{
+			name:   "nack",
+			method: http.MethodPost,
+			path:   "/v1/messages/nack",
+			body:   `{"delivery_id":"delivery-1"}`,
+		},
 	}
-	payload := decodeJSONMap(t, resp.Body.Bytes())
-	if payload["error"] != "unsupported_media_type" {
-		t.Fatalf("expected unsupported_media_type error, got %v", payload["error"])
+
+	for _, tc := range tests {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "text/plain")
+		if tc.token != "" {
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+		}
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("%s: expected 415 unsupported media type, got %d %s", tc.name, resp.Code, resp.Body.String())
+		}
+		payload := decodeJSONMap(t, resp.Body.Bytes())
+		if payload["error"] != "unsupported_media_type" {
+			t.Fatalf("%s: expected unsupported_media_type error, got %v", tc.name, payload["error"])
+		}
+	}
+}
+
+func TestAgentDiscoveryRoutesRejectUnsupportedAcceptHeaders(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "manifest", path: "/v1/agents/me/manifest"},
+		{name: "skill", path: "/v1/agents/me/skill"},
+		{name: "capabilities", path: "/v1/agents/me/capabilities"},
+	}
+
+	for _, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Header.Set("Authorization", "Bearer "+tokenA)
+		req.Header.Set("Accept", "application/xml")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusNotAcceptable {
+			t.Fatalf("%s: expected 406 not acceptable, got %d %s", tc.name, resp.Code, resp.Body.String())
+		}
+		payload := decodeJSONMap(t, resp.Body.Bytes())
+		if payload["error"] != "not_acceptable" {
+			t.Fatalf("%s: expected not_acceptable error code, got %v", tc.name, payload["error"])
+		}
+	}
+}
+
+func TestAgentRuntimeUnauthorizedErrorEnvelopeContract(t *testing.T) {
+	router := newTestRouter()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{name: "me", method: http.MethodGet, path: "/v1/agents/me"},
+		{name: "manifest", method: http.MethodGet, path: "/v1/agents/me/manifest"},
+		{name: "capabilities", method: http.MethodGet, path: "/v1/agents/me/capabilities"},
+		{name: "skill", method: http.MethodGet, path: "/v1/agents/me/skill"},
+		{name: "profile-patch", method: http.MethodPatch, path: "/v1/agents/me", body: map[string]any{"metadata": map[string]any{"public": true}}},
+		{name: "metadata-patch", method: http.MethodPatch, path: "/v1/agents/me/metadata", body: map[string]any{"metadata": map[string]any{"public": true}}},
+		{name: "publish", method: http.MethodPost, path: "/v1/messages/publish", body: map[string]any{"to_agent_uuid": "11111111-1111-1111-1111-111111111111", "content_type": "text/plain", "payload": "hello"}},
+		{name: "pull", method: http.MethodGet, path: "/v1/messages/pull?timeout_ms=0"},
+		{name: "ack", method: http.MethodPost, path: "/v1/messages/ack", body: map[string]any{"delivery_id": "delivery-1"}},
+		{name: "nack", method: http.MethodPost, path: "/v1/messages/nack", body: map[string]any{"delivery_id": "delivery-1"}},
+		{name: "status", method: http.MethodGet, path: "/v1/messages/message-1"},
+	}
+
+	for _, tc := range tests {
+		resp := doJSONRequest(t, router, tc.method, tc.path, tc.body, nil)
+		if resp.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: expected 401 unauthorized, got %d %s", tc.name, resp.Code, resp.Body.String())
+		}
+		requestID := strings.TrimSpace(resp.Header().Get("X-Request-ID"))
+		if requestID == "" {
+			t.Fatalf("%s: expected X-Request-ID header", tc.name)
+		}
+		payload := decodeJSONMap(t, resp.Body.Bytes())
+		if payload["error"] != "unauthorized" {
+			t.Fatalf("%s: expected unauthorized error code, got %v", tc.name, payload["error"])
+		}
+		if payload["request_id"] != requestID {
+			t.Fatalf("%s: expected request_id to match X-Request-ID header, got request_id=%v header=%s", tc.name, payload["request_id"], requestID)
+		}
+		if payload["retryable"] != false {
+			t.Fatalf("%s: expected retryable=false for unauthorized, got %v", tc.name, payload["retryable"])
+		}
+		nextAction, _ := payload["next_action"].(string)
+		if strings.TrimSpace(nextAction) == "" {
+			t.Fatalf("%s: expected next_action guidance", tc.name)
+		}
+
+		detail, ok := payload["error_detail"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: expected error_detail object, got %v", tc.name, payload["error_detail"])
+		}
+		if detail["code"] != "unauthorized" {
+			t.Fatalf("%s: expected error_detail.code unauthorized, got %v", tc.name, detail["code"])
+		}
+		if detail["request_id"] != requestID {
+			t.Fatalf("%s: expected error_detail.request_id to match header, got %v", tc.name, detail["request_id"])
+		}
+		if detail["retryable"] != false {
+			t.Fatalf("%s: expected error_detail.retryable=false, got %v", tc.name, detail["retryable"])
+		}
 	}
 }
