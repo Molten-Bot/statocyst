@@ -97,6 +97,19 @@ func (h *Handler) humanPayload(human model.Human) map[string]any {
 	}
 }
 
+func (h *Handler) adminSnapshotHumanPayload(human model.Human) map[string]any {
+	return map[string]any{
+		"human_id":            human.HumanID,
+		"handle":              human.Handle,
+		"uri":                 h.humanURI(human),
+		"handle_confirmed_at": human.HandleConfirmedAt,
+		"auth_provider":       human.AuthProvider,
+		"email_verified":      human.EmailVerified,
+		"metadata":            human.Metadata,
+		"created_at":          human.CreatedAt,
+	}
+}
+
 func (h *Handler) membershipWithOrgPayload(item model.MembershipWithOrg) map[string]any {
 	return map[string]any{
 		"membership": item.Membership,
@@ -156,7 +169,7 @@ func (h *Handler) adminSnapshotPayload(snapshot model.AdminSnapshot) map[string]
 
 	humans := make([]map[string]any, 0, len(snapshot.Humans))
 	for _, human := range snapshot.Humans {
-		humans = append(humans, h.humanPayload(human))
+		humans = append(humans, h.adminSnapshotHumanPayload(human))
 	}
 
 	agents := make([]map[string]any, 0, len(snapshot.Agents))
@@ -165,13 +178,13 @@ func (h *Handler) adminSnapshotPayload(snapshot model.AdminSnapshot) map[string]
 	}
 
 	return map[string]any{
-		"organizations": organizations,
-		"humans":        humans,
-		"memberships":   snapshot.Memberships,
-		"agents":        agents,
-		"org_trusts":    snapshot.OrgTrusts,
-		"agent_trusts":  snapshot.AgentTrusts,
-		"stats":         snapshot.Stats,
+		"organizations":   organizations,
+		"humans":          humans,
+		"memberships":     snapshot.Memberships,
+		"agents":          agents,
+		"org_trusts":      snapshot.OrgTrusts,
+		"agent_trusts":    snapshot.AgentTrusts,
+		"stats":           snapshot.Stats,
 		"message_metrics": snapshot.MessageMetrics,
 	}
 }

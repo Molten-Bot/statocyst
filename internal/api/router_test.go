@@ -2510,6 +2510,36 @@ func TestAdminSnapshotDoesNotLeakMessagePayloads(t *testing.T) {
 	}
 }
 
+func TestAdminSnapshotDoesNotLeakHumanEmails(t *testing.T) {
+	router := newTestRouter()
+	_ = currentHumanID(t, router, "alice", "alice+private@a.test")
+
+	snap := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, humanHeaders("root", "root@molten.bot"))
+	if snap.Code != http.StatusOK {
+		t.Fatalf("snapshot failed: %d %s", snap.Code, snap.Body.String())
+	}
+	bodyText := snap.Body.String()
+	if strings.Contains(bodyText, "alice+private@a.test") || strings.Contains(bodyText, "root@molten.bot") {
+		t.Fatalf("snapshot should not include human email addresses: %s", bodyText)
+	}
+
+	payload := decodeJSONMap(t, snap.Body.Bytes())
+	snapshot, _ := payload["snapshot"].(map[string]any)
+	humans, _ := snapshot["humans"].([]any)
+	if len(humans) == 0 {
+		t.Fatalf("expected snapshot.humans to be non-empty")
+	}
+	for _, raw := range humans {
+		human, _ := raw.(map[string]any)
+		if _, ok := human["email"]; ok {
+			t.Fatalf("snapshot human row should not include email: %v", human)
+		}
+		if _, ok := human["auth_subject"]; ok {
+			t.Fatalf("snapshot human row should not include auth_subject: %v", human)
+		}
+	}
+}
+
 func TestAdminSnapshotIncludesMessageRollups(t *testing.T) {
 	router := newTestRouter()
 	orgA, orgB, tokenA, tokenB, _, _, agentUUIDA, agentUUIDB := setupTrustedAgents(t, router)
