@@ -51,7 +51,7 @@ Statocyst validates metadata as JSON object payloads with size limits, then pers
 - Optional UI config privileged key:
   - `UI_CONFIG_API_KEY=<secret>` enables privileged access to sensitive `/v1/ui/config` fields for trusted setup callers.
   - When `auth.human` is `supabase`, `/v1/ui/config` only returns `auth.supabase.anon_key` if `SUPABASE_ANON_KEY` is browser-safe (`sb_publishable_*`, `sb_anon_*`, or legacy JWT with `role=anon`).
-  - Secret/service-role Supabase keys are rejected at startup and never exposed via `/v1/ui/config`.
+  - Secret/service-role or unknown key formats are still accepted for server-side validation, but they are never exposed via `/v1/ui/config`.
   - Callers must send `X-UI-Config-Key: <secret>` to receive unredacted `admin.emails`.
   - Without that header (or with a wrong key), only those privileged fields are redacted.
 - Bind token TTL minutes: `BIND_TOKEN_TTL_MINUTES=15` (default `15`).
