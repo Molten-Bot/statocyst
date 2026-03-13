@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,6 +245,53 @@ func (q *failOnceQueue) Dequeue(ctx context.Context, agentUUID string) (model.Me
 		return model.Message{}, false, errors.New("dequeue unavailable")
 	}
 	return q.base.Dequeue(ctx, agentUUID)
+}
+
+type slowPeerOutboxStore struct {
+	*store.MemoryStore
+	listDelay time.Duration
+	listCalls atomic.Int32
+}
+
+func (s *slowPeerOutboxStore) ListDuePeerOutbounds(now time.Time, limit int) []model.PeerOutboundMessage {
+	s.listCalls.Add(1)
+	time.Sleep(s.listDelay)
+	return nil
+}
+
+func TestPeerOutboxProcessingCoalescesConcurrentKicks(t *testing.T) {
+	st := &slowPeerOutboxStore{
+		MemoryStore: store.NewMemoryStore(),
+		listDelay:   150 * time.Millisecond,
+	}
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h.peerOutboxTimeout = 2 * time.Second
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h.kickPeerOutboxProcessing(16)
+		}()
+	}
+	wg.Wait()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		got := st.listCalls.Load()
+		if got > 1 {
+			t.Fatalf("expected one outbox drain while worker is active, got %d", got)
+		}
+		if got == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := st.listCalls.Load(); got != 1 {
+		t.Fatalf("expected a single outbox drain call, got %d", got)
+	}
 }
 
 func TestHealthReportsRuntimeQueueFailureAndRecovery(t *testing.T) {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -131,5 +132,95 @@ func TestS3QueueStore_EnqueueDequeueRoundTrip(t *testing.T) {
 		t.Fatalf("second dequeue failed: %v", err)
 	} else if ok {
 		t.Fatalf("expected empty queue after first dequeue")
+	}
+}
+
+func TestS3QueueStore_EnqueueAppliesDefaultTimeoutWithoutCallerDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if strings.HasPrefix(path, "queue-bucket/") && r.Method == http.MethodPut {
+			_, _ = io.Copy(io.Discard, r.Body)
+			_ = r.Body.Close()
+			time.Sleep(500 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	q := &s3QueueStore{
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		bucket:     "queue-bucket",
+		region:     "us-east-1",
+		prefix:     "statocyst-queue",
+		pathStyle:  true,
+		opTimeout:  50 * time.Millisecond,
+	}
+
+	msg := model.Message{
+		MessageID:     "m-timeout-enqueue",
+		FromAgentUUID: "a-1",
+		ToAgentUUID:   "b-1",
+		CreatedAt:     time.Date(2026, 3, 13, 10, 0, 0, 0, time.UTC),
+	}
+
+	start := time.Now()
+	err := q.Enqueue(context.Background(), msg)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected enqueue timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got: %v", err)
+	}
+	if elapsed > 750*time.Millisecond {
+		t.Fatalf("expected fast timeout, took %s", elapsed)
+	}
+}
+
+func TestS3QueueStore_DequeueAppliesDefaultTimeoutWithoutCallerDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "queue-bucket" && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			time.Sleep(500 * time.Millisecond)
+			type listResult struct {
+				XMLName  xml.Name `xml:"ListBucketResult"`
+				Contents []struct {
+					Key string `xml:"Key"`
+				} `xml:"Contents"`
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = xml.NewEncoder(w).Encode(listResult{})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	q := &s3QueueStore{
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		bucket:     "queue-bucket",
+		region:     "us-east-1",
+		prefix:     "statocyst-queue",
+		pathStyle:  true,
+		opTimeout:  50 * time.Millisecond,
+	}
+
+	start := time.Now()
+	_, _, err := q.Dequeue(context.Background(), "b-1")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected dequeue timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got: %v", err)
+	}
+	if elapsed > 750*time.Millisecond {
+		t.Fatalf("expected fast timeout, took %s", elapsed)
 	}
 }

@@ -774,3 +774,46 @@ func TestS3StateStore_PersistAllAppliesDeadlineWhenContextHasNone(t *testing.T) 
 		t.Fatalf("expected fast failure, took %s", elapsed)
 	}
 }
+
+func TestS3StateStore_BestEffortPersistUsesShortTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if strings.HasPrefix(path, "state-bucket/") && r.Method == http.MethodPut {
+			_, _ = io.Copy(io.Discard, r.Body)
+			_ = r.Body.Close()
+			time.Sleep(500 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if path == "state-bucket" && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			type listResult struct {
+				XMLName     xml.Name `xml:"ListBucketResult"`
+				IsTruncated bool     `xml:"IsTruncated"`
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = xml.NewEncoder(w).Encode(listResult{IsTruncated: false})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	store := &s3StateStore{
+		MemoryStore:              NewMemoryStore(),
+		httpClient:               server.Client(),
+		endpoint:                 server.URL,
+		bucket:                   "state-bucket",
+		region:                   "us-east-1",
+		prefix:                   "statocyst-state",
+		pathStyle:                true,
+		bestEffortPersistTimeout: 50 * time.Millisecond,
+		persistTimeout:           5 * time.Second,
+	}
+
+	start := time.Now()
+	store.RecordMessageQueued("org-best-effort")
+	elapsed := time.Since(start)
+	if elapsed > 750*time.Millisecond {
+		t.Fatalf("expected best-effort persist to return quickly, took %s", elapsed)
+	}
+}

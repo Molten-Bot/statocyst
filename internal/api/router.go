@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	maxPullTimeoutMS     = 30000
-	defaultPullTimeoutMS = 5000
+	maxPullTimeoutMS                   = 30000
+	defaultPullTimeoutMS               = 5000
+	defaultPeerOutboxBackgroundTimeout = 5 * time.Second
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -52,6 +53,9 @@ type Handler struct {
 	storageHealth     store.StorageHealthStatus
 	queueRuntimeError string
 	peerHTTPClient    *http.Client
+	peerOutboxMu      sync.Mutex
+	peerOutboxRunning bool
+	peerOutboxTimeout time.Duration
 }
 
 type requestIDContextKey struct{}
@@ -108,6 +112,7 @@ func NewHandler(
 		headlessModeURL:   "",
 		storageHealth:     store.DefaultStorageHealthStatus(),
 		peerHTTPClient:    &http.Client{Timeout: 5 * time.Second},
+		peerOutboxTimeout: defaultPeerOutboxBackgroundTimeout,
 	}
 }
 
@@ -175,10 +180,35 @@ func (h *Handler) SetHeadlessModeRedirectURL(raw string) {
 func withPeerOutboxProcessing(handler *Handler, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/v1/") && r.URL.Path != "/v1/peer/messages" {
-			go handler.processPeerOutboxes(context.WithoutCancel(r.Context()), 16)
+			handler.kickPeerOutboxProcessing(16)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (h *Handler) kickPeerOutboxProcessing(limit int) {
+	h.peerOutboxMu.Lock()
+	if h.peerOutboxRunning {
+		h.peerOutboxMu.Unlock()
+		return
+	}
+	h.peerOutboxRunning = true
+	timeout := h.peerOutboxTimeout
+	if timeout <= 0 {
+		timeout = defaultPeerOutboxBackgroundTimeout
+	}
+	h.peerOutboxMu.Unlock()
+
+	go func() {
+		defer func() {
+			h.peerOutboxMu.Lock()
+			h.peerOutboxRunning = false
+			h.peerOutboxMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		h.processPeerOutboxes(ctx, limit)
+	}()
 }
 
 func withAPICORS(next http.Handler, enableLocalCORS bool, allowedOrigins map[string]struct{}) http.Handler {

@@ -27,6 +27,8 @@ const (
 	defaultS3StatePrefix = "statocyst-state"
 	// Cap end-to-end state flush time per mutation to avoid long request stalls.
 	defaultS3StatePersistTimeout = 8 * time.Second
+	// Best-effort metrics/status writes should not block request paths for long.
+	defaultS3StateBestEffortPersistTimeout = 750 * time.Millisecond
 )
 
 type s3StateStore struct {
@@ -41,6 +43,8 @@ type s3StateStore struct {
 	signer     *s3Signer
 	// persistTimeout bounds one persistAll call when the caller context has no deadline.
 	persistTimeout time.Duration
+	// bestEffortPersistTimeout bounds persist for fire-and-forget style writes.
+	bestEffortPersistTimeout time.Duration
 
 	persistMu sync.Mutex
 	// persistedObjects tracks the last successfully persisted object bodies by key.
@@ -204,15 +208,16 @@ func NewS3StateStoreFromEnv() (*s3StateStore, error) {
 	}
 
 	store := &s3StateStore{
-		MemoryStore:    NewMemoryStore(),
-		httpClient:     &http.Client{Timeout: 10 * time.Second},
-		endpoint:       strings.TrimSuffix(endpoint, "/"),
-		bucket:         bucket,
-		region:         region,
-		prefix:         prefix,
-		pathStyle:      pathStyle,
-		signer:         newS3Signer(accessKeyID, secretAccessKey, region),
-		persistTimeout: defaultS3StatePersistTimeout,
+		MemoryStore:              NewMemoryStore(),
+		httpClient:               &http.Client{Timeout: 10 * time.Second},
+		endpoint:                 strings.TrimSuffix(endpoint, "/"),
+		bucket:                   bucket,
+		region:                   region,
+		prefix:                   prefix,
+		pathStyle:                pathStyle,
+		signer:                   newS3Signer(accessKeyID, secretAccessKey, region),
+		persistTimeout:           defaultS3StatePersistTimeout,
+		bestEffortPersistTimeout: defaultS3StateBestEffortPersistTimeout,
 	}
 	if err := store.loadFromS3(context.Background()); err != nil {
 		return nil, err
@@ -672,7 +677,7 @@ func (s *s3StateStore) RecordMessageQueued(orgID string) {
 	defer s.persistMu.Unlock()
 
 	s.MemoryStore.RecordMessageQueued(orgID)
-	_ = s.persistAll(context.Background())
+	s.persistAllBestEffortLocked()
 }
 
 func (s *s3StateStore) RecordMessageDropped(orgID string) {
@@ -680,7 +685,17 @@ func (s *s3StateStore) RecordMessageDropped(orgID string) {
 	defer s.persistMu.Unlock()
 
 	s.MemoryStore.RecordMessageDropped(orgID)
-	_ = s.persistAll(context.Background())
+	s.persistAllBestEffortLocked()
+}
+
+func (s *s3StateStore) persistAllBestEffortLocked() {
+	timeout := s.bestEffortPersistTimeout
+	if timeout <= 0 {
+		timeout = defaultS3StateBestEffortPersistTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	_ = s.persistAll(ctx)
 }
 
 func (s *s3StateStore) persistAll(ctx context.Context) error {
@@ -1489,7 +1504,7 @@ func (s *s3StateStore) RecordPeerDeliverySuccess(peerID string, now time.Time) {
 	defer s.persistMu.Unlock()
 
 	s.MemoryStore.RecordPeerDeliverySuccess(peerID, now)
-	_ = s.persistAll(context.Background())
+	s.persistAllBestEffortLocked()
 }
 
 func (s *s3StateStore) RecordPeerDeliveryFailure(peerID, reason string, now time.Time) {
@@ -1497,7 +1512,7 @@ func (s *s3StateStore) RecordPeerDeliveryFailure(peerID, reason string, now time
 	defer s.persistMu.Unlock()
 
 	s.MemoryStore.RecordPeerDeliveryFailure(peerID, reason, now)
-	_ = s.persistAll(context.Background())
+	s.persistAllBestEffortLocked()
 }
 
 func (s *s3StateStore) CreateRemoteOrgTrust(localOrgID, peerID, remoteOrgHandle, actorHumanID, trustID string, now time.Time) (model.RemoteOrgTrust, error) {

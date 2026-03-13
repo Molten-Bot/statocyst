@@ -21,6 +21,8 @@ import (
 const (
 	defaultS3Region = "us-east-1"
 	defaultS3Prefix = "statocyst-queue"
+	// Bound a queue operation when callers provide no deadline.
+	defaultS3QueueOpTimeout = 8 * time.Second
 )
 
 type s3QueueStore struct {
@@ -31,6 +33,7 @@ type s3QueueStore struct {
 	prefix     string
 	pathStyle  bool
 	signer     *s3Signer
+	opTimeout  time.Duration
 
 	dequeueMu sync.Mutex
 }
@@ -84,10 +87,14 @@ func NewS3QueueStoreFromEnv() (MessageQueueStore, error) {
 		prefix:     prefix,
 		pathStyle:  pathStyle,
 		signer:     newS3Signer(accessKeyID, secretAccessKey, region),
+		opTimeout:  defaultS3QueueOpTimeout,
 	}, nil
 }
 
 func (s *s3QueueStore) Enqueue(ctx context.Context, message model.Message) error {
+	ctx, cancel := s.operationContext(ctx)
+	defer cancel()
+
 	if message.ToAgentUUID == "" {
 		return ErrAgentNotFound
 	}
@@ -118,6 +125,9 @@ func (s *s3QueueStore) Enqueue(ctx context.Context, message model.Message) error
 }
 
 func (s *s3QueueStore) Dequeue(ctx context.Context, agentUUID string) (model.Message, bool, error) {
+	ctx, cancel := s.operationContext(ctx)
+	defer cancel()
+
 	if agentUUID == "" {
 		return model.Message{}, false, nil
 	}
@@ -141,6 +151,20 @@ func (s *s3QueueStore) Dequeue(ctx context.Context, agentUUID string) (model.Mes
 		return model.Message{}, false, err
 	}
 	return msg, true, nil
+}
+
+func (s *s3QueueStore) operationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	timeout := s.opTimeout
+	if timeout <= 0 {
+		timeout = defaultS3QueueOpTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (s *s3QueueStore) queueObjectKey(agentUUID string, createdAt time.Time, messageID string) string {
