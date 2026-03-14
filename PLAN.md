@@ -33,20 +33,6 @@ Completed in PR #76 (`d0815c8`):
 
 ## Remaining V2 Work
 
-### Milestone 2: Contract normalization (Completed 2026-03-14)
-
-- correlation ids in headers and error bodies
-- canonical success envelope for agent runtime JSON responses (`ok` + `result`) with compatibility mirrors
-- canonical error shape across agent routes including `error_detail`
-- broadened retryability/next-action hints for route-specific agent runtime failures
-- stricter media-type rejection with `415`/`406` on affected routes
-
-### Milestone 3: Markdown and docs polish (Completed 2026-03-14)
-
-- improved markdown output quality for manifest and skill guidance
-- added OpenAPI markdown companion route (`/openapi.md`) generated from `openapi.yaml` during container build
-- added concise HTML docs index (`/docs`) with agent-readable structure and markdown alternate links for Cloudflare Markdown-for-Agents workflows
-
 ## Non-Goals
 
 - markdown request bodies for mutating runtime routes
