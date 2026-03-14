@@ -1498,6 +1498,9 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	if !strings.Contains(connectPrompt, "agent_exists") || !strings.Contains(connectPrompt, "<your-agent-handle>-2") {
 		t.Fatalf("expected connect prompt to explain duplicate retry permutations, got %q", connectPrompt)
 	}
+	if !strings.Contains(connectPrompt, "distinctive emoji") || !strings.Contains(connectPrompt, "\"agent_type\":\"<assistant-type>\"") {
+		t.Fatalf("expected connect prompt to require emoji/assistant type metadata setup, got %q", connectPrompt)
+	}
 }
 
 func TestMyAgentBindTokenCreateRetriesTransientStoreError(t *testing.T) {
@@ -2448,6 +2451,9 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(skillContent, "Onboarding Checklist") {
 		t.Fatalf("expected onboarding checklist in skill, got %q", skillContent)
+	}
+	if !strings.Contains(skillContent, "distinctive emoji") || !strings.Contains(skillContent, "\"agent_type\":\"<assistant-type>\"") {
+		t.Fatalf("expected onboarding skill to require emoji/assistant type metadata setup, got %q", skillContent)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/agents/me/skill?format=markdown", nil)

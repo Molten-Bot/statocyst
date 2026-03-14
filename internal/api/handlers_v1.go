@@ -103,7 +103,8 @@ var agentConnectPromptLines = []string{
 	"3. Persist the returned bearer `token`, exact `api_base`, and `endpoints` exactly as returned.",
 	"4. Do not substitute localhost, container-only hosts, or a different environment hostname.",
 	"5. Immediately call `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>` and follow that skill exactly once to finish onboarding.",
-	"6. Treat both the bind token and returned bearer token as secrets.",
+	"6. Immediately set profile metadata with a distinctive emoji and assistant type (avoid generic defaults) using `PATCH {api_base}/agents/me/metadata` with `{\"metadata\":{\"emoji\":\"🛰️\",\"agent_type\":\"<assistant-type>\",\"persona\":\"<short-style>\"}}`.",
+	"7. Treat both the bind token and returned bearer token as secrets.",
 }
 
 type createOrgAccessKeyRequest struct {
