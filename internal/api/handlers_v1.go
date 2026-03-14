@@ -824,7 +824,7 @@ func (h *Handler) handleAgentMe(w http.ResponseWriter, r *http.Request) {
 			payload["human"] = h.humanPayload(ownerHuman.(model.Human))
 		}
 
-		writeJSON(w, http.StatusOK, payload)
+		writeAgentRuntimeSuccess(w, http.StatusOK, payload)
 		return
 	case http.MethodPatch:
 		h.handleAgentMetadataSelfPatch(w, r, "")
@@ -889,7 +889,7 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAgentRuntimeSuccess(w, http.StatusOK, map[string]any{
 		"agent": h.agentResponsePayload(agent),
 	})
 }
@@ -932,7 +932,7 @@ func (h *Handler) handleAgentMeCapabilities(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	manifest := buildAgentManifest(agent, cp, h.now())
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAgentRuntimeSuccess(w, http.StatusOK, map[string]any{
 		"agent":         h.agentResponsePayload(agent),
 		"control_plane": h.agentControlPlanePayload(cp),
 		"capabilities":  manifest.Capabilities,
@@ -982,7 +982,7 @@ func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAgentRuntimeSuccess(w, http.StatusOK, map[string]any{
 		"agent":         h.agentResponsePayload(agent),
 		"control_plane": h.agentControlPlanePayload(cp),
 		"manifest_url":  manifest.APIBase + "/agents/me/manifest",
@@ -1033,7 +1033,7 @@ func (h *Handler) handleAgentMeManifest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAgentRuntimeSuccess(w, http.StatusOK, map[string]any{
 		"manifest": manifest,
 	})
 }
@@ -2413,7 +2413,7 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 	}
 	writeBindSuccess := func(agent model.Agent) {
 		apiBase := h.apiBaseURL(r)
-		writeJSON(w, http.StatusCreated, map[string]any{
+		writeAgentRuntimeSuccess(w, http.StatusCreated, map[string]any{
 			"token":    agentToken,
 			"api_base": apiBase,
 			"agent":    h.agentResponsePayload(agent),
@@ -2439,12 +2439,19 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		case errors.Is(err, store.ErrBindUsed):
 			writeError(w, http.StatusConflict, "bind_used", "bind token already used")
 		case errors.Is(err, store.ErrAgentExists):
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":             "agent_exists",
-				"message":           "requested handle already exists; retry bind with another handle permutation",
-				"retryable":         true,
-				"suggested_handles": bindHandleSuggestions(requestedHandle),
-			})
+			writeErrorWithHintAndExtras(
+				w,
+				http.StatusConflict,
+				"agent_exists",
+				"requested handle already exists; retry bind with another handle permutation",
+				&errorHint{
+					Retryable:  true,
+					NextAction: "retry bind with one of suggested_handles or another unique handle",
+				},
+				map[string]any{
+					"suggested_handles": bindHandleSuggestions(requestedHandle),
+				},
+			)
 		case errors.Is(err, store.ErrInvalidHandle):
 			writeError(w, http.StatusBadRequest, "invalid_handle", "handle must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
 		case errors.Is(err, store.ErrMembershipNotFound):

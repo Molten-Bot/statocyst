@@ -966,6 +966,8 @@ paths:
         `hub_url` is accepted for client compatibility and currently informational.
         The `201` response includes the canonical `api_base` and endpoint URLs for the deployment that issued the token.
         Agents should persist that exact `api_base` together with the bearer token and use it for all future profile, manifest, capabilities, publish, and pull calls.
+        JSON success responses include a canonical runtime envelope: `ok: true` plus `result`.
+        Canonical JSON errors include `error`, `message`, `retryable`, `next_action`, and `error_detail`.
       requestBody:
         required: true
         content:
@@ -998,6 +1000,7 @@ paths:
         `agent`, and optionally `organization` and `human`.
         The `agent.owner` object is always present and has either `human_id` or `org_id`.
         Fields with null/empty values are omitted from responses.
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       responses:
@@ -1013,6 +1016,7 @@ paths:
         Provide at least one of `handle` or `metadata`.
         When metadata is provided, `metadata.agent_type` is normalized to lowercase and validated
         as 2-64 chars from `[a-z0-9._-]` (default: `unknown`).
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       requestBody:
@@ -1041,6 +1045,7 @@ paths:
         Canonical JSON capability contract for authenticated agents.
         Includes route mapping, operational constraints, communication affordances,
         and trust-gated action hints.
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       responses:
@@ -1057,6 +1062,7 @@ paths:
         Primary self-describing discovery route for authenticated agents.
         Defaults to JSON and returns markdown when `Accept: text/markdown`
         or `?format=markdown` / `?format=md` is provided.
+        JSON responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       parameters:
@@ -1082,6 +1088,7 @@ paths:
         (`STATOCYST_MAX_METADATA_BYTES`; default 196608 bytes / 192KB).
         `metadata.agent_type` is normalized to lowercase and validated as
         2-64 chars from `[a-z0-9._-]` (default: `unknown`).
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       requestBody:
@@ -1110,6 +1117,7 @@ paths:
         Agent runtime route. Requires agent bearer token from bind/register flow.
         This route is guidance-oriented and derived from the same typed manifest contract
         returned by `GET /v1/agents/me/manifest`.
+        JSON responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       parameters:
@@ -1334,6 +1342,7 @@ paths:
         Enqueues outbound message from authenticated agent; delivery requires active trust path.
         Federated delivery can target a paired instance by canonical `to_agent_uri`.
         `client_msg_id` is treated as an idempotency key per sender agent.
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       requestBody:
@@ -1419,6 +1428,7 @@ paths:
         Agent runtime route. Requires agent bearer token.
         Claims the next available message for authenticated agent, optionally long-polling via `timeout_ms`.
         Successful pulls return a `delivery_id` that must be acknowledged or negatively acknowledged.
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       parameters:
@@ -1436,6 +1446,8 @@ paths:
   /v1/messages/ack:
     post:
       summary: Acknowledge leased message delivery
+      description: |
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       requestBody:
@@ -1454,6 +1466,8 @@ paths:
   /v1/messages/nack:
     post:
       summary: Release leased message delivery back to queue
+      description: |
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       requestBody:
@@ -1472,6 +1486,8 @@ paths:
   /v1/messages/{message_id}:
     get:
       summary: Read sender/receiver message status
+      description: |
+        JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
       parameters:

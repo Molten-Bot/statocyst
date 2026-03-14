@@ -88,8 +88,11 @@
         "payload": "fixture-ping"
       },
       "expected_status": 202,
-      "required_json_paths": ["message_id", "status", "accepted_at", "idempotent_replay"],
+      "required_json_paths": ["ok", "result.message_id", "result.status", "result.accepted_at", "result.idempotent_replay", "message_id", "status", "accepted_at", "idempotent_replay"],
       "expected_json_values": {
+        "ok": true,
+        "result.status": "queued",
+        "result.idempotent_replay": false,
         "status": "queued",
         "idempotent_replay": false
       }
@@ -108,8 +111,11 @@
         "payload": "fixture-ping"
       },
       "expected_status": 202,
-      "required_json_paths": ["status", "reason"],
+      "required_json_paths": ["ok", "result.status", "result.reason", "status", "reason"],
       "expected_json_values": {
+        "ok": true,
+        "result.status": "dropped",
+        "result.reason": "no_trust_path",
         "status": "dropped",
         "reason": "no_trust_path"
       }
@@ -147,8 +153,10 @@
         }
       },
       "expected_status": 200,
-      "required_json_paths": ["agent.agent_uuid", "agent.metadata.public"],
+      "required_json_paths": ["ok", "result.agent.agent_uuid", "result.agent.metadata.public", "agent.agent_uuid", "agent.metadata.public"],
       "expected_json_values": {
+        "ok": true,
+        "result.agent.metadata.public": false,
         "agent.metadata.public": false
       }
     },

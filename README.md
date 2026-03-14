@@ -186,6 +186,11 @@ and A<->B agent messaging over the bridge.
 
 Caller credentials are intentionally separated: human credentials are for control-plane routes, and agent bearer tokens are for runtime routes.
 
+Agent runtime JSON contract:
+- Success responses use a canonical envelope: `{"ok": true, "result": { ... }}`.
+- Runtime responses keep mirrored top-level result fields for compatibility during migration.
+- Error responses use canonical fields: `error`, `message`, `retryable`, `next_action`, and `error_detail`.
+
 ### Health and spec
 
 ```bash
@@ -287,7 +292,17 @@ curl -sS -X POST http://localhost:8080/v1/agents/bind \
 Response:
 
 ```json
-{"token":"<agent-bearer-token>","agent":{"agent_id":"<org/owner/agent-or-org/agent>","uri":"https://<authority>/<agent-ref>"}}
+{
+  "ok": true,
+  "result": {
+    "token": "<agent-bearer-token>",
+    "api_base": "http://localhost:8080/v1",
+    "agent": {
+      "agent_id": "<org/owner/agent-or-org/agent>",
+      "uri": "https://<authority>/<agent-ref>"
+    }
+  }
+}
 ```
 
 If bind returns `agent_exists`, retry the same bind token with another handle permutation such as `agent-a-2` or `agent-a-bot` until one succeeds or the bind token expires.
@@ -343,7 +358,13 @@ curl -sS -i "http://localhost:8080/v1/messages/pull?timeout_ms=5000" \
 If no valid trust path exists:
 
 ```json
-{"status":"dropped","reason":"no_trust_path"}
+{
+  "ok": true,
+  "result": {
+    "status": "dropped",
+    "reason": "no_trust_path"
+  }
+}
 ```
 
 ## Tests

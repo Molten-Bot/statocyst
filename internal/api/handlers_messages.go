@@ -135,7 +135,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 			remoteOrgHandle := remoteOrgHandleFromAgentRef(targetRef)
 			if remoteOrgHandle == "" || !h.control.HasActiveRemoteOrgTrust(senderAgent.OrgID, peer.PeerID, remoteOrgHandle) || !h.control.HasActiveRemoteAgentTrust(senderAgentUUID, peer.PeerID, req.ToAgentURI) {
 				h.control.RecordMessageDropped(senderAgent.OrgID)
-				writeJSON(w, http.StatusAccepted, map[string]string{
+				writeAgentRuntimeSuccess(w, http.StatusAccepted, map[string]any{
 					"status": "dropped",
 					"reason": "no_trust_path",
 				})
@@ -166,7 +166,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if replay {
-				writeJSON(w, http.StatusAccepted, publishResponse(record, true))
+				writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, true))
 				return
 			}
 			outboundID, err := h.idFactory()
@@ -186,7 +186,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 				record = updatedRecord
 			}
 			h.control.RecordMessageQueued(senderAgent.OrgID)
-			writeJSON(w, http.StatusAccepted, publishResponse(record, false))
+			writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, false))
 			return
 		}
 		if req.ToAgentUUID == "" {
@@ -228,7 +228,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_uuid is not registered")
 		case errors.Is(err, store.ErrNoTrustPath):
 			h.control.RecordMessageDropped(senderOrgID)
-			writeJSON(w, http.StatusAccepted, map[string]string{
+			writeAgentRuntimeSuccess(w, http.StatusAccepted, map[string]any{
 				"status": "dropped",
 				"reason": "no_trust_path",
 			})
@@ -266,7 +266,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if replay {
-		writeJSON(w, http.StatusAccepted, publishResponse(record, true))
+		writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, true))
 		return
 	}
 
@@ -292,7 +292,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 	h.clearQueueRuntimeError()
 	h.control.RecordMessageQueued(senderOrgID)
 	h.waiters.Notify(targetAgent.AgentUUID)
-	writeJSON(w, http.StatusAccepted, publishResponse(record, false))
+	writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, false))
 }
 
 func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
@@ -437,7 +437,7 @@ func (h *Handler) handleAckDelivery(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, messageStatusResponse(record))
+	writeAgentRuntimeSuccess(w, http.StatusOK, messageStatusResponse(record))
 }
 
 func (h *Handler) handleNackDelivery(w http.ResponseWriter, r *http.Request) {
@@ -482,7 +482,7 @@ func (h *Handler) handleNackDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	h.clearQueueRuntimeError()
 	h.waiters.Notify(receiverAgentUUID)
-	writeJSON(w, http.StatusOK, messageStatusResponse(record))
+	writeAgentRuntimeSuccess(w, http.StatusOK, messageStatusResponse(record))
 }
 
 func (h *Handler) handleMessageStatus(w http.ResponseWriter, r *http.Request, messageID string) {
@@ -508,7 +508,7 @@ func (h *Handler) handleMessageStatus(w http.ResponseWriter, r *http.Request, me
 		writeError(w, http.StatusForbidden, "forbidden", "message_id is not visible to this agent")
 		return
 	}
-	writeJSON(w, http.StatusOK, messageStatusResponse(record))
+	writeAgentRuntimeSuccess(w, http.StatusOK, messageStatusResponse(record))
 }
 
 func (h *Handler) requeueExpiredLeases(ctx context.Context) {
@@ -549,7 +549,7 @@ func (h *Handler) writeClaimedMessage(w http.ResponseWriter, r *http.Request, re
 		writeError(w, http.StatusInternalServerError, "store_error", "failed to lease message")
 		return false
 	}
-	writeJSON(w, http.StatusOK, deliveryResponse(record, delivery))
+	writeAgentRuntimeSuccess(w, http.StatusOK, deliveryResponse(record, delivery))
 	return true
 }
 

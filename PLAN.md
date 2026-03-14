@@ -33,19 +33,13 @@ Completed in PR #76 (`d0815c8`):
 
 ## Remaining V2 Work
 
-### Milestone 2: Contract normalization (In Progress)
-
-Completed:
+### Milestone 2: Contract normalization (Completed 2026-03-14)
 
 - correlation ids in headers and error bodies
-- key error hints (`retryable`, `next_action`)
+- canonical success envelope for agent runtime JSON responses (`ok` + `result`) with compatibility mirrors
+- canonical error shape across agent routes including `error_detail`
+- broadened retryability/next-action hints for route-specific agent runtime failures
 - stricter media-type rejection with `415`/`406` on affected routes
-
-Remaining:
-
-- standardize success envelope shapes across all agent runtime routes
-- finish normalizing all error responses to a single canonical structure across every agent route
-- broaden retryability/next-action hints to all relevant route-specific failures
 
 ### Milestone 3: Markdown and docs polish (Pending)
 
@@ -84,9 +78,7 @@ Already covered:
 
 Remaining additions:
 
-- broader success-envelope contract tests for all agent runtime routes
-- route-by-route canonical error-shape contract assertions
-- expanded retryability hint coverage for route-specific failures
+- none for Milestone 2; route-level envelope and error-hint coverage added for agent runtime routes
 
 ## Defaults
 

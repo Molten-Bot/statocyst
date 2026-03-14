@@ -1050,6 +1050,19 @@ func decodeJSONMap(t *testing.T, body []byte) map[string]any {
 	return m
 }
 
+func requireAgentRuntimeSuccessEnvelope(t *testing.T, payload map[string]any) map[string]any {
+	t.Helper()
+	okValue, ok := payload["ok"].(bool)
+	if !ok || !okValue {
+		t.Fatalf("expected ok=true success envelope, got payload=%v", payload)
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result object in success envelope, got %T payload=%v", payload["result"], payload)
+	}
+	return result
+}
+
 func setupTrustedAgents(t *testing.T, router http.Handler) (string, string, string, string, string, string, string, string) {
 	t.Helper()
 	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
@@ -1456,9 +1469,21 @@ func TestMyAgentBindTokenRedeemDuplicateHandleReturnsSuggestions(t *testing.T) {
 	if retryable, _ := redeemPayload["retryable"].(bool); !retryable {
 		t.Fatalf("expected retryable duplicate bind response, got %v payload=%v", redeemPayload["retryable"], redeemPayload)
 	}
+	nextAction, _ := redeemPayload["next_action"].(string)
+	if strings.TrimSpace(nextAction) == "" {
+		t.Fatalf("expected next_action guidance for duplicate bind response, got %v", redeemPayload["next_action"])
+	}
 	suggestedHandles, _ := redeemPayload["suggested_handles"].([]any)
 	if len(suggestedHandles) == 0 {
 		t.Fatalf("expected suggested_handles in duplicate bind response, got %v", redeemPayload["suggested_handles"])
+	}
+	detail, _ := redeemPayload["error_detail"].(map[string]any)
+	if detail == nil {
+		t.Fatalf("expected error_detail object, got %v", redeemPayload["error_detail"])
+	}
+	detailSuggestions, _ := detail["suggested_handles"].([]any)
+	if len(detailSuggestions) == 0 {
+		t.Fatalf("expected error_detail.suggested_handles in duplicate bind response, got %v", detail["suggested_handles"])
 	}
 	got, _ := suggestedHandles[0].(string)
 	if got = strings.TrimSpace(got); got == "" || got == "launch-agent-a" {
@@ -3547,6 +3572,168 @@ func TestAgentRuntimeUnauthorizedErrorEnvelopeContract(t *testing.T) {
 		}
 		if detail["retryable"] != false {
 			t.Fatalf("%s: expected error_detail.retryable=false, got %v", tc.name, detail["retryable"])
+		}
+	}
+}
+
+func TestAgentRuntimeSuccessEnvelopeContract(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, map[string]string{
+		"Authorization": "Bearer " + tokenA,
+	})
+	if meResp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/agents/me 200, got %d %s", meResp.Code, meResp.Body.String())
+	}
+	meResult := requireAgentRuntimeSuccessEnvelope(t, decodeJSONMap(t, meResp.Body.Bytes()))
+	if _, ok := meResult["agent"].(map[string]any); !ok {
+		t.Fatalf("expected result.agent in /v1/agents/me response, got %v", meResult["agent"])
+	}
+
+	metadataResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{"public": true},
+	}, map[string]string{
+		"Authorization": "Bearer " + tokenA,
+	})
+	if metadataResp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/agents/me/metadata 200, got %d %s", metadataResp.Code, metadataResp.Body.String())
+	}
+	metadataResult := requireAgentRuntimeSuccessEnvelope(t, decodeJSONMap(t, metadataResp.Body.Bytes()))
+	metadataAgent, _ := metadataResult["agent"].(map[string]any)
+	agentMetadata, _ := metadataAgent["metadata"].(map[string]any)
+	if got, ok := agentMetadata["public"].(bool); !ok || !got {
+		t.Fatalf("expected metadata update reflected in result.agent.metadata.public, got %v", agentMetadata["public"])
+	}
+
+	for _, path := range []string{
+		"/v1/agents/me/capabilities",
+		"/v1/agents/me/manifest",
+		"/v1/agents/me/skill",
+	} {
+		resp := doJSONRequest(t, router, http.MethodGet, path, nil, map[string]string{
+			"Authorization": "Bearer " + tokenA,
+		})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected %s 200, got %d %s", path, resp.Code, resp.Body.String())
+		}
+		requireAgentRuntimeSuccessEnvelope(t, decodeJSONMap(t, resp.Body.Bytes()))
+	}
+
+	publishResp := publish(t, router, tokenA, agentUUIDB, "envelope-test")
+	if publishResp.Code != http.StatusAccepted {
+		t.Fatalf("expected publish 202, got %d %s", publishResp.Code, publishResp.Body.String())
+	}
+	publishPayload := decodeJSONMap(t, publishResp.Body.Bytes())
+	publishResult := requireAgentRuntimeSuccessEnvelope(t, publishPayload)
+	messageID, _ := publishResult["message_id"].(string)
+	if strings.TrimSpace(messageID) == "" {
+		t.Fatalf("expected publish result.message_id, got %v", publishResult["message_id"])
+	}
+	if publishPayload["status"] != publishResult["status"] {
+		t.Fatalf("expected compatibility top-level status mirror, got top=%v result=%v", publishPayload["status"], publishResult["status"])
+	}
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullResult := requireAgentRuntimeSuccessEnvelope(t, decodeJSONMap(t, pullResp.Body.Bytes()))
+	delivery, _ := pullResult["delivery"].(map[string]any)
+	deliveryID, _ := delivery["delivery_id"].(string)
+	if strings.TrimSpace(deliveryID) == "" {
+		t.Fatalf("expected delivery_id in pull result, got %v", pullResult["delivery"])
+	}
+
+	ackResp := ackDelivery(t, router, tokenB, deliveryID)
+	if ackResp.Code != http.StatusOK {
+		t.Fatalf("expected ack 200, got %d %s", ackResp.Code, ackResp.Body.String())
+	}
+	ackResult := requireAgentRuntimeSuccessEnvelope(t, decodeJSONMap(t, ackResp.Body.Bytes()))
+	if got, _ := ackResult["status"].(string); got != model.MessageDeliveryAcked {
+		t.Fatalf("expected ack result.status=%s, got %q", model.MessageDeliveryAcked, got)
+	}
+
+	statusResp := messageStatus(t, router, tokenA, messageID)
+	if statusResp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d %s", statusResp.Code, statusResp.Body.String())
+	}
+	statusResult := requireAgentRuntimeSuccessEnvelope(t, decodeJSONMap(t, statusResp.Body.Bytes()))
+	messageObj, _ := statusResult["message"].(map[string]any)
+	if got, _ := messageObj["message_id"].(string); got != messageID {
+		t.Fatalf("expected status result message_id=%q, got %q", messageID, got)
+	}
+}
+
+func TestAgentRuntimeRouteSpecificErrorHints(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+
+	tests := []struct {
+		name          string
+		method        string
+		path          string
+		body          any
+		wantStatus    int
+		wantErrorCode string
+	}{
+		{
+			name:          "invalid receiver uuid",
+			method:        http.MethodPost,
+			path:          "/v1/messages/publish",
+			body:          map[string]any{"to_agent_uuid": "bad", "content_type": "text/plain", "payload": "hello"},
+			wantStatus:    http.StatusBadRequest,
+			wantErrorCode: "invalid_to_agent_uuid",
+		},
+		{
+			name:          "missing delivery id",
+			method:        http.MethodPost,
+			path:          "/v1/messages/ack",
+			body:          map[string]any{"delivery_id": ""},
+			wantStatus:    http.StatusBadRequest,
+			wantErrorCode: "invalid_delivery_id",
+		},
+		{
+			name:          "unknown delivery",
+			method:        http.MethodPost,
+			path:          "/v1/messages/ack",
+			body:          map[string]any{"delivery_id": "delivery-does-not-exist"},
+			wantStatus:    http.StatusNotFound,
+			wantErrorCode: "unknown_delivery",
+		},
+		{
+			name:          "unknown message",
+			method:        http.MethodGet,
+			path:          "/v1/messages/does-not-exist",
+			wantStatus:    http.StatusNotFound,
+			wantErrorCode: "unknown_message",
+		},
+	}
+
+	for _, tc := range tests {
+		resp := doJSONRequest(t, router, tc.method, tc.path, tc.body, map[string]string{
+			"Authorization": "Bearer " + tokenA,
+		})
+		if resp.Code != tc.wantStatus {
+			t.Fatalf("%s: expected status %d, got %d %s", tc.name, tc.wantStatus, resp.Code, resp.Body.String())
+		}
+		payload := decodeJSONMap(t, resp.Body.Bytes())
+		if payload["error"] != tc.wantErrorCode {
+			t.Fatalf("%s: expected error code %q, got %v payload=%v", tc.name, tc.wantErrorCode, payload["error"], payload)
+		}
+		nextAction, _ := payload["next_action"].(string)
+		if strings.TrimSpace(nextAction) == "" {
+			t.Fatalf("%s: expected next_action hint, got %v", tc.name, payload["next_action"])
+		}
+		if _, ok := payload["retryable"].(bool); !ok {
+			t.Fatalf("%s: expected retryable bool hint, got %v", tc.name, payload["retryable"])
+		}
+		detail, _ := payload["error_detail"].(map[string]any)
+		if detail == nil {
+			t.Fatalf("%s: expected error_detail object, got %v", tc.name, payload["error_detail"])
+		}
+		if detail["code"] != tc.wantErrorCode {
+			t.Fatalf("%s: expected error_detail.code=%q, got %v", tc.name, tc.wantErrorCode, detail["code"])
 		}
 	}
 }

@@ -617,7 +617,28 @@ func pruneEmptyObjects(value any) (any, bool) {
 	}
 }
 
+func writeAgentRuntimeSuccess(w http.ResponseWriter, status int, result map[string]any) {
+	if result == nil {
+		result = map[string]any{}
+	}
+	payload := map[string]any{
+		"ok":     true,
+		"result": result,
+	}
+	for key, value := range result {
+		if _, exists := payload[key]; exists {
+			continue
+		}
+		payload[key] = value
+	}
+	writeJSON(w, status, payload)
+}
+
 func writeError(w http.ResponseWriter, status int, code string, message string) {
+	writeErrorWithHintAndExtras(w, status, code, message, nil, nil)
+}
+
+func writeErrorWithHintAndExtras(w http.ResponseWriter, status int, code string, message string, overrideHint *errorHint, extras map[string]any) {
 	payload := map[string]any{
 		"error":   code,
 		"message": message,
@@ -625,7 +646,12 @@ func writeError(w http.ResponseWriter, status int, code string, message string) 
 	if requestID := strings.TrimSpace(w.Header().Get("X-Request-ID")); requestID != "" {
 		payload["request_id"] = requestID
 	}
-	if hint, ok := defaultErrorHint(code); ok {
+	hint, ok := defaultErrorHint(code)
+	if overrideHint != nil {
+		hint = *overrideHint
+		ok = true
+	}
+	if ok {
 		payload["retryable"] = hint.Retryable
 		if hint.NextAction != "" {
 			payload["next_action"] = hint.NextAction
@@ -643,6 +669,13 @@ func writeError(w http.ResponseWriter, status int, code string, message string) 
 	}
 	if nextAction, ok := payload["next_action"]; ok {
 		detail["next_action"] = nextAction
+	}
+	for key, value := range extras {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		payload[key] = value
+		detail[key] = value
 	}
 	payload["error_detail"] = detail
 	writeJSON(w, status, payload)
@@ -678,6 +711,106 @@ func defaultErrorHint(code string) (errorHint, bool) {
 		return errorHint{
 			Retryable:  false,
 			NextAction: "present valid credentials for this route class",
+		}, true
+	case "forbidden":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "verify caller identity and route ownership/trust requirements",
+		}, true
+	case "id_generation_failed", "token_generation_failed":
+		return errorHint{
+			Retryable:  true,
+			NextAction: "retry with backoff; if repeated, check statocyst runtime health",
+		}, true
+	case "invalid_timeout":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "set timeout_ms to an integer in range 0..30000",
+		}, true
+	case "invalid_bind_token":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "provide a non-empty bind_token from bind token creation",
+		}, true
+	case "bind_not_found", "bind_expired", "bind_used":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "request a new one-time bind token from the human control-plane",
+		}, true
+	case "agent_exists":
+		return errorHint{
+			Retryable:  true,
+			NextAction: "retry with a different handle or agent_id permutation",
+		}, true
+	case "invalid_to_agent_uuid":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "supply a valid UUID in to_agent_uuid or use to_agent_uri",
+		}, true
+	case "invalid_to_agent_uri":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "supply a canonical agent URI for to_agent_uri",
+		}, true
+	case "invalid_from_agent_uri":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "supply a canonical sender URI scoped to the authenticated peer",
+		}, true
+	case "unknown_receiver":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "refresh capabilities and trust state, then verify receiver identity",
+		}, true
+	case "invalid_content_type":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "set content_type to text/plain or application/json",
+		}, true
+	case "invalid_delivery_id":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "use delivery_id returned by the latest successful pull",
+		}, true
+	case "unknown_delivery":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "pull a message to obtain an active delivery_id before ack/nack",
+		}, true
+	case "unknown_message":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "query a visible message_id from publish/pull activity",
+		}, true
+	case "agent_ref_mismatch":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "provide matching agent UUID and canonical agent URI references",
+		}, true
+	case "invalid_handle":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "use a 2-64 char URL-safe handle and avoid blocked terms",
+		}, true
+	case "invalid_agent_type":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "set metadata.agent_type to 2-64 chars matching [a-z0-9._-]",
+		}, true
+	case "agent_handle_locked":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "do not retry handle finalization; update metadata only",
+		}, true
+	case "invalid_owner_human_id":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "request a new bind token with an active owner_human_id",
+		}, true
+	case "agent_id_generation_failed":
+		return errorHint{
+			Retryable:  true,
+			NextAction: "retry bind with backoff or specify an explicit handle",
 		}, true
 	}
 	return errorHint{}, false
