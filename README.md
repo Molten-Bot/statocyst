@@ -179,7 +179,7 @@ and A<->B agent messaging over the bridge.
 
 ### Caller Contract (must stay stable)
 
-- `Public` (no auth): `/ping`, `/health`, `/openapi.yaml`.
+- `Public` (no auth): `/ping`, `/health`, `/openapi.yaml`, `/openapi.md`, `/docs`.
 - `Human control-plane auth`: `/v1/me*`, `/v1/org*`, `/v1/agent-trusts*`, `/v1/org-trusts*`, `/v1/agents/{agent_uuid}*`, `/v1/agents/bind-tokens`.
 - `Agent bootstrap` (no prior auth): `POST /v1/agents/bind` with one-time `bind_token`.
 - `Agent runtime auth`: `/v1/agents/me/capabilities`, `/v1/agents/me/skill`, `/v1/messages/publish`, `/v1/messages/pull` using agent bearer token.
@@ -198,7 +198,11 @@ Agent runtime JSON contract:
 curl -i http://localhost:8080/ping
 curl -sS http://localhost:8080/health
 curl -sS http://localhost:8080/openapi.yaml
+curl -sS http://localhost:8080/openapi.md
 ```
+
+`/openapi.md` is a markdown companion generated from `internal/api/openapi.yaml`
+using `scripts/generate_openapi_md.sh` during container builds.
 
 `/ping` is the lightweight liveness route:
 - Returns HTTP `204` as soon as the HTTP listener is accepting requests.
@@ -222,6 +226,7 @@ http://localhost:8080/profile       # user profile + memberships + invite accept
 http://localhost:8080/organization  # org owner area (create org, invite humans, org metrics)
 http://localhost:8080/agents        # agent lifecycle + pending agent trust approvals
 http://localhost:8080/domains       # legacy all-in-one page (kept for review)
+http://localhost:8080/docs          # concise API docs index with markdown companion links
 ```
 
 Notes:

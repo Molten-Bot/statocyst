@@ -41,6 +41,9 @@ var uiAgentsHTML []byte
 //go:embed ui/agents.js
 var uiAgentsJS []byte
 
+//go:embed ui/docs.html
+var uiDocsHTML []byte
+
 //go:embed ui/robots.txt
 var uiRobotsTXT []byte
 
@@ -100,6 +103,9 @@ func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
 	case "/agents.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiAgentsJS, "agents.js")
 		return
+	case "/docs", "/docs/", "/docs/index.html":
+		writeUIAsset(w, r, "text/html; charset=utf-8", uiDocsHTML, "docs.html")
+		return
 	case "/domains", "/domains/", "/domains/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiIndexHTML, "index.html")
 		return
@@ -136,6 +142,9 @@ func writeUIAsset(w http.ResponseWriter, r *http.Request, contentType string, em
 	}
 	if strings.HasPrefix(contentType, "text/html") {
 		body = []byte(strings.ReplaceAll(string(body), "{{APP_NAME}}", uiAppName()))
+	}
+	if devFileName == "docs.html" {
+		setOpenAPIDocAlternateHeaders(w)
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)

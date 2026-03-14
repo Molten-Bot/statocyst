@@ -2477,6 +2477,9 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if !strings.Contains(skillContent, "Onboarding Checklist") {
 		t.Fatalf("expected onboarding checklist in skill, got %q", skillContent)
 	}
+	if !strings.Contains(skillContent, "Operating Rules") {
+		t.Fatalf("expected operating rules in skill, got %q", skillContent)
+	}
 	if !strings.Contains(skillContent, "distinctive emoji") || !strings.Contains(skillContent, "\"agent_type\":\"<assistant-type>\"") {
 		t.Fatalf("expected onboarding skill to require emoji/assistant type metadata setup, got %q", skillContent)
 	}
@@ -2518,6 +2521,9 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(manifestMDResp.Body.String(), "Statocyst Agent Manifest") {
 		t.Fatalf("expected manifest markdown heading, got %q", manifestMDResp.Body.String())
+	}
+	if !strings.Contains(manifestMDResp.Body.String(), "Retry Guidance") {
+		t.Fatalf("expected retry guidance section in manifest markdown, got %q", manifestMDResp.Body.String())
 	}
 	if !strings.Contains(manifestMDResp.Body.String(), "GET /v1/agents/me/manifest") {
 		t.Fatalf("expected manifest route contract in markdown, got %q", manifestMDResp.Body.String())
@@ -2697,6 +2703,54 @@ func TestOpenAPIYAMLHeaders(t *testing.T) {
 	contentType := resp.Header().Get("Content-Type")
 	if !strings.HasPrefix(contentType, "text/yaml") {
 		t.Fatalf("expected text/yaml content type, got %q", contentType)
+	}
+	if link := resp.Header().Get("Link"); !strings.Contains(link, "/openapi.md") {
+		t.Fatalf("expected alternate markdown link header, got %q", link)
+	}
+}
+
+func TestOpenAPIMarkdownHeaders(t *testing.T) {
+	router := newTestRouter()
+	req := httptest.NewRequest(http.MethodGet, "/openapi.md", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("openapi markdown failed: %d %s", resp.Code, resp.Body.String())
+	}
+	contentType := resp.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "text/markdown") {
+		t.Fatalf("expected text/markdown content type, got %q", contentType)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Statocyst OpenAPI Companion") {
+		t.Fatalf("expected companion heading in markdown output, got %q", body)
+	}
+	if !strings.Contains(body, "```yaml") || !strings.Contains(body, "/v1/agents/me") {
+		t.Fatalf("expected embedded yaml spec content in openapi markdown, got %q", body)
+	}
+	if link := resp.Header().Get("Link"); !strings.Contains(link, "/openapi.yaml") {
+		t.Fatalf("expected alternate yaml link header, got %q", link)
+	}
+}
+
+func TestDocsPageIncludesMarkdownAlternateLinks(t *testing.T) {
+	router := newTestRouter()
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("docs page failed: %d %s", resp.Code, resp.Body.String())
+	}
+	contentType := resp.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "text/html") {
+		t.Fatalf("expected html docs content type, got %q", contentType)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "/openapi.md") || !strings.Contains(body, "Agent-readable references") {
+		t.Fatalf("expected agent-readable docs content with openapi.md link, got %q", body)
+	}
+	if link := resp.Header().Get("Link"); !strings.Contains(link, "/openapi.md") {
+		t.Fatalf("expected docs alternate link header, got %q", link)
 	}
 }
 

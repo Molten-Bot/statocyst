@@ -10,6 +10,8 @@ RUN go mod download
 
 COPY . .
 
+RUN ./scripts/generate_openapi_md.sh
+
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w" -o /out/statocystd ./cmd/statocystd
 
 FROM gcr.io/distroless/static:nonroot

@@ -22,6 +22,11 @@ jobs:
           go-version: '1.22.x'
           cache: true
 
+      - name: Verify generated OpenAPI markdown
+        run: |
+          ./scripts/generate_openapi_md.sh
+          git diff --exit-code -- internal/api/openapi.md
+
       - name: Run tests
         run: go test ./...
 

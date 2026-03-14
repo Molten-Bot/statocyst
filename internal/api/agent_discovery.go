@@ -1,6 +1,7 @@
 package api
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -294,6 +295,12 @@ const (
 - API Base: {{API_BASE}}
 {{AGENT_LINES}}
 `
+	discoveryUsageGuidance = `
+## Reading Guidance
+1. Use JSON route responses as runtime source of truth.
+2. Use markdown outputs for planning and operator review.
+3. Treat ` + "`retryable`" + ` and ` + "`next_action`" + ` as operational hints when requests fail.
+`
 	discoveryAgentLineTemplate = "- {{AGENT_LABEL}}: {{AGENT_VALUE}}\n"
 	discoveryEndpointsHeading  = "\n## Endpoints\n"
 	discoveryEndpointLine      = "- {{ENDPOINT_KEY}}: `{{ENDPOINT_VALUE}}`\n"
@@ -316,6 +323,8 @@ const (
 `
 	discoveryRouteRequestTypesHeader  = "- Request Content Types:\n"
 	discoveryRouteResponseTypesHeader = "- Response Content Types:\n"
+	discoveryRetryGuidanceHeading     = "\n## Retry Guidance\n"
+	discoveryRetryGuidanceLine        = "- `{{ERROR_CODE}}`: retryable=`{{RETRYABLE}}`; next_action={{NEXT_ACTION}}\n"
 
 	skillBaseTemplate = `# SKILL: Statocyst Agent Control Plane
 
@@ -339,6 +348,8 @@ const (
 4. Pull once: ` + "`GET {{PULL_URL}}`" + `
 5. Publish test message: ` + "`POST {{PUBLISH_URL}}`" + `
 
+## Operating Rules
+{{OPERATING_RULES_BLOCK}}
 ## Communication Graph
 {{COMMUNICATION_BLOCK}}
 ## Route Index
@@ -347,6 +358,7 @@ const (
 	skillTalkPathsHeader       = "- You can currently talk to:\n"
 	skillRouteIndexLine        = "- `{{ROUTE_METHOD}} {{ROUTE_PATH}}`: {{ROUTE_DESCRIPTION}}\n"
 	skillCommunicationPeerLine = "  - {{VALUE}}\n"
+	skillOperatingRuleLine     = "- {{VALUE}}\n"
 )
 
 // NOTE: token replacement templates are intentionally limited to markdown discovery/skill rendering.
@@ -394,6 +406,7 @@ func buildAgentDiscoveryMarkdown(manifest agentManifest) string {
 		"{{API_BASE}}", manifest.APIBase,
 		"{{AGENT_LINES}}", strings.Join(agentLines, ""),
 	))
+	markdown = append(markdown, discoveryUsageGuidance)
 	markdown = append(markdown, discoveryEndpointsHeading)
 
 	endpointLines := make([]string, 0, len(manifest.Endpoints))
@@ -449,8 +462,42 @@ func buildAgentDiscoveryMarkdown(manifest agentManifest) string {
 		))
 	}
 	markdown = append(markdown, strings.Join(routeSections, ""))
+	markdown = append(markdown, discoveryRetryGuidanceHeading)
+	markdown = append(markdown, renderDiscoveryRetryGuidance(manifest))
 
 	return strings.Join(markdown, "")
+}
+
+func renderDiscoveryRetryGuidance(manifest agentManifest) string {
+	retryGuidance, _ := manifest.Communication["retry_guidance"].(map[string]any)
+	if len(retryGuidance) == 0 {
+		return "- none available\n"
+	}
+	keys := make([]string, 0, len(retryGuidance))
+	for key := range retryGuidance {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		retryable := "false"
+		nextAction := "inspect route-specific error payload"
+		if detail, ok := retryGuidance[key].(map[string]any); ok {
+			if value, ok := detail["retryable"].(bool); ok {
+				retryable = strconv.FormatBool(value)
+			}
+			if value, ok := detail["next_action"].(string); ok && strings.TrimSpace(value) != "" {
+				nextAction = value
+			}
+		}
+		lines = append(lines, renderMarkdownTemplate(
+			discoveryRetryGuidanceLine,
+			"{{ERROR_CODE}}", key,
+			"{{RETRYABLE}}", retryable,
+			"{{NEXT_ACTION}}", nextAction,
+		))
+	}
+	return strings.Join(lines, "")
 }
 
 func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
@@ -459,6 +506,13 @@ func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
 	if len(talkableAgents) > 0 {
 		communicationBlock = skillTalkPathsHeader + renderMarkdownPlainBullets(talkableAgents, skillCommunicationPeerLine)
 	}
+	operatingRules := []string{
+		"Do not use human control-plane credentials on agent runtime routes.",
+		"Persist token and api_base exactly as returned by bind/register responses.",
+		"Honor retryable and next_action fields before retrying failed requests.",
+		"Treat bind tokens and agent bearer tokens as secrets.",
+	}
+	operatingRulesBlock := renderMarkdownPlainBullets(operatingRules, skillOperatingRuleLine)
 
 	routeIndexLines := make([]string, 0, len(manifest.Routes))
 	for _, route := range manifest.Routes {
@@ -484,6 +538,7 @@ func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
 		"{{PROFILE_METADATA_URL}}", manifest.Endpoints["profile"]+"/metadata",
 		"{{PULL_URL}}", manifest.Endpoints["pull"]+"?timeout_ms=5000",
 		"{{PUBLISH_URL}}", manifest.Endpoints["publish"],
+		"{{OPERATING_RULES_BLOCK}}", operatingRulesBlock,
 		"{{COMMUNICATION_BLOCK}}", communicationBlock,
 		"{{ROUTE_INDEX_LINES}}", strings.Join(routeIndexLines, ""),
 	)

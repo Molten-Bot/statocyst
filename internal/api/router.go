@@ -126,6 +126,7 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/ping", handlePing)
 	mux.HandleFunc("/health", handler.handleHealthz)
 	mux.HandleFunc("/openapi.yaml", handler.handleOpenAPIYAML)
+	mux.HandleFunc("/openapi.md", handler.handleOpenAPIMarkdown)
 	mux.HandleFunc("/v1/ui/config", handler.handleUIConfig)
 	mux.HandleFunc("/v1/me", handler.handleMe)
 	mux.HandleFunc("/v1/me/metadata", handler.handleMeMetadata)
@@ -346,7 +347,7 @@ func withAPICompression(next http.Handler) http.Handler {
 }
 
 func isAPIPath(path string) bool {
-	return path == "/health" || path == "/openapi.yaml" || strings.HasPrefix(path, "/v1/")
+	return path == "/health" || path == "/openapi.yaml" || path == "/openapi.md" || strings.HasPrefix(path, "/v1/")
 }
 
 func addVaryAcceptEncoding(h http.Header) {

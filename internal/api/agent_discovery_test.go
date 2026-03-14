@@ -47,6 +47,12 @@ func TestBuildAgentDiscoveryMarkdownRendersTemplateTokens(t *testing.T) {
 	if !strings.Contains(markdown, "- Response Content Types:") {
 		t.Fatalf("expected response content types block in markdown, got markdown=%q", markdown)
 	}
+	if !strings.Contains(markdown, "## Reading Guidance") {
+		t.Fatalf("expected reading guidance section in markdown, got markdown=%q", markdown)
+	}
+	if !strings.Contains(markdown, "## Retry Guidance") || !strings.Contains(markdown, "`store_error`: retryable=`true`") {
+		t.Fatalf("expected retry guidance section in markdown, got markdown=%q", markdown)
+	}
 }
 
 func TestBuildAgentSkillMarkdownRendersTemplateTokens(t *testing.T) {
@@ -87,6 +93,9 @@ func TestBuildAgentSkillMarkdownRendersTemplateTokens(t *testing.T) {
 	}
 	if !strings.Contains(markdown, "You can currently talk to") {
 		t.Fatalf("expected communication graph section in skill markdown, got markdown=%q", markdown)
+	}
+	if !strings.Contains(markdown, "## Operating Rules") || !strings.Contains(markdown, "Honor retryable and next_action fields") {
+		t.Fatalf("expected operating rules section in skill markdown, got markdown=%q", markdown)
 	}
 }
 

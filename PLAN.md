@@ -41,11 +41,11 @@ Completed in PR #76 (`d0815c8`):
 - broadened retryability/next-action hints for route-specific agent runtime failures
 - stricter media-type rejection with `415`/`406` on affected routes
 
-### Milestone 3: Markdown and docs polish (Pending)
+### Milestone 3: Markdown and docs polish (Completed 2026-03-14)
 
-- improve markdown output quality for manifest and skill guidance
-- add OpenAPI markdown companion route (for example `/openapi.md`)
-- make HTML docs pages more agent-readable and Cloudflare Markdown-for-Agents friendly
+- improved markdown output quality for manifest and skill guidance
+- added OpenAPI markdown companion route (`/openapi.md`) generated from `openapi.yaml` during container build
+- added concise HTML docs index (`/docs`) with agent-readable structure and markdown alternate links for Cloudflare Markdown-for-Agents workflows
 
 ## Non-Goals
 
@@ -78,7 +78,7 @@ Already covered:
 
 Remaining additions:
 
-- none for Milestone 2; route-level envelope and error-hint coverage added for agent runtime routes
+- none; Milestone 2 and Milestone 3 contract/docs coverage landed
 
 ## Defaults
 

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{APP_NAME}} API Docs</title>
+    <meta
+      name="description"
+      content="{{APP_NAME}} API documentation with agent-friendly markdown and OpenAPI companion routes."
+    />
+    <link rel="alternate" type="text/markdown" href="/openapi.md" />
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --ink: #102a43;
+        --muted: #486581;
+        --card: #ffffff;
+        --line: #d9e2ec;
+        --accent: #0b7285;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top right, #e6f4f1, #f5f7fb 45%);
+        color: var(--ink);
+      }
+      header,
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      header h1 {
+        margin: 4px 0 8px;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      h2 {
+        margin: 2px 0 10px;
+        font-size: 1.05rem;
+      }
+      p,
+      li {
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+      a {
+        color: var(--accent);
+      }
+      code {
+        background: #e8f2f7;
+        border-radius: 6px;
+        padding: 1px 5px;
+        color: #0f4c5c;
+      }
+      .note {
+        margin-top: 12px;
+        font-size: 0.92rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>{{APP_NAME}} Documentation</h1>
+      <p>Agent-readable references for runtime discovery, contract validation, and onboarding workflows.</p>
+    </header>
+
+    <main>
+      <div class="grid">
+        <section>
+          <h2>Primary Specs</h2>
+          <ul>
+            <li><a href="/openapi.yaml"><code>/openapi.yaml</code></a>: canonical OpenAPI source of truth.</li>
+            <li>
+              <a href="/openapi.md"><code>/openapi.md</code></a>: markdown companion derived from
+              <code>/openapi.yaml</code>, intended for LLM/agent ingestion.
+            </li>
+            <li><a href="/health"><code>/health</code></a>: runtime dependency status.</li>
+            <li><a href="/ping"><code>/ping</code></a>: lightweight liveness route.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>Agent Discovery</h2>
+          <ul>
+            <li><code>/v1/agents/me/manifest</code>: self-describing runtime contract (JSON/markdown).</li>
+            <li><code>/v1/agents/me/capabilities</code>: route and constraints contract data.</li>
+            <li><code>/v1/agents/me/skill</code>: operational playbook and onboarding guidance.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>Caller Separation</h2>
+          <ul>
+            <li>Human credentials: control-plane routes (<code>/v1/me*</code>, trust, admin flows).</li>
+            <li>Agent bearer token: runtime routes (manifest/skill, publish, pull, ack, nack).</li>
+            <li>Bootstrap path: <code>POST /v1/agents/bind</code> (no prior auth token).</li>
+          </ul>
+        </section>
+      </div>
+
+      <p class="note">
+        This page is intentionally concise and semantic to stay readable for both humans and markdown-for-agents
+        pipelines.
+      </p>
+    </main>
+  </body>
+</html>
