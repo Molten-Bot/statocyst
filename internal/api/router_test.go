@@ -269,6 +269,25 @@ type failOnceQueue struct {
 	failNextDequeue bool
 }
 
+type flakyBindTokenStore struct {
+	*store.MemoryStore
+	mu                 sync.Mutex
+	failCreateBindLeft int
+}
+
+func (s *flakyBindTokenStore) CreateBindToken(orgID string, ownerHumanID *string, actorHumanID, bindID, bindTokenHash string, expiresAt, now time.Time, isSuperAdmin bool) (model.BindToken, error) {
+	s.mu.Lock()
+	shouldFail := s.failCreateBindLeft > 0
+	if shouldFail {
+		s.failCreateBindLeft--
+	}
+	s.mu.Unlock()
+	if shouldFail {
+		return model.BindToken{}, context.DeadlineExceeded
+	}
+	return s.MemoryStore.CreateBindToken(orgID, ownerHumanID, actorHumanID, bindID, bindTokenHash, expiresAt, now, isSuperAdmin)
+}
+
 func (q *failOnceQueue) Enqueue(ctx context.Context, message model.Message) error {
 	q.mu.Lock()
 	fail := q.failNextEnqueue
@@ -1478,6 +1497,46 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	}
 	if !strings.Contains(connectPrompt, "agent_exists") || !strings.Contains(connectPrompt, "<your-agent-handle>-2") {
 		t.Fatalf("expected connect prompt to explain duplicate retry permutations, got %q", connectPrompt)
+	}
+}
+
+func TestMyAgentBindTokenCreateRetriesTransientStoreError(t *testing.T) {
+	mem := &flakyBindTokenStore{
+		MemoryStore:        store.NewMemoryStore(),
+		failCreateBindLeft: 1,
+	}
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	router := NewRouter(h)
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("expected transient create bind failure to retry and succeed, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	createPayload := decodeJSONMap(t, createResp.Body.Bytes())
+	if token, _ := createPayload["bind_token"].(string); strings.TrimSpace(token) == "" {
+		t.Fatalf("expected bind_token after retry success, payload=%v", createPayload)
+	}
+}
+
+func TestMyAgentBindTokenCreateReturns503AfterRepeatedTransientStoreError(t *testing.T) {
+	mem := &flakyBindTokenStore{
+		MemoryStore:        store.NewMemoryStore(),
+		failCreateBindLeft: 2,
+	}
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(mem, mem, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	router := NewRouter(h)
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected repeated transient failure to return 503, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	payload := decodeJSONMap(t, createResp.Body.Bytes())
+	if payload["error"] != "store_error" {
+		t.Fatalf("expected store_error for repeated transient failure, got %v payload=%v", payload["error"], payload)
 	}
 }
 

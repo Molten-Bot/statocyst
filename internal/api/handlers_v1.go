@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -566,18 +567,7 @@ func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request
 	if h.ensureHumanOwnedAgentLimit(w, ownerHumanID) {
 		return
 	}
-	bindSecret, err := auth.GenerateToken()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate bind token")
-		return
-	}
-	bindID, err := h.idFactory()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate bind id")
-		return
-	}
-	expiresAt := h.now().UTC().Add(h.bindTokenTTL)
-	bind, err := h.control.CreateBindToken(req.OrgID, &ownerHumanID, actor.Human.HumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC(), actor.IsSuperAdmin)
+	bind, bindSecret, err := h.createBindTokenWithRetry(req.OrgID, &ownerHumanID, actor.Human.HumanID, actor.IsSuperAdmin)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
@@ -586,6 +576,8 @@ func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusForbidden, "forbidden", "membership in org required")
 		case errors.Is(err, store.ErrMembershipNotFound):
 			writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id must be active in org")
+		case isRetryableStoreMutationError(err):
+			writeError(w, http.StatusServiceUnavailable, "store_error", "failed to create bind token")
 		default:
 			writeError(w, http.StatusInternalServerError, "store_error", "failed to create bind token")
 		}
@@ -2300,18 +2292,7 @@ func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	bindSecret, err := auth.GenerateToken()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate bind token")
-		return
-	}
-	bindID, err := h.idFactory()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate bind id")
-		return
-	}
-	expiresAt := h.now().UTC().Add(h.bindTokenTTL)
-	bind, err := h.control.CreateBindToken(req.OrgID, req.OwnerHumanID, actor.Human.HumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC(), actor.IsSuperAdmin)
+	bind, bindSecret, err := h.createBindTokenWithRetry(req.OrgID, req.OwnerHumanID, actor.Human.HumanID, actor.IsSuperAdmin)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
@@ -2320,6 +2301,8 @@ func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusForbidden, "forbidden", "role member/admin/owner required")
 		case errors.Is(err, store.ErrMembershipNotFound):
 			writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id must be active in org")
+		case isRetryableStoreMutationError(err):
+			writeError(w, http.StatusServiceUnavailable, "store_error", "failed to create bind token")
 		default:
 			writeError(w, http.StatusInternalServerError, "store_error", "failed to create bind token")
 		}
@@ -2333,6 +2316,62 @@ func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) 
 		"owner_human_id": bind.OwnerHumanID,
 		"expires_at":     bind.ExpiresAt,
 	})
+}
+
+func (h *Handler) createBindTokenWithRetry(orgID string, ownerHumanID *string, actorHumanID string, isSuperAdmin bool) (model.BindToken, string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		bindSecret, err := auth.GenerateToken()
+		if err != nil {
+			return model.BindToken{}, "", err
+		}
+		bindID, err := h.idFactory()
+		if err != nil {
+			return model.BindToken{}, "", err
+		}
+		expiresAt := h.now().UTC().Add(h.bindTokenTTL)
+		bind, err := h.control.CreateBindToken(orgID, ownerHumanID, actorHumanID, bindID, auth.HashToken(bindSecret), expiresAt, h.now().UTC(), isSuperAdmin)
+		if err == nil {
+			return bind, bindSecret, nil
+		}
+		lastErr = err
+		if attempt == 0 && isRetryableStoreMutationError(err) {
+			continue
+		}
+		return model.BindToken{}, "", err
+	}
+	return model.BindToken{}, "", lastErr
+}
+
+func isRetryableStoreMutationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	if message == "" {
+		return false
+	}
+	retryHints := []string{
+		"timeout",
+		"temporar",
+		"try again later",
+		"unavailable",
+		"connection reset",
+		"broken pipe",
+		"refused",
+		"i/o timeout",
+		"eof",
+		"no container instance",
+	}
+	for _, hint := range retryHints {
+		if strings.Contains(message, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) {
