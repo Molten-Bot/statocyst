@@ -89,11 +89,16 @@ func publishByURI(t *testing.T, router http.Handler, senderToken, toAgentURI, pa
 func registerFederatedAgentWithUUID(t *testing.T, router http.Handler, humanID, email, orgID, agentID, ownerHumanID string) (string, string) {
 	t.Helper()
 	ensureHandleConfirmed(t, router, humanID, email)
-	bindReq := map[string]any{"org_id": orgID}
-	if ownerHumanID != "" {
-		bindReq["owner_human_id"] = ownerHumanID
+	bindReq := map[string]any{}
+	bindPath := "/v1/me/agents/bind-tokens"
+	if orgID != "" {
+		bindPath = "/v1/agents/bind-tokens"
+		bindReq["org_id"] = orgID
+		if ownerHumanID != "" {
+			bindReq["owner_human_id"] = ownerHumanID
+		}
 	}
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", bindReq, humanHeaders(humanID, email))
+	createResp := doJSONRequest(t, router, http.MethodPost, bindPath, bindReq, humanHeaders(humanID, email))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("create bind token failed: %d %s", createResp.Code, createResp.Body.String())
 	}
@@ -218,6 +223,89 @@ func TestFederatedPublishDropsWithoutRemoteTrust(t *testing.T) {
 	}
 }
 
+func TestFederatedPublishRoutesForHumanOwnedAgentsWithMutualRemoteAgentTrust(t *testing.T) {
+	alpha := newFederatedTestServer(t, "https://alpha.example")
+	beta := newFederatedTestServer(t, "https://beta.example")
+
+	aliceHumanID := currentHumanID(t, alpha.router, "alice", "alice@a.test")
+	tokenA, agentUUIDA := registerFederatedAgentWithUUID(t, alpha.router, "alice", "alice@a.test", "", "agent-a", aliceHumanID)
+	agentA := currentAgent(t, alpha.router, tokenA)
+	agentURIA, _ := agentA["uri"].(string)
+
+	bobHumanID := currentHumanID(t, beta.router, "bob", "bob@b.test")
+	tokenB, agentUUIDB := registerFederatedAgentWithUUID(t, beta.router, "bob", "bob@b.test", "", "agent-b", bobHumanID)
+	agentB := currentAgent(t, beta.router, tokenB)
+	agentURIB, _ := agentB["uri"].(string)
+
+	const peerID = "alpha-beta"
+	const secret = "peer-shared-secret"
+	createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
+	createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)
+	createRemoteAgentTrustAdmin(t, alpha.router, agentUUIDA, peerID, agentURIB)
+	createRemoteAgentTrustAdmin(t, beta.router, agentUUIDB, peerID, agentURIA)
+
+	pubAlpha := publishByURI(t, alpha.router, tokenA, agentURIB, "hello-human-beta")
+	if pubAlpha.Code != http.StatusAccepted {
+		t.Fatalf("expected remote publish 202, got %d %s", pubAlpha.Code, pubAlpha.Body.String())
+	}
+	pullBeta := pull(t, beta.router, tokenB, 10)
+	if pullBeta.Code != http.StatusOK {
+		t.Fatalf("expected beta pull 200, got %d %s", pullBeta.Code, pullBeta.Body.String())
+	}
+	pullBetaPayload := decodeJSONMap(t, pullBeta.Body.Bytes())
+	msgBeta := pullBetaPayload["message"].(map[string]any)
+	if got, _ := msgBeta["payload"].(string); got != "hello-human-beta" {
+		t.Fatalf("expected payload hello-human-beta, got %q payload=%v", got, pullBetaPayload)
+	}
+
+	pubBeta := publishByURI(t, beta.router, tokenB, agentURIA, "hello-human-alpha")
+	if pubBeta.Code != http.StatusAccepted {
+		t.Fatalf("expected remote publish 202, got %d %s", pubBeta.Code, pubBeta.Body.String())
+	}
+	pullAlpha := pull(t, alpha.router, tokenA, 10)
+	if pullAlpha.Code != http.StatusOK {
+		t.Fatalf("expected alpha pull 200, got %d %s", pullAlpha.Code, pullAlpha.Body.String())
+	}
+	pullAlphaPayload := decodeJSONMap(t, pullAlpha.Body.Bytes())
+	msgAlpha := pullAlphaPayload["message"].(map[string]any)
+	if got, _ := msgAlpha["payload"].(string); got != "hello-human-alpha" {
+		t.Fatalf("expected payload hello-human-alpha, got %q payload=%v", got, pullAlphaPayload)
+	}
+}
+
+func TestFederatedPublishStillRequiresRemoteOrgTrustForOrgScopedAgents(t *testing.T) {
+	alpha := newFederatedTestServer(t, "https://alpha.example")
+	beta := newFederatedTestServer(t, "https://beta.example")
+
+	orgA := createOrg(t, alpha.router, "alice", "alice@a.test", "Org Alpha")
+	aliceHumanID := currentHumanID(t, alpha.router, "alice", "alice@a.test")
+	tokenA, agentUUIDA := registerFederatedAgentWithUUID(t, alpha.router, "alice", "alice@a.test", orgA, "agent-a", aliceHumanID)
+
+	orgB := createOrg(t, beta.router, "bob", "bob@b.test", "Org Beta")
+	bobHumanID := currentHumanID(t, beta.router, "bob", "bob@b.test")
+	tokenB, agentUUIDB := registerFederatedAgentWithUUID(t, beta.router, "bob", "bob@b.test", orgB, "agent-b", bobHumanID)
+	agentURIB, _ := currentAgent(t, beta.router, tokenB)["uri"].(string)
+
+	const peerID = "alpha-beta"
+	const secret = "peer-shared-secret"
+	createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
+	createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)
+	createRemoteAgentTrustAdmin(t, alpha.router, agentUUIDA, peerID, agentURIB)
+	createRemoteAgentTrustAdmin(t, beta.router, agentUUIDB, peerID, currentAgent(t, alpha.router, tokenA)["uri"].(string))
+
+	pubResp := publishByURI(t, alpha.router, tokenA, agentURIB, "missing-org-trust")
+	if pubResp.Code != http.StatusAccepted {
+		t.Fatalf("expected dropped remote publish 202, got %d %s", pubResp.Code, pubResp.Body.String())
+	}
+	pubPayload := decodeJSONMap(t, pubResp.Body.Bytes())
+	if got, _ := pubPayload["status"].(string); got != "dropped" {
+		t.Fatalf("expected dropped status, got %q payload=%v", got, pubPayload)
+	}
+	if got, _ := pubPayload["reason"].(string); got != "no_trust_path" {
+		t.Fatalf("expected no_trust_path, got %q payload=%v", got, pubPayload)
+	}
+}
+
 func TestPeerIngressRejectsInvalidSignature(t *testing.T) {
 	beta := newFederatedTestServer(t, "https://beta.example")
 
@@ -265,6 +353,62 @@ func TestPeerIngressRejectsTransitiveTarget(t *testing.T) {
 	beta.router.ServeHTTP(resp, req)
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("expected transitive target 400, got %d %s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestRemoteAgentTrustOwnerCanCreateAndDeleteForHumanOwnedAgent(t *testing.T) {
+	router := newTestRouter()
+	const peerID = "alpha-beta"
+	createPeer(t, router, peerID, "https://beta.example", "https://beta.example", "secret")
+
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	_, agentUUID := registerFederatedAgentWithUUID(t, router, "alice", "alice@a.test", "", "agent-a", aliceHumanID)
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/admin/remote-agent-trusts", map[string]any{
+		"local_agent_uuid": agentUUID,
+		"remote_agent_uri": "https://beta.example/human/bob/agent/agent-b",
+	}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("expected owner create remote trust 201, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	createPayload := decodeJSONMap(t, createResp.Body.Bytes())
+	trust, _ := createPayload["remote_agent_trust"].(map[string]any)
+	trustID, _ := trust["trust_id"].(string)
+	if trustID == "" {
+		t.Fatalf("expected trust_id in create payload=%v", createPayload)
+	}
+
+	listResp := doJSONRequest(t, router, http.MethodGet, "/v1/admin/remote-agent-trusts", nil, humanHeaders("alice", "alice@a.test"))
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected owner list remote trusts 200, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	listPayload := decodeJSONMap(t, listResp.Body.Bytes())
+	trusts, _ := listPayload["remote_agent_trusts"].([]any)
+	if len(trusts) != 1 {
+		t.Fatalf("expected exactly one visible trust, got %d payload=%v", len(trusts), listPayload)
+	}
+
+	deleteResp := doJSONRequest(t, router, http.MethodDelete, "/v1/admin/remote-agent-trusts/"+trustID, nil, humanHeaders("alice", "alice@a.test"))
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected owner delete remote trust 200, got %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+}
+
+func TestRemoteAgentTrustNonOwnerCannotCreateForHumanOwnedAgent(t *testing.T) {
+	router := newTestRouter()
+	const peerID = "alpha-beta"
+	createPeer(t, router, peerID, "https://beta.example", "https://beta.example", "secret")
+
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	_, agentUUID := registerFederatedAgentWithUUID(t, router, "alice", "alice@a.test", "", "agent-a", aliceHumanID)
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/admin/remote-agent-trusts", map[string]any{
+		"local_agent_uuid": agentUUID,
+		"peer_id":          peerID,
+		"remote_agent_uri": "https://beta.example/human/bob/agent/agent-b",
+	}, humanHeaders("bob", "bob@b.test"))
+	if createResp.Code != http.StatusForbidden {
+		t.Fatalf("expected non-owner create remote trust 403, got %d %s", createResp.Code, createResp.Body.String())
 	}
 }
 

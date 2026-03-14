@@ -226,13 +226,28 @@ func (h *Handler) handleAdminRemoteOrgTrustByID(w http.ResponseWriter, r *http.R
 }
 
 func (h *Handler) handleAdminRemoteAgentTrusts(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.requireSuperAdmin(w, r)
-	if !ok {
+	actor, err := h.authenticateHuman(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"remote_agent_trusts": h.control.ListRemoteAgentTrusts()})
+		trusts := h.control.ListRemoteAgentTrusts()
+		if !actor.IsSuperAdmin {
+			filtered := make([]model.RemoteAgentTrust, 0, len(trusts))
+			for _, trust := range trusts {
+				localAgent, err := h.control.GetAgentByUUID(trust.LocalAgentUUID)
+				if err != nil {
+					continue
+				}
+				if localAgent.OwnerHumanID != nil && strings.TrimSpace(*localAgent.OwnerHumanID) == actor.Human.HumanID {
+					filtered = append(filtered, trust)
+				}
+			}
+			trusts = filtered
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"remote_agent_trusts": trusts})
 	case http.MethodPost:
 		var req createRemoteAgentTrustRequest
 		if err := decodeJSON(r, &req); err != nil {
@@ -242,26 +257,50 @@ func (h *Handler) handleAdminRemoteAgentTrusts(w http.ResponseWriter, r *http.Re
 		req.LocalAgentUUID = normalizeUUID(req.LocalAgentUUID)
 		req.PeerID = strings.TrimSpace(req.PeerID)
 		req.RemoteAgentURI = strings.TrimSpace(req.RemoteAgentURI)
-		if !validateUUID(req.LocalAgentUUID) || req.PeerID == "" {
-			writeError(w, http.StatusBadRequest, "invalid_request", "valid local_agent_uuid and peer_id are required")
+		if !validateUUID(req.LocalAgentUUID) || req.RemoteAgentURI == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "valid local_agent_uuid and remote_agent_uri are required")
 			return
 		}
-		peer, err := h.control.GetPeerInstance(req.PeerID)
+		localAgent, err := h.control.GetAgentByUUID(req.LocalAgentUUID)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "unknown_peer", "peer_id is not registered")
+			writeError(w, http.StatusNotFound, "unknown_agent", "local_agent_uuid is not registered")
 			return
+		}
+		if !actor.IsSuperAdmin {
+			if localAgent.OwnerHumanID == nil || strings.TrimSpace(*localAgent.OwnerHumanID) != actor.Human.HumanID {
+				writeError(w, http.StatusForbidden, "forbidden", "owner or statocyst admin required")
+				return
+			}
 		}
 		agentBase, _, err := splitCanonicalAgentURI(req.RemoteAgentURI)
-		if err != nil || agentBase != peer.CanonicalBaseURL {
-			writeError(w, http.StatusBadRequest, "invalid_remote_agent_uri", "remote_agent_uri must be a canonical agent URI for the selected peer")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_remote_agent_uri", "remote_agent_uri must be a valid canonical agent URI")
 			return
+		}
+		var peer model.PeerInstance
+		if req.PeerID != "" {
+			peer, err = h.control.GetPeerInstance(req.PeerID)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "unknown_peer", "peer_id is not registered")
+				return
+			}
+			if agentBase != peer.CanonicalBaseURL {
+				writeError(w, http.StatusBadRequest, "invalid_remote_agent_uri", "remote_agent_uri must be a canonical agent URI for the selected peer")
+				return
+			}
+		} else {
+			peer, err = h.control.ResolvePeerByCanonicalBase(agentBase)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "unknown_peer", "remote_agent_uri is not registered on a federated peer")
+				return
+			}
 		}
 		trustID, err := h.idFactory()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to generate trust_id")
 			return
 		}
-		trust, err := h.control.CreateRemoteAgentTrust(req.LocalAgentUUID, req.PeerID, req.RemoteAgentURI, actor.Human.HumanID, trustID, h.now().UTC())
+		trust, err := h.control.CreateRemoteAgentTrust(req.LocalAgentUUID, peer.PeerID, req.RemoteAgentURI, actor.Human.HumanID, trustID, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrAgentNotFound):
@@ -280,8 +319,9 @@ func (h *Handler) handleAdminRemoteAgentTrusts(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) handleAdminRemoteAgentTrustByID(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.requireSuperAdmin(w, r)
-	if !ok {
+	actor, err := h.authenticateHuman(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
 		return
 	}
 	trustID := strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/v1/admin/remote-agent-trusts/"))
@@ -293,7 +333,27 @@ func (h *Handler) handleAdminRemoteAgentTrustByID(w http.ResponseWriter, r *http
 		writeMethodNotAllowed(w)
 		return
 	}
-	trust, err := h.control.DeleteRemoteAgentTrust(trustID, "", h.now().UTC())
+	if !actor.IsSuperAdmin {
+		found := false
+		owned := false
+		for _, trust := range h.control.ListRemoteAgentTrusts() {
+			if trust.TrustID != trustID {
+				continue
+			}
+			found = true
+			localAgent, err := h.control.GetAgentByUUID(trust.LocalAgentUUID)
+			if err != nil {
+				break
+			}
+			owned = localAgent.OwnerHumanID != nil && strings.TrimSpace(*localAgent.OwnerHumanID) == actor.Human.HumanID
+			break
+		}
+		if found && !owned {
+			writeError(w, http.StatusForbidden, "forbidden", "owner or statocyst admin required")
+			return
+		}
+	}
+	trust, err := h.control.DeleteRemoteAgentTrust(trustID, actor.Human.HumanID, h.now().UTC())
 	if err != nil {
 		if errors.Is(err, store.ErrRemoteAgentTrustNotFound) {
 			writeError(w, http.StatusNotFound, "unknown_remote_agent_trust", "trust_id is not registered")
@@ -303,6 +363,21 @@ func (h *Handler) handleAdminRemoteAgentTrustByID(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"remote_agent_trust": trust, "result": "deleted"})
+}
+
+func (h *Handler) hasActiveFederatedTrustPath(localAgent model.Agent, localAgentUUID, peerID, remoteAgentURI, remoteAgentRef string) bool {
+	if !h.control.HasActiveRemoteAgentTrust(localAgentUUID, peerID, remoteAgentURI) {
+		return false
+	}
+	// Human-owned/personal agents do not have an org scope; explicit per-agent remote trust is sufficient.
+	if strings.TrimSpace(localAgent.OrgID) == "" {
+		return true
+	}
+	remoteOrgHandle := remoteOrgHandleFromAgentRef(remoteAgentRef)
+	if remoteOrgHandle == "" {
+		return false
+	}
+	return h.control.HasActiveRemoteOrgTrust(localAgent.OrgID, peerID, remoteOrgHandle)
 }
 
 func (h *Handler) processPeerOutboxes(ctx context.Context, limit int) {
@@ -422,12 +497,7 @@ func (h *Handler) handlePeerInboundMessage(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid_from_agent_uri", "from_agent_uri must match the authenticated peer")
 		return
 	}
-	senderOrgHandle := remoteOrgHandleFromAgentRef(senderAgentRef)
-	if senderOrgHandle == "" {
-		writeError(w, http.StatusBadRequest, "invalid_from_agent_uri", "from_agent_uri must include a valid org-scoped agent ref")
-		return
-	}
-	if !h.control.HasActiveRemoteOrgTrust(receiver.OrgID, peer.PeerID, senderOrgHandle) || !h.control.HasActiveRemoteAgentTrust(receiver.AgentUUID, peer.PeerID, msg.FromAgentURI) {
+	if !h.hasActiveFederatedTrustPath(receiver, receiver.AgentUUID, peer.PeerID, msg.FromAgentURI, senderAgentRef) {
 		writeError(w, http.StatusForbidden, "forbidden", "no federated trust path")
 		return
 	}
@@ -528,6 +598,10 @@ func remoteOrgHandleFromAgentRef(agentRef string) string {
 	parts := strings.Split(strings.Trim(agentRef, "/"), "/")
 	if len(parts) < 2 {
 		return ""
+	}
+	// Human-owned URIs use "human/<owner>/agent/<agent>"; namespace trust by owner handle.
+	if parts[0] == "human" {
+		return normalizeHandle(parts[1])
 	}
 	return normalizeHandle(parts[0])
 }

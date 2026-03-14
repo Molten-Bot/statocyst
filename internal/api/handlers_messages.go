@@ -132,8 +132,8 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_uri is not registered on a trusted peer")
 				return
 			}
-			remoteOrgHandle := remoteOrgHandleFromAgentRef(targetRef)
-			if remoteOrgHandle == "" || !h.control.HasActiveRemoteOrgTrust(senderAgent.OrgID, peer.PeerID, remoteOrgHandle) || !h.control.HasActiveRemoteAgentTrust(senderAgentUUID, peer.PeerID, req.ToAgentURI) {
+			remoteScope := remoteOrgHandleFromAgentRef(targetRef)
+			if !h.hasActiveFederatedTrustPath(senderAgent, senderAgentUUID, peer.PeerID, req.ToAgentURI, targetRef) {
 				h.control.RecordMessageDropped(senderAgent.OrgID)
 				writeAgentRuntimeSuccess(w, http.StatusAccepted, map[string]any{
 					"status": "dropped",
@@ -153,7 +153,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 				FromAgentURI:   h.agentURI(senderAgent),
 				ToAgentURI:     req.ToAgentURI,
 				SenderOrgID:    senderAgent.OrgID,
-				ReceiverOrgID:  remoteOrgHandle,
+				ReceiverOrgID:  remoteScope,
 				ReceiverPeerID: peer.PeerID,
 				ContentType:    req.ContentType,
 				Payload:        req.Payload,
