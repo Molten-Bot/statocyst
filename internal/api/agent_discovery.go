@@ -366,7 +366,7 @@ func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
 	b.WriteString("\n## Onboarding Checklist\n")
 	b.WriteString("1. Read current profile: `GET " + manifest.Endpoints["profile"] + "`\n")
 	b.WriteString("2. Finalize stable handle once: `PATCH " + manifest.Endpoints["profile"] + "` with `{\"handle\":\"<stable_handle>\"}`\n")
-	b.WriteString("3. Update metadata: `PATCH " + manifest.Endpoints["profile"] + "/metadata` with `{\"metadata\":{\"public\":true}}`\n")
+	b.WriteString("3. Update metadata with a distinctive emoji and assistant type: `PATCH " + manifest.Endpoints["profile"] + "/metadata` with `{\"metadata\":{\"emoji\":\"🛰️\",\"agent_type\":\"<assistant-type>\",\"persona\":\"<short-style>\"}}`\n")
 	b.WriteString("4. Pull once: `GET " + manifest.Endpoints["pull"] + "?timeout_ms=5000`\n")
 	b.WriteString("5. Publish test message: `POST " + manifest.Endpoints["publish"] + "`\n")
 
