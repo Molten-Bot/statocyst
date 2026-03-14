@@ -33,6 +33,33 @@ Completed in PR #76 (`d0815c8`):
 
 ## Remaining V2 Work
 
+- none for current V2 scope
+
+## Competitive Features Backlog (From ClawForge Review)
+
+Prioritized candidates to evaluate after V2 completion:
+
+1. `P0` Emergency kill switch for agent/tool execution
+   Add org-level kill switch state with optional operator message, and expose machine-readable kill-switch state in discovery/runtime status routes.
+
+2. `P0` Authenticated service-account API keys
+   Add issue/revoke flows for scoped machine-to-machine API keys, with expiry and optional IP allowlist constraints.
+
+3. `P1` Fleet heartbeat + presence inventory
+   Track active client heartbeats with online/offline reporting, and use version checks to trigger policy/config refresh.
+
+4. `P1` Real-time policy/event push channel
+   Add SSE push for policy changes and kill-switch propagation, with heartbeat fallback when streaming is unavailable.
+
+5. `P1` Read-only operator role
+   Introduce viewer RBAC for audit/read routes without mutation rights, while keeping policy/identity changes admin-only.
+
+6. `P2` Enrollment token onboarding flow
+   Support time-bounded and usage-bounded enrollment tokens for new users/agents, returning an initial credential bundle on success.
+
+7. `P2` Audit retention controls + operational export
+   Add configurable retention windows/cleanup jobs and an exportable audit query surface for SIEM and operations workflows.
+
 ## Non-Goals
 
 - markdown request bodies for mutating runtime routes
