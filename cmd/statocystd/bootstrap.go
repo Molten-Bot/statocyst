@@ -152,6 +152,9 @@ func (h *bootstrapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/me":
 		h.handleStartupMe(w, r)
 	default:
+		if api.ServeStartupStaticUI(w, r, h.headlessMode) {
+			return
+		}
 		h.handleStarting(w, r)
 	}
 }

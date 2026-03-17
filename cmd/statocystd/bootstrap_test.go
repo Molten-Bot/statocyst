@@ -158,3 +158,57 @@ func TestBootstrapHandlerServesIdentityOnlyMeBeforeReady(t *testing.T) {
 		t.Fatalf("expected PATCH /v1/me 503 during startup, got %d body=%s", patchResp.Code, patchResp.Body.String())
 	}
 }
+
+func TestBootstrapHandlerServesStaticRoutesWhileStarting(t *testing.T) {
+	handler := newBootstrapHandler(store.StorageStartupModeDegraded, "s3", "s3")
+
+	tests := []struct {
+		path string
+		code int
+	}{
+		{path: "/", code: http.StatusOK},
+		{path: "/login.js", code: http.StatusOK},
+		{path: "/common.js", code: http.StatusOK},
+		{path: "/robots.txt", code: http.StatusOK},
+		{path: "/humans.txt", code: http.StatusOK},
+	}
+
+	for _, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		if resp.Code != tc.code {
+			t.Fatalf("expected %s %d during startup, got %d body=%s", tc.path, tc.code, resp.Code, resp.Body.String())
+		}
+	}
+}
+
+func TestBootstrapHandlerHeadlessStillServesRobotsAndHumansOnly(t *testing.T) {
+	handler := newBootstrapHandler(
+		store.StorageStartupModeDegraded,
+		"s3",
+		"s3",
+		bootstrapOptions{headlessMode: true},
+	)
+
+	robotsReq := httptest.NewRequest(http.MethodGet, "/robots.txt", nil)
+	robotsResp := httptest.NewRecorder()
+	handler.ServeHTTP(robotsResp, robotsReq)
+	if robotsResp.Code != http.StatusOK {
+		t.Fatalf("expected /robots.txt 200 during headless startup, got %d body=%s", robotsResp.Code, robotsResp.Body.String())
+	}
+
+	humansReq := httptest.NewRequest(http.MethodGet, "/humans.txt", nil)
+	humansResp := httptest.NewRecorder()
+	handler.ServeHTTP(humansResp, humansReq)
+	if humansResp.Code != http.StatusOK {
+		t.Fatalf("expected /humans.txt 200 during headless startup, got %d body=%s", humansResp.Code, humansResp.Body.String())
+	}
+
+	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootResp := httptest.NewRecorder()
+	handler.ServeHTTP(rootResp, rootReq)
+	if rootResp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected / to remain 503 during headless startup, got %d body=%s", rootResp.Code, rootResp.Body.String())
+	}
+}

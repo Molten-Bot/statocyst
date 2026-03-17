@@ -59,12 +59,7 @@ func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
-	switch r.URL.Path {
-	case "/robots.txt":
-		writeUIAsset(w, r, "text/plain; charset=utf-8", uiRobotsTXT, "robots.txt")
-		return
-	case "/humans.txt":
-		writeUIAsset(w, r, "text/plain; charset=utf-8", uiHumansTXT, "humans.txt")
+	if ServeStartupStaticUI(w, r, h.headlessMode) {
 		return
 	}
 	if h.headlessMode {
@@ -74,47 +69,61 @@ func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
+	writeError(w, http.StatusNotFound, "not_found", "route not found")
+}
+
+func ServeStartupStaticUI(w http.ResponseWriter, r *http.Request, headlessMode bool) bool {
+	switch r.URL.Path {
+	case "/robots.txt":
+		writeUIAsset(w, r, "text/plain; charset=utf-8", uiRobotsTXT, "robots.txt")
+		return true
+	case "/humans.txt":
+		writeUIAsset(w, r, "text/plain; charset=utf-8", uiHumansTXT, "humans.txt")
+		return true
+	}
+	if headlessMode {
+		return false
+	}
 
 	switch r.URL.Path {
 	case "/", "/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiLoginHTML, "login.html")
-		return
+		return true
 	case "/login.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiLoginJS, "login.js")
-		return
+		return true
 	case "/common.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiCommonJS, "common.js")
-		return
+		return true
 	case "/profile", "/profile/", "/profile/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiProfileHTML, "profile.html")
-		return
+		return true
 	case "/profile.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiProfileJS, "profile.js")
-		return
+		return true
 	case "/organization", "/organization/", "/organization/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiOrganizationHTML, "organization.html")
-		return
+		return true
 	case "/organization.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiOrganizationJS, "organization.js")
-		return
+		return true
 	case "/agents", "/agents/", "/agents/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiAgentsHTML, "agents.html")
-		return
+		return true
 	case "/agents.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiAgentsJS, "agents.js")
-		return
+		return true
 	case "/docs", "/docs/", "/docs/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiDocsHTML, "docs.html")
-		return
+		return true
 	case "/domains", "/domains/", "/domains/index.html":
 		writeUIAsset(w, r, "text/html; charset=utf-8", uiIndexHTML, "index.html")
-		return
+		return true
 	case "/app.js", "/domains/app.js":
 		writeUIAsset(w, r, "application/javascript; charset=utf-8", uiAppJS, "app.js")
-		return
+		return true
 	default:
-		writeError(w, http.StatusNotFound, "not_found", "route not found")
-		return
+		return false
 	}
 }
 
