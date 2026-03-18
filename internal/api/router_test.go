@@ -3055,6 +3055,88 @@ func TestAdminSnapshotIncludesMessageRollups(t *testing.T) {
 	}
 }
 
+func TestAdminSnapshotIncludesActivityFeedForMessageLifecycle(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	pub := publish(t, router, tokenA, agentUUIDB, "hello-activity-feed")
+	if pub.Code != http.StatusAccepted {
+		t.Fatalf("publish failed: %d %s", pub.Code, pub.Body.String())
+	}
+	pubPayload := decodeJSONMap(t, pub.Body.Bytes())
+	_ = requireAgentRuntimeSuccessEnvelope(t, pubPayload)
+
+	firstPull := pull(t, router, tokenB, 0)
+	if firstPull.Code != http.StatusOK {
+		t.Fatalf("first pull failed: %d %s", firstPull.Code, firstPull.Body.String())
+	}
+	firstPullPayload := decodeJSONMap(t, firstPull.Body.Bytes())
+	firstPullResult := requireAgentRuntimeSuccessEnvelope(t, firstPullPayload)
+	firstDelivery, _ := firstPullResult["delivery"].(map[string]any)
+	firstDeliveryID, _ := firstDelivery["delivery_id"].(string)
+	if strings.TrimSpace(firstDeliveryID) == "" {
+		t.Fatalf("expected delivery_id from first pull, got %v", firstPullResult)
+	}
+
+	nackResp := nackDelivery(t, router, tokenB, firstDeliveryID)
+	if nackResp.Code != http.StatusOK {
+		t.Fatalf("nack failed: %d %s", nackResp.Code, nackResp.Body.String())
+	}
+
+	secondPull := pull(t, router, tokenB, 0)
+	if secondPull.Code != http.StatusOK {
+		t.Fatalf("second pull failed: %d %s", secondPull.Code, secondPull.Body.String())
+	}
+	secondPullPayload := decodeJSONMap(t, secondPull.Body.Bytes())
+	secondPullResult := requireAgentRuntimeSuccessEnvelope(t, secondPullPayload)
+	secondDelivery, _ := secondPullResult["delivery"].(map[string]any)
+	secondDeliveryID, _ := secondDelivery["delivery_id"].(string)
+	if strings.TrimSpace(secondDeliveryID) == "" {
+		t.Fatalf("expected delivery_id from second pull, got %v", secondPullResult)
+	}
+
+	ackResp := ackDelivery(t, router, tokenB, secondDeliveryID)
+	if ackResp.Code != http.StatusOK {
+		t.Fatalf("ack failed: %d %s", ackResp.Code, ackResp.Body.String())
+	}
+
+	snap := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, humanHeaders("root", "root@molten.bot"))
+	if snap.Code != http.StatusOK {
+		t.Fatalf("snapshot failed: %d %s", snap.Code, snap.Body.String())
+	}
+	payload := decodeJSONMap(t, snap.Body.Bytes())
+	snapshot, _ := payload["snapshot"].(map[string]any)
+	feed, _ := snapshot["activity_feed"].([]any)
+	if len(feed) == 0 {
+		t.Fatalf("expected non-empty snapshot.activity_feed in payload=%v", payload)
+	}
+
+	messageActions := map[string]bool{}
+	for _, raw := range feed {
+		row, _ := raw.(map[string]any)
+		if row == nil {
+			continue
+		}
+		category, _ := row["category"].(string)
+		if category != "message" {
+			continue
+		}
+		createdAt, _ := row["created_at"].(string)
+		if strings.TrimSpace(createdAt) == "" {
+			t.Fatalf("expected created_at on message activity row: %v", row)
+		}
+		action, _ := row["action"].(string)
+		if strings.TrimSpace(action) != "" {
+			messageActions[action] = true
+		}
+	}
+	for _, required := range []string{"publish", "lease", "nack", "ack"} {
+		if !messageActions[required] {
+			t.Fatalf("expected message action %q in activity_feed, got actions=%v feed=%v", required, messageActions, feed)
+		}
+	}
+}
+
 func TestAdminSnapshotHeaderKeyAccess(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()

@@ -2332,6 +2332,7 @@ func (s *MemoryStore) AdminSnapshot() model.AdminSnapshot {
 			Humans:        make([]model.HumanMessageMetrics, 0, len(s.humans)),
 			Organizations: make([]model.OrganizationMessageMetrics, 0, len(s.orgs)),
 		},
+		ActivityFeed: make([]model.AuditEvent, 0),
 	}
 
 	for _, v := range s.orgs {
@@ -2356,6 +2357,15 @@ func (s *MemoryStore) AdminSnapshot() model.AdminSnapshot {
 		snapshot.Stats = append(snapshot.Stats, v)
 	}
 	snapshot.MessageMetrics = s.buildAdminMessageMetricsLocked()
+	for _, events := range s.auditByOrg {
+		snapshot.ActivityFeed = append(snapshot.ActivityFeed, events...)
+	}
+	sort.Slice(snapshot.ActivityFeed, func(i, j int) bool {
+		if snapshot.ActivityFeed[i].CreatedAt.Equal(snapshot.ActivityFeed[j].CreatedAt) {
+			return snapshot.ActivityFeed[i].EventID < snapshot.ActivityFeed[j].EventID
+		}
+		return snapshot.ActivityFeed[i].CreatedAt.Before(snapshot.ActivityFeed[j].CreatedAt)
+	})
 
 	return snapshot
 }
@@ -2462,6 +2472,27 @@ func normalizedArchiveContentType(contentType string) string {
 		return "unknown"
 	}
 	return contentType
+}
+
+func messageAuditDetails(message model.Message) map[string]any {
+	details := map[string]any{
+		"from_agent_uuid": strings.TrimSpace(message.FromAgentUUID),
+		"to_agent_uuid":   strings.TrimSpace(message.ToAgentUUID),
+		"from_agent_id":   strings.TrimSpace(message.FromAgentID),
+		"to_agent_id":     strings.TrimSpace(message.ToAgentID),
+		"from_agent_uri":  strings.TrimSpace(message.FromAgentURI),
+		"to_agent_uri":    strings.TrimSpace(message.ToAgentURI),
+		"sender_org_id":   strings.TrimSpace(message.SenderOrgID),
+		"receiver_org_id": strings.TrimSpace(message.ReceiverOrgID),
+		"receiver_peer_id": strings.TrimSpace(
+			message.ReceiverPeerID,
+		),
+		"content_type": normalizedArchiveContentType(message.ContentType),
+	}
+	if message.ClientMsgID != nil {
+		details["client_msg_id"] = strings.TrimSpace(*message.ClientMsgID)
+	}
+	return details
 }
 
 func buildHumanMessageMetricsLocked(humans map[string]model.Human, agents []model.AgentMessageMetrics) []model.HumanMessageMetrics {
@@ -2633,6 +2664,9 @@ func (s *MemoryStore) CreateOrGetMessageRecord(message model.Message, acceptedAt
 		existing.IdempotentReplays++
 		existing.UpdatedAt = acceptedAt
 		s.messageRecords[message.MessageID] = existing
+		if orgID := strings.TrimSpace(existing.Message.SenderOrgID); orgID != "" {
+			s.appendAuditLocked(orgID, "", "message", "publish_replay", existing.Message.MessageID, messageAuditDetails(existing.Message), acceptedAt)
+		}
 		return existing, true, nil
 	}
 	if message.ClientMsgID != nil {
@@ -2645,6 +2679,9 @@ func (s *MemoryStore) CreateOrGetMessageRecord(message model.Message, acceptedAt
 				record.UpdatedAt = acceptedAt
 				s.messageRecords[existingID] = record
 				s.incrementDuplicateLocked(record.Message.SenderOrgID, acceptedAt)
+				if orgID := strings.TrimSpace(record.Message.SenderOrgID); orgID != "" {
+					s.appendAuditLocked(orgID, "", "message", "publish_replay", record.Message.MessageID, messageAuditDetails(record.Message), acceptedAt)
+				}
 				return record, true, nil
 			}
 		}
@@ -2659,6 +2696,9 @@ func (s *MemoryStore) CreateOrGetMessageRecord(message model.Message, acceptedAt
 	s.messageRecords[message.MessageID] = record
 	if message.ClientMsgID != nil {
 		s.messageByClientMsg[messageClientKey(message.FromAgentUUID, *message.ClientMsgID)] = message.MessageID
+	}
+	if orgID := strings.TrimSpace(message.SenderOrgID); orgID != "" {
+		s.appendAuditLocked(orgID, "", "message", "publish", message.MessageID, messageAuditDetails(message), acceptedAt)
 	}
 	return record, false, nil
 }
@@ -2676,6 +2716,9 @@ func (s *MemoryStore) MarkMessageForwarded(messageID string, forwardedAt time.Ti
 	record.LastFailureAt = nil
 	record.LastFailureReason = ""
 	s.messageRecords[record.Message.MessageID] = record
+	if orgID := strings.TrimSpace(record.Message.SenderOrgID); orgID != "" {
+		s.appendAuditLocked(orgID, "", "message", "forward", record.Message.MessageID, messageAuditDetails(record.Message), forwardedAt)
+	}
 	return record, nil
 }
 
@@ -2690,6 +2733,9 @@ func (s *MemoryStore) AbortMessageRecord(messageID string) error {
 	delete(s.messageRecords, messageID)
 	if record.Message.ClientMsgID != nil {
 		delete(s.messageByClientMsg, messageClientKey(record.Message.FromAgentUUID, *record.Message.ClientMsgID))
+	}
+	if orgID := strings.TrimSpace(record.Message.SenderOrgID); orgID != "" {
+		s.appendAuditLocked(orgID, "", "message", "publish_abort", record.Message.MessageID, messageAuditDetails(record.Message), time.Now().UTC())
 	}
 	return nil
 }
@@ -2738,6 +2784,12 @@ func (s *MemoryStore) LeaseMessage(messageID, receiverAgentUUID, deliveryID stri
 	}
 	s.messageRecords[messageID] = record
 	s.messageDeliveries[deliveryID] = delivery
+	if orgID := strings.TrimSpace(record.Message.ReceiverOrgID); orgID != "" {
+		details := messageAuditDetails(record.Message)
+		details["delivery_id"] = deliveryID
+		details["attempt"] = record.DeliveryAttempts
+		s.appendAuditLocked(orgID, "", "message", "lease", record.Message.MessageID, details, leasedAt)
+	}
 	return delivery, record, nil
 }
 
@@ -2766,6 +2818,11 @@ func (s *MemoryStore) AckMessageDelivery(receiverAgentUUID, deliveryID string, a
 	delete(s.messageDeliveries, deliveryID)
 	s.messageRecords[delivery.MessageID] = record
 	s.incrementAckedLocked(record.Message.SenderOrgID, ackedAt)
+	if orgID := strings.TrimSpace(record.Message.ReceiverOrgID); orgID != "" {
+		details := messageAuditDetails(record.Message)
+		details["delivery_id"] = deliveryID
+		s.appendAuditLocked(orgID, "", "message", "ack", record.Message.MessageID, details, ackedAt)
+	}
 	return record, nil
 }
 
@@ -2793,6 +2850,12 @@ func (s *MemoryStore) ReleaseMessageDelivery(receiverAgentUUID, deliveryID strin
 	record.LastFailureReason = strings.TrimSpace(reason)
 	record.LastFailureAt = timePtr(now)
 	s.messageRecords[delivery.MessageID] = record
+	if orgID := strings.TrimSpace(record.Message.ReceiverOrgID); orgID != "" {
+		details := messageAuditDetails(record.Message)
+		details["delivery_id"] = deliveryID
+		details["reason"] = record.LastFailureReason
+		s.appendAuditLocked(orgID, "", "message", "nack", record.Message.MessageID, details, now)
+	}
 	return record.Message, record, nil
 }
 
@@ -2830,6 +2893,12 @@ func (s *MemoryStore) ExpireMessageLeases(now time.Time) ([]model.Message, error
 		record.LastFailureAt = timePtr(now)
 		s.messageRecords[delivery.MessageID] = record
 		s.incrementExpiredLocked(record.Message.SenderOrgID, now)
+		if orgID := strings.TrimSpace(record.Message.ReceiverOrgID); orgID != "" {
+			details := messageAuditDetails(record.Message)
+			details["delivery_id"] = deliveryID
+			details["reason"] = "lease_expired"
+			s.appendAuditLocked(orgID, "", "message", "lease_expire", record.Message.MessageID, details, now)
+		}
 		out = append(out, record.Message)
 	}
 	return out, nil
@@ -2968,7 +3037,13 @@ func (s *MemoryStore) RecordMessageQueued(orgID string) {
 func (s *MemoryStore) RecordMessageDropped(orgID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.incrementDroppedLocked(orgID, time.Now().UTC())
+	now := time.Now().UTC()
+	s.incrementDroppedLocked(orgID, now)
+	if strings.TrimSpace(orgID) != "" {
+		s.appendAuditLocked(orgID, "", "message", "drop", orgID, map[string]any{
+			"reason": "no_trust_path_or_policy",
+		}, now)
+	}
 }
 
 func (s *MemoryStore) Enqueue(_ context.Context, message model.Message) error {
@@ -3301,8 +3376,9 @@ func (s *MemoryStore) resolveAgentRefLocked(agentRef string) (string, error) {
 
 func (s *MemoryStore) appendAuditLocked(orgID, actorHumanID, category, action, subjectID string, details map[string]any, now time.Time) {
 	events := s.auditByOrg[orgID]
+	eventID := fmt.Sprintf("%d-%d", now.UnixNano(), len(events)+1)
 	events = append(events, model.AuditEvent{
-		EventID:    fmt.Sprintf("%d", now.UnixNano()),
+		EventID:    eventID,
 		OrgID:      orgID,
 		ActorHuman: actorHumanID,
 		Category:   category,

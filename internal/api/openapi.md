@@ -297,6 +297,8 @@ paths:
         Access is granted to statocyst admins or callers presenting `X-Admin-Snapshot-Key` that matches `STATOCYST_ADMIN_SNAPSHOT_KEY`.
         Includes per-agent message archives (`archive.from`/`archive.to`) plus human/org rollups
         in `snapshot.message_metrics` for linked agents.
+        Also includes a unified timestamped activity stream in `snapshot.activity_feed`
+        (control-plane audit events plus message lifecycle events).
       parameters:
         - in: header
           name: X-Admin-Snapshot-Key

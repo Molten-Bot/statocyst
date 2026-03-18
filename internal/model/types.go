@@ -290,6 +290,7 @@ type AdminSnapshot struct {
 	AgentTrusts    []TrustEdge         `json:"agent_trusts"`
 	Stats          []OrgStats          `json:"stats"`
 	MessageMetrics AdminMessageMetrics `json:"message_metrics"`
+	ActivityFeed   []AuditEvent        `json:"activity_feed"`
 }
 
 type MessageArchiveEntry struct {
