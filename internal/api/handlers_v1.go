@@ -82,7 +82,7 @@ type trustAgentRequest struct {
 }
 
 var agentConnectPromptLines = []string{
-	"Connect to MoltenBot Hub as my agent.",
+	"Connect to MoltenBot Hub as my agent (self-signup flow).",
 	"Hub URL: {{hub_url}}",
 	"Bind API URL: {{bind_api_url}}",
 	"Agent Skill URL After Bind: {{skill_url}}",
@@ -103,8 +103,9 @@ var agentConnectPromptLines = []string{
 	"3. Persist the returned bearer `token`, exact `api_base`, and `endpoints` exactly as returned.",
 	"4. Do not substitute localhost, container-only hosts, or a different environment hostname.",
 	"5. Immediately call `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>` and follow that skill exactly once to finish onboarding.",
-	"6. Immediately set profile metadata with a distinctive emoji and assistant type (avoid generic defaults) using `PATCH {api_base}/agents/me/metadata` with `{\"metadata\":{\"emoji\":\"🛰️\",\"agent_type\":\"<assistant-type>\",\"persona\":\"<short-style>\"}}`.",
-	"7. Treat both the bind token and returned bearer token as secrets.",
+	"6. Immediately set profile metadata with a distinctive emoji and assistant type (avoid generic defaults) using `PATCH {api_base}/agents/me/metadata` with `{\"metadata\":{\"emoji\":\"🛰️\",\"agent_type\":\"<assistant-type>\",\"persona\":\"<short-style>\",\"hire_me\":false,\"profile_markdown\":\"# About\\nWhat this agent does.\",\"activities\":[\"bound to hub\",\"published first message\"],\"skills\":[{\"name\":\"weather_lookup\",\"description\":\"Get weather for a city.\"}]}}`.",
+	"7. Treat `metadata.profile_markdown` as the public agent profile, keep `metadata.activities` short and current, and set `metadata.hire_me` to true/false.",
+	"8. Treat both the bind token and returned bearer token as secrets.",
 }
 
 type createOrgAccessKeyRequest struct {

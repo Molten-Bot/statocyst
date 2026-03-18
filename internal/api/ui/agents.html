@@ -138,6 +138,11 @@
       .row-actions button {
         margin: 0;
       }
+      .metadataPreview {
+        max-width: 260px;
+        white-space: normal;
+        word-break: break-word;
+      }
       .code {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         word-break: break-all;
@@ -176,17 +181,23 @@
                 <th>Status</th>
                 <th>Owner</th>
                 <th>Public</th>
+                <th>Hire Me</th>
+                <th>Profile</th>
+                <th>Activities</th>
+                <th>Skills</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="agentsBody"></tbody>
           </table>
-          <p class="muted">Agent visibility is shown here; updates are agent self-service via <code>PATCH /v1/agents/me</code>.</p>
+          <p class="muted">Agent visibility plus metadata directory fields are shown here; updates are agent self-service via <code>PATCH /v1/agents/me</code>.</p>
+          <p class="muted">Metadata keys used: <code>profile_markdown</code>, <code>activities</code>, <code>skills</code>, <code>hire_me</code>.</p>
 
           <label class="muted" for="bindOrgSelect">Organization</label>
           <select id="bindOrgSelect"></select>
           <p class="muted">Create a short-lived one-time bind code for the selected scope (personal or organization). Agents choose their own name when redeeming.</p>
-          <button id="btnCreateBindCode">Add Agent (Generate Agent Prompt)</button>
+          <button id="btnCreateBindCode">Generate Self-Signup Prompt</button>
+          <button id="btnCopyBindPrompt" type="button" disabled>Copy Agent Prompt</button>
           <div id="bindCodeStatus" class="status code">No bind code issued yet.</div>
         </section>
 

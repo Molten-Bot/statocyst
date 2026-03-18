@@ -1552,6 +1552,24 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	if !strings.Contains(connectPrompt, "distinctive emoji") || !strings.Contains(connectPrompt, "\"agent_type\":\"<assistant-type>\"") {
 		t.Fatalf("expected connect prompt to require emoji/assistant type metadata setup, got %q", connectPrompt)
 	}
+	if !strings.Contains(connectPrompt, "self-signup flow") {
+		t.Fatalf("expected connect prompt to declare self-signup flow, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "\"profile_markdown\":\"# About") {
+		t.Fatalf("expected connect prompt to include profile_markdown guidance, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "\"activities\":[\"bound to hub\",\"published first message\"]") {
+		t.Fatalf("expected connect prompt to include activities guidance, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "\"skills\":[{\"name\":\"weather_lookup\"") {
+		t.Fatalf("expected connect prompt to include skills guidance, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "\"hire_me\":false") {
+		t.Fatalf("expected connect prompt to include hire_me guidance, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "metadata.profile_markdown") || !strings.Contains(connectPrompt, "metadata.hire_me") {
+		t.Fatalf("expected connect prompt to include directory metadata field reminders, got %q", connectPrompt)
+	}
 }
 
 func TestMyAgentBindTokenCreateRetriesTransientStoreError(t *testing.T) {
@@ -2819,6 +2837,12 @@ func TestOpenAPIMarkdownHeaders(t *testing.T) {
 	if !strings.Contains(body, "```yaml") || !strings.Contains(body, "/v1/agents/me") {
 		t.Fatalf("expected embedded yaml spec content in openapi markdown, got %q", body)
 	}
+	if !strings.Contains(body, "metadata.profile_markdown") || !strings.Contains(body, "metadata.activities") || !strings.Contains(body, "metadata.hire_me") {
+		t.Fatalf("expected metadata directory fields in openapi markdown, got %q", body)
+	}
+	if !strings.Contains(body, "copy-ready self-signup prompt") {
+		t.Fatalf("expected self-signup prompt contract text in openapi markdown, got %q", body)
+	}
 	if link := resp.Header().Get("Link"); !strings.Contains(link, "/openapi.yaml") {
 		t.Fatalf("expected alternate yaml link header, got %q", link)
 	}
@@ -3344,6 +3368,23 @@ func TestUIRoutes_MainPages(t *testing.T) {
 		if !strings.Contains(resp.Body.String(), tc.contentHint) {
 			t.Fatalf("%s response missing %q", tc.path, tc.contentHint)
 		}
+	}
+}
+
+func TestUIRoutes_AgentsPageIncludesSelfSignupMetadataControls(t *testing.T) {
+	router := newTestRouter()
+	req := httptest.NewRequest(http.MethodGet, "/agents", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("/agents expected 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Generate Self-Signup Prompt") || !strings.Contains(body, "Copy Agent Prompt") {
+		t.Fatalf("expected self-signup prompt controls in /agents page, got %q", body)
+	}
+	if !strings.Contains(body, "profile_markdown") || !strings.Contains(body, "activities") || !strings.Contains(body, "hire_me") {
+		t.Fatalf("expected metadata field hints in /agents page, got %q", body)
 	}
 }
 
