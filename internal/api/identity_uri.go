@@ -186,5 +186,6 @@ func (h *Handler) adminSnapshotPayload(snapshot model.AdminSnapshot) map[string]
 		"agent_trusts":    snapshot.AgentTrusts,
 		"stats":           snapshot.Stats,
 		"message_metrics": snapshot.MessageMetrics,
+		"activity_feed":   snapshot.ActivityFeed,
 	}
 }
