@@ -1,5 +1,6 @@
 const UI = StatocystUI;
 let agentOrgByUUID = {};
+let latestBindPrompt = "";
 
 function setStatus(id, message, warn = false) {
   const el = UI.$(id);
@@ -15,6 +16,12 @@ function setBindCodeStatus(message, warn = false) {
   el.className = warn ? "status warn code" : "status code";
 }
 
+function setCopyPromptEnabled(enabled) {
+  const button = UI.$("btnCopyBindPrompt");
+  if (!button) return;
+  button.disabled = !enabled;
+}
+
 function metadataFrom(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   return { ...raw };
@@ -23,6 +30,86 @@ function metadataFrom(raw) {
 function metadataPublic(raw) {
   const value = metadataFrom(raw).public;
   return typeof value === "boolean" ? value : true;
+}
+
+function metadataHireMe(raw) {
+  const value = metadataFrom(raw).hire_me;
+  return typeof value === "boolean" ? value : false;
+}
+
+function metadataProfileMarkdown(raw) {
+  const value = metadataFrom(raw).profile_markdown;
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function metadataActivities(raw) {
+  const value = metadataFrom(raw).activities;
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const text = entry.trim();
+      if (text) out.push(text);
+      continue;
+    }
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const text = String(entry.text || entry.title || entry.activity || "").trim();
+    const at = String(entry.at || entry.timestamp || "").trim();
+    if (!text) continue;
+    out.push(at ? `${text} (${at})` : text);
+  }
+  return out;
+}
+
+function metadataSkills(raw) {
+  const value = metadataFrom(raw).skills;
+  if (!Array.isArray(value)) return [];
+  const names = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const name = String(entry.name || "").trim();
+    if (!name) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+function truncateText(value, maxLen) {
+  const raw = String(value || "").trim();
+  if (raw.length <= maxLen) return raw;
+  return `${raw.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator?.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const fallback = document.createElement("textarea");
+  fallback.value = text;
+  fallback.setAttribute("readonly", "true");
+  fallback.style.position = "fixed";
+  fallback.style.opacity = "0";
+  document.body.appendChild(fallback);
+  fallback.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(fallback);
+  if (!copied) throw new Error("clipboard copy failed");
+}
+
+async function copyBindPrompt() {
+  if (!latestBindPrompt) {
+    setBindCodeStatus("No prompt available to copy yet.", true);
+    return;
+  }
+  try {
+    await copyTextToClipboard(latestBindPrompt);
+    setBindCodeStatus("Agent self-signup prompt copied to clipboard.");
+  } catch (err) {
+    setBindCodeStatus(`Could not copy prompt: ${String(err)}`, true);
+  }
 }
 
 function agentOwnerLabel(agent) {
@@ -58,6 +145,8 @@ async function loadBindOrganizations() {
   }
 
   select.value = "";
+  latestBindPrompt = "";
+  setCopyPromptEnabled(false);
   setBindCodeStatus("No bind code issued yet.");
 }
 
@@ -70,9 +159,9 @@ function formatDateTime(raw) {
 
 function buildAgentBindPrompt(bindToken, expiresAt, redeemURL) {
   return [
-    "Agent Onboarding Prompt",
+    "Agent Self-Signup Prompt",
     "",
-    "Goal: Bind this agent to Statocyst and return your new agent token.",
+    "Goal: Self-register this agent with Statocyst and return the new token.",
     "",
     `Bind code: ${bindToken}`,
     `Expires: ${expiresAt}`,
@@ -93,6 +182,7 @@ function buildAgentBindPrompt(bindToken, expiresAt, redeemURL) {
     "",
     "3. Keep token secret and use it as Bearer auth for message APIs.",
     "4. Finalize your stable handle once with PATCH /v1/agents/me or /v1/agents/me/metadata.",
+    "5. Set metadata.profile_markdown, metadata.activities, metadata.skills, metadata.hire_me.",
   ].join("\n");
 }
 
@@ -165,7 +255,7 @@ function renderAgents(agents) {
   if (!Array.isArray(agents) || agents.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 6;
+    td.colSpan = 10;
     td.className = "muted";
     td.textContent = "No agents yet.";
     tr.appendChild(td);
@@ -202,6 +292,28 @@ function renderAgents(agents) {
     const isPublic = metadataPublic(agent.metadata);
     tdPublic.textContent = isPublic ? "public" : "private";
     tr.appendChild(tdPublic);
+
+    const tdHireMe = document.createElement("td");
+    tdHireMe.textContent = metadataHireMe(agent.metadata) ? "true" : "false";
+    tr.appendChild(tdHireMe);
+
+    const tdProfile = document.createElement("td");
+    tdProfile.className = "metadataPreview";
+    const profile = metadataProfileMarkdown(agent.metadata);
+    tdProfile.textContent = profile ? truncateText(profile, 140) : "-";
+    tr.appendChild(tdProfile);
+
+    const tdActivities = document.createElement("td");
+    tdActivities.className = "metadataPreview";
+    const activities = metadataActivities(agent.metadata);
+    tdActivities.textContent = activities.length > 0 ? truncateText(activities.slice(0, 3).join(" | "), 180) : "-";
+    tr.appendChild(tdActivities);
+
+    const tdSkills = document.createElement("td");
+    tdSkills.className = "metadataPreview";
+    const skills = metadataSkills(agent.metadata);
+    tdSkills.textContent = skills.length > 0 ? truncateText(skills.join(", "), 140) : "-";
+    tr.appendChild(tdSkills);
 
     const tdActions = document.createElement("td");
     const actionWrap = document.createElement("div");
@@ -244,6 +356,7 @@ async function loadAgents() {
 async function createBindCode() {
   const orgID = UI.selectedOrg("bindOrgSelect");
   setBindCodeStatus("Creating one-time bind code...");
+  setCopyPromptEnabled(false);
   const body = orgID ? { org_id: orgID } : {};
   const result = await UI.req("/v1/me/agents/bind-tokens", "POST", body);
   if (result.status !== 201) {
@@ -256,11 +369,15 @@ async function createBindCode() {
   const expiresAt = formatDateTime(result?.data?.expires_at);
   const redeemURL = `${window.location.origin}/v1/agents/bind`;
   if (!token) {
+    latestBindPrompt = "";
+    setCopyPromptEnabled(false);
     setBindCodeStatus("Bind code was not returned.", true);
     return;
   }
 
-  setBindCodeStatus(connectPrompt || buildAgentBindPrompt(token, expiresAt, redeemURL));
+  latestBindPrompt = connectPrompt || buildAgentBindPrompt(token, expiresAt, redeemURL);
+  setCopyPromptEnabled(true);
+  setBindCodeStatus(latestBindPrompt);
 }
 
 async function rotateAgent(agentUUID) {
@@ -425,6 +542,7 @@ async function init() {
   UI.initTopNav();
 
   UI.$("btnCreateBindCode").onclick = createBindCode;
+  UI.$("btnCopyBindPrompt").onclick = copyBindPrompt;
   UI.$("btnCreateTrust").onclick = createTrust;
 
   UI.$("agentsBody").addEventListener("click", async (event) => {

@@ -23,9 +23,12 @@ const (
 	MessageDeliveryFailed = "failed"
 	MessageForwarded      = "forwarded"
 
-	AgentMetadataKeyType   = "agent_type"
-	AgentMetadataKeySkills = "skills"
-	AgentTypeUnknown       = "unknown"
+	AgentMetadataKeyType       = "agent_type"
+	AgentMetadataKeySkills     = "skills"
+	AgentMetadataKeyProfile    = "profile_markdown"
+	AgentMetadataKeyActivities = "activities"
+	AgentMetadataKeyHireMe     = "hire_me"
+	AgentTypeUnknown           = "unknown"
 )
 
 type Organization struct {
