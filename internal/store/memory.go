@@ -607,6 +607,7 @@ func (s *MemoryStore) acceptInviteLocked(inviteID, humanID, humanEmail string, n
 			invite.AcceptedAt = &accepted
 			s.invites[inviteID] = invite
 			delete(s.inviteBySecretHash, invite.InviteSecret)
+			s.transferHumanOwnedAgentsToOrgLocked(invite.OrgID, humanID, now)
 			return m, nil
 		}
 	}
@@ -631,8 +632,73 @@ func (s *MemoryStore) acceptInviteLocked(inviteID, humanID, humanEmail string, n
 	invite.AcceptedAt = &accepted
 	s.invites[inviteID] = invite
 	delete(s.inviteBySecretHash, invite.InviteSecret)
+	s.transferHumanOwnedAgentsToOrgLocked(invite.OrgID, humanID, now)
 	s.appendAuditLocked(invite.OrgID, humanID, "invite", "accept", inviteID, nil, now)
 	return mem, nil
+}
+
+func (s *MemoryStore) transferHumanOwnedAgentsToOrgLocked(orgID, humanID string, now time.Time) {
+	orgID = strings.TrimSpace(orgID)
+	humanID = strings.TrimSpace(humanID)
+	if orgID == "" || humanID == "" {
+		return
+	}
+	org, ok := s.orgs[orgID]
+	if !ok {
+		return
+	}
+	human, ok := s.humans[humanID]
+	if !ok {
+		return
+	}
+	if err := handles.ValidateHandle(human.Handle); err != nil {
+		return
+	}
+	ownerHandle := human.Handle
+
+	agentIDs := make([]string, 0)
+	for agentUUID, agent := range s.agents {
+		if agent.Status == model.StatusRevoked {
+			continue
+		}
+		if agent.OrgID != "" || agent.OwnerHumanID == nil || *agent.OwnerHumanID != humanID {
+			continue
+		}
+		agentIDs = append(agentIDs, agentUUID)
+	}
+	sort.Strings(agentIDs)
+
+	for _, agentUUID := range agentIDs {
+		agent, ok := s.agents[agentUUID]
+		if !ok {
+			continue
+		}
+		oldAgentID := agent.AgentID
+		nextAgentID := handles.BuildAgentURI(org.Handle, &ownerHandle, agent.Handle)
+		nextNameKey := humanOwnedAgentNameKey(orgID, humanID, agent.Handle)
+		if existingAgentUUID, exists := s.humanOwnedAgentNameIdx[nextNameKey]; exists && existingAgentUUID != agentUUID {
+			continue
+		}
+		if existingAgentUUID, exists := s.agentByURI[nextAgentID]; exists && existingAgentUUID != agentUUID {
+			continue
+		}
+
+		delete(s.humanOwnedAgentNameIdx, humanOwnedAgentNameKey("", humanID, agent.Handle))
+		delete(s.agentByURI, oldAgentID)
+
+		agent.OrgID = orgID
+		agent.AgentID = nextAgentID
+		s.agents[agentUUID] = agent
+		s.humanOwnedAgentNameIdx[nextNameKey] = agentUUID
+		s.agentByURI[nextAgentID] = agentUUID
+
+		s.appendAuditLocked(orgID, humanID, "agent", "transfer_on_invite_accept", agentUUID, map[string]any{
+			"old_org_id":   "",
+			"new_org_id":   orgID,
+			"old_agent_id": oldAgentID,
+			"new_agent_id": nextAgentID,
+		}, now)
+	}
 }
 
 func (s *MemoryStore) ListInvitesForHuman(humanID, humanEmail string, isSuperAdmin bool) []model.InviteWithOrg {
