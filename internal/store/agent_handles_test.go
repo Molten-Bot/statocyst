@@ -524,6 +524,76 @@ func TestMemoryStoreHumanScopedAgentAndBindWithoutOrg(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreAcceptInviteTransfersHumanScopedAgentsToOrg(t *testing.T) {
+	now := time.Date(2026, 3, 6, 1, 0, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	bob := mustCreateHuman(t, mem, ids, "bob", "bob@b.test", "bob", now)
+	org := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+
+	personalAgent, err := mem.RegisterAgent("", "bob-personal", &bob.HumanID, "tok-bob-personal", bob.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("register personal agent failed: %v", err)
+	}
+	if personalAgent.OrgID != "" {
+		t.Fatalf("expected personal agent org_id empty before invite, got %q", personalAgent.OrgID)
+	}
+
+	invite, err := mem.CreateInvite(org.OrgID, bob.Email, model.RoleMember, alice.HumanID, ids.mustID(t), "invite-bob-transfer", now.Add(24*time.Hour), now, false)
+	if err != nil {
+		t.Fatalf("create invite failed: %v", err)
+	}
+	if _, err := mem.AcceptInvite(invite.InviteID, bob.HumanID, bob.Email, now.Add(time.Minute), ids.next); err != nil {
+		t.Fatalf("accept invite failed: %v", err)
+	}
+
+	updatedAgent, err := mem.GetAgentByUUID(personalAgent.AgentUUID)
+	if err != nil {
+		t.Fatalf("load transferred agent failed: %v", err)
+	}
+	if updatedAgent.OrgID != org.OrgID {
+		t.Fatalf("expected transferred agent org_id %q, got %q", org.OrgID, updatedAgent.OrgID)
+	}
+	if updatedAgent.OwnerHumanID == nil || *updatedAgent.OwnerHumanID != bob.HumanID {
+		t.Fatalf("expected transferred agent owner_human_id %q, got %v", bob.HumanID, updatedAgent.OwnerHumanID)
+	}
+	if !strings.HasPrefix(updatedAgent.AgentID, org.Handle+"/") {
+		t.Fatalf("expected transferred agent URI to use org handle prefix %q, got %q", org.Handle+"/", updatedAgent.AgentID)
+	}
+
+	orgAgents, err := mem.ListOrgAgents(org.OrgID, bob.HumanID, false)
+	if err != nil {
+		t.Fatalf("list org agents failed: %v", err)
+	}
+	foundInOrg := false
+	for _, agent := range orgAgents {
+		if agent.AgentUUID == updatedAgent.AgentUUID {
+			foundInOrg = true
+			break
+		}
+	}
+	if !foundInOrg {
+		t.Fatalf("expected transferred agent in org list")
+	}
+
+	bobAgents := mem.ListHumanAgents(bob.HumanID)
+	foundInBobList := false
+	for _, agent := range bobAgents {
+		if agent.AgentUUID == updatedAgent.AgentUUID {
+			foundInBobList = true
+			if agent.OrgID != org.OrgID {
+				t.Fatalf("expected transferred agent in bob list with org_id %q, got %q", org.OrgID, agent.OrgID)
+			}
+			break
+		}
+	}
+	if !foundInBobList {
+		t.Fatalf("expected transferred agent in bob manageable list")
+	}
+}
+
 func TestMemoryStoreFinalizeAgentHandleSelfOnce(t *testing.T) {
 	now := time.Date(2026, 3, 7, 0, 0, 0, 0, time.UTC)
 	ids := &seqID{}

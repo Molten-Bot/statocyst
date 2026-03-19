@@ -1150,6 +1150,71 @@ func TestInviteAcceptFlow(t *testing.T) {
 	}
 }
 
+func TestInviteAcceptTransfersPersonalAgentIntoOrgAndKeepsOwnerManagement(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Org Transfer")
+	bobHumanID := currentHumanID(t, router, "bob", "bob@b.test")
+
+	_, personalOrgID, bobAgentUUID := registerMyAgent(t, router, "bob", "bob@b.test", "", "bob-personal-agent")
+	if personalOrgID != "" {
+		t.Fatalf("expected personal agent org_id empty before invite acceptance, got %q", personalOrgID)
+	}
+
+	inviteID := createInvite(t, router, "alice", "alice@a.test", orgID, "bob@b.test", "member")
+	acceptInvite(t, router, "bob", "bob@b.test", inviteID)
+
+	orgAgentsResp := doJSONRequest(t, router, http.MethodGet, "/v1/orgs/"+orgID+"/agents", nil, humanHeaders("alice", "alice@a.test"))
+	if orgAgentsResp.Code != http.StatusOK {
+		t.Fatalf("expected org agents list 200 after invite accept, got %d %s", orgAgentsResp.Code, orgAgentsResp.Body.String())
+	}
+	orgAgentsPayload := decodeJSONMap(t, orgAgentsResp.Body.Bytes())
+	orgAgents, _ := orgAgentsPayload["agents"].([]any)
+	foundTransferredInOrg := false
+	for _, raw := range orgAgents {
+		agent, _ := raw.(map[string]any)
+		if gotAgentUUID, _ := agent["agent_uuid"].(string); gotAgentUUID != bobAgentUUID {
+			continue
+		}
+		foundTransferredInOrg = true
+		if gotOrgID, _ := agent["org_id"].(string); gotOrgID != orgID {
+			t.Fatalf("expected transferred agent org_id %q, got %q payload=%v", orgID, gotOrgID, agent)
+		}
+		owner, _ := agent["owner"].(map[string]any)
+		if gotOwnerHumanID, _ := owner["human_id"].(string); gotOwnerHumanID != bobHumanID {
+			t.Fatalf("expected transferred agent owner.human_id %q, got %q payload=%v", bobHumanID, gotOwnerHumanID, agent)
+		}
+	}
+	if !foundTransferredInOrg {
+		t.Fatalf("expected transferred agent %q in org agent list", bobAgentUUID)
+	}
+
+	bobAgentsResp := doJSONRequest(t, router, http.MethodGet, "/v1/me/agents", nil, humanHeaders("bob", "bob@b.test"))
+	if bobAgentsResp.Code != http.StatusOK {
+		t.Fatalf("expected bob /v1/me/agents 200, got %d %s", bobAgentsResp.Code, bobAgentsResp.Body.String())
+	}
+	bobAgentsPayload := decodeJSONMap(t, bobAgentsResp.Body.Bytes())
+	bobAgents, _ := bobAgentsPayload["agents"].([]any)
+	foundTransferredInBobList := false
+	for _, raw := range bobAgents {
+		agent, _ := raw.(map[string]any)
+		if gotAgentUUID, _ := agent["agent_uuid"].(string); gotAgentUUID != bobAgentUUID {
+			continue
+		}
+		foundTransferredInBobList = true
+		if gotOrgID, _ := agent["org_id"].(string); gotOrgID != orgID {
+			t.Fatalf("expected bob-managed transferred agent org_id %q, got %q payload=%v", orgID, gotOrgID, agent)
+		}
+	}
+	if !foundTransferredInBobList {
+		t.Fatalf("expected transferred agent %q in bob /v1/me/agents", bobAgentUUID)
+	}
+
+	rotateResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/"+bobAgentUUID+"/rotate-token", nil, humanHeaders("bob", "bob@b.test"))
+	if rotateResp.Code != http.StatusOK {
+		t.Fatalf("expected transferred agent owner rotate token to succeed, got %d %s", rotateResp.Code, rotateResp.Body.String())
+	}
+}
+
 func TestInviteCodeRedeemFlow(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Org Invite Codes")
