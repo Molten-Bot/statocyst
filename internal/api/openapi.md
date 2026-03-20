@@ -480,6 +480,16 @@ paths:
       responses:
         '200':
           description: Public snapshot
+  /v1/public/peers:
+    get:
+      summary: Public federated peer overview
+      description: |
+        Read-only federation diagnostics route.
+        Returns configured peer canonical bases with minimal status fields and no auth requirement.
+        Response items include only `canonical_base_url` and `status`.
+      responses:
+        '200':
+          description: Public peer list
   /v1/entities/metadata:
     get:
       summary: Keyed entity metadata query

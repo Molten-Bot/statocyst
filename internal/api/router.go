@@ -144,6 +144,7 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/v1/admin/remote-agent-trusts", handler.handleAdminRemoteAgentTrusts)
 	mux.HandleFunc("/v1/admin/remote-agent-trusts/", handler.handleAdminRemoteAgentTrustByID)
 	mux.HandleFunc("/v1/entities/metadata", handler.handleEntitiesMetadata)
+	mux.HandleFunc("/v1/public/peers", handler.handlePublicPeers)
 	mux.HandleFunc("/v1/public/snapshot", handler.handlePublicSnapshot)
 	mux.HandleFunc("/v1/orgs", handler.handleOrgs)
 	mux.HandleFunc("/v1/orgs/", handler.handleOrgSubroutes)

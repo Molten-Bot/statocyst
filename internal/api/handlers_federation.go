@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -74,6 +75,36 @@ func peerPayload(peer model.PeerInstance) map[string]any {
 		"last_failure_at":     peer.LastFailureAt,
 		"last_failure_reason": peer.LastFailureReason,
 	}
+}
+
+func publicPeerPayload(peer model.PeerInstance) map[string]any {
+	return map[string]any{
+		"canonical_base_url": peer.CanonicalBaseURL,
+		"status":             peer.Status,
+	}
+}
+
+func (h *Handler) handlePublicPeers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	peers := h.control.ListPeerInstances()
+	sort.Slice(peers, func(i, j int) bool {
+		left := strings.TrimSpace(peers[i].CanonicalBaseURL)
+		right := strings.TrimSpace(peers[j].CanonicalBaseURL)
+		if left == right {
+			return strings.TrimSpace(peers[i].PeerID) < strings.TrimSpace(peers[j].PeerID)
+		}
+		return left < right
+	})
+
+	out := make([]map[string]any, 0, len(peers))
+	for _, peer := range peers {
+		out = append(out, publicPeerPayload(peer))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peers": out})
 }
 
 func (h *Handler) handleAdminPeers(w http.ResponseWriter, r *http.Request) {

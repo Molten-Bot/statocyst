@@ -108,6 +108,81 @@ func registerFederatedAgentWithUUID(t *testing.T, router http.Handler, humanID, 
 	return token, asString(t, agent, "agent_uuid")
 }
 
+func TestPublicPeersListsCanonicalBasesWithoutAuth(t *testing.T) {
+	alpha := newFederatedTestServer(t, "https://alpha.example")
+
+	createPeer(t, alpha.router, "peer-zeta", "https://zeta.example", "https://zeta.internal", "secret-zeta")
+	createPeer(t, alpha.router, "peer-beta", "https://beta.example", "https://beta.internal", "secret-beta")
+
+	resp := doJSONRequest(t, alpha.router, http.MethodGet, "/v1/public/peers", nil, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/public/peers 200, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	peers, ok := payload["peers"].([]any)
+	if !ok {
+		t.Fatalf("expected peers array, got %T payload=%v", payload["peers"], payload)
+	}
+	if len(peers) != 2 {
+		t.Fatalf("expected 2 peers, got %d payload=%v", len(peers), payload)
+	}
+
+	first, ok := peers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected peer object, got %T payload=%v", peers[0], payload)
+	}
+	second, ok := peers[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected peer object, got %T payload=%v", peers[1], payload)
+	}
+	if got, _ := first["canonical_base_url"].(string); got != "https://beta.example" {
+		t.Fatalf("expected first canonical_base_url https://beta.example, got %q payload=%v", got, payload)
+	}
+	if got, _ := second["canonical_base_url"].(string); got != "https://zeta.example" {
+		t.Fatalf("expected second canonical_base_url https://zeta.example, got %q payload=%v", got, payload)
+	}
+
+	for i, raw := range peers {
+		peer, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected peer object at index %d, got %T", i, raw)
+		}
+		forbidden := []string{
+			"peer_id",
+			"updated_at",
+			"last_successful_at",
+			"last_failure_at",
+			"delivery_base_url",
+			"shared_secret",
+			"created_by",
+			"last_failure_reason",
+		}
+		for _, key := range forbidden {
+			if _, exists := peer[key]; exists {
+				t.Fatalf("expected public peer payload to omit %q, got peer=%v", key, peer)
+			}
+		}
+		for _, key := range []string{"canonical_base_url", "status"} {
+			if _, exists := peer[key]; !exists {
+				t.Fatalf("expected public peer payload to include %q, got peer=%v", key, peer)
+			}
+		}
+		if len(peer) != 2 {
+			t.Fatalf("expected exactly 2 keys in public peer payload, got peer=%v", peer)
+		}
+	}
+}
+
+func TestPublicPeersRejectsNonGetMethods(t *testing.T) {
+	alpha := newFederatedTestServer(t, "https://alpha.example")
+
+	resp := doJSONRequest(t, alpha.router, http.MethodPost, "/v1/public/peers", map[string]any{}, nil)
+	if resp.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected /v1/public/peers POST 405, got %d %s", resp.Code, resp.Body.String())
+	}
+}
+
 func TestFederatedPublishRoutesByCanonicalAgentURI(t *testing.T) {
 	alpha := newFederatedTestServer(t, "https://alpha.example")
 	beta := newFederatedTestServer(t, "https://beta.example")
