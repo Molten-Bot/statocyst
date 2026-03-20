@@ -2687,6 +2687,20 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if _, ok := capsPayload["skill_call_contract"].(map[string]any); !ok {
 		t.Fatalf("expected skill_call_contract in capabilities payload, got %v", capsPayload)
 	}
+	if _, ok := capsPayload["protocol_adapters"].(map[string]any); !ok {
+		t.Fatalf("expected protocol_adapters in capabilities payload, got %v", capsPayload)
+	}
+	controlPlaneAdapters, ok := controlPlane["protocol_adapters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected control_plane.protocol_adapters, got %v", controlPlane)
+	}
+	openClawAdapter, ok := controlPlaneAdapters["openclaw_http_v1"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected openclaw_http_v1 adapter in control_plane.protocol_adapters, got %v", controlPlaneAdapters)
+	}
+	if got, _ := openClawAdapter["protocol"].(string); got != "openclaw.http.v1" {
+		t.Fatalf("expected openclaw adapter protocol, got %q", got)
+	}
 
 	skillJSONResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/skill", nil, map[string]string{
 		"Authorization": "Bearer " + tokenA,
@@ -2723,6 +2737,9 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(skillContent, "\"llm\":\"<provider>/<model>@<version>\"") || !strings.Contains(skillContent, "\"harness\":\"<runtime-or-framework>@<version>\"") {
 		t.Fatalf("expected onboarding skill to require llm/harness metadata setup, got %q", skillContent)
+	}
+	if strings.Contains(skillContent, "## OpenClaw Node + Agent HTTP Path") {
+		t.Fatalf("did not expect OpenClaw-only section for non-OpenClaw profile, got %q", skillContent)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/agents/me/skill?format=markdown", nil)
@@ -2781,6 +2798,46 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	notAcceptablePayload := decodeJSONMap(t, notAcceptableResp.Body.Bytes())
 	if notAcceptablePayload["error"] != "not_acceptable" {
 		t.Fatalf("expected not_acceptable error code, got %v", notAcceptablePayload["error"])
+	}
+}
+
+func TestAgentSkillOpenClawProfileIncludesAdapterSection(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+	headers := map[string]string{"Authorization": "Bearer " + tokenA}
+
+	patchResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"agent_type": "openclaw",
+		},
+	}, headers)
+	if patchResp.Code != http.StatusOK {
+		t.Fatalf("expected metadata patch 200, got %d %s", patchResp.Code, patchResp.Body.String())
+	}
+
+	skillResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/skill", nil, headers)
+	if skillResp.Code != http.StatusOK {
+		t.Fatalf("agent skill json failed: %d %s", skillResp.Code, skillResp.Body.String())
+	}
+	skillPayload := decodeJSONMap(t, skillResp.Body.Bytes())
+	skillObj, _ := skillPayload["skill"].(map[string]any)
+	skillContent, _ := skillObj["content"].(string)
+	if !strings.Contains(skillContent, "## OpenClaw Node + Agent HTTP Path") {
+		t.Fatalf("expected OpenClaw skill section, got %q", skillContent)
+	}
+	if !strings.Contains(skillContent, "POST http://example.com/v1/openclaw/messages/publish") {
+		t.Fatalf("expected OpenClaw publish endpoint in skill content, got %q", skillContent)
+	}
+
+	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, headers)
+	if capsResp.Code != http.StatusOK {
+		t.Fatalf("agent capabilities failed: %d %s", capsResp.Code, capsResp.Body.String())
+	}
+	capsPayload := decodeJSONMap(t, capsResp.Body.Bytes())
+	adapters, _ := capsPayload["protocol_adapters"].(map[string]any)
+	openClawAdapter, _ := adapters["openclaw_http_v1"].(map[string]any)
+	if got, _ := openClawAdapter["protocol"].(string); got != "openclaw.http.v1" {
+		t.Fatalf("expected openclaw adapter protocol, got %q", got)
 	}
 }
 

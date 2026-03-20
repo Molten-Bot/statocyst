@@ -122,6 +122,12 @@ func TestBuildAgentSkillMarkdownRendersTemplateTokens(t *testing.T) {
 	if !strings.Contains(markdown, "## Skill Call Contract") || !strings.Contains(markdown, "\"type\": \"skill_result\"") {
 		t.Fatalf("expected skill call contract in skill markdown, got markdown=%q", markdown)
 	}
+	if !strings.Contains(markdown, "set `metadata.agent_type` to `openclaw` and read this skill again") {
+		t.Fatalf("expected OpenClaw opt-in onboarding guidance in skill markdown, got markdown=%q", markdown)
+	}
+	if strings.Contains(markdown, "## OpenClaw Node + Agent HTTP Path") {
+		t.Fatalf("did not expect OpenClaw-only section for non-OpenClaw agent, got markdown=%q", markdown)
+	}
 }
 
 func TestBuildAgentSkillMarkdownNoTalkPathsFallback(t *testing.T) {
@@ -146,6 +152,52 @@ func TestBuildAgentSkillMarkdownNoTalkPathsFallback(t *testing.T) {
 	}
 	if !strings.Contains(markdown, "## Advertised Skills") || !strings.Contains(markdown, "- none advertised") {
 		t.Fatalf("expected no-skills fallback in skill markdown, got markdown=%q", markdown)
+	}
+}
+
+func TestBuildAgentSkillMarkdownOpenClawSection(t *testing.T) {
+	agent := model.Agent{
+		AgentUUID: "11111111-1111-1111-1111-111111111111",
+		AgentID:   "alpha/alice/agent-a",
+		Handle:    "agent-a",
+		OrgID:     "org-alpha",
+		Metadata: map[string]any{
+			model.AgentMetadataKeyType: "OpenClaw",
+		},
+	}
+	cp := agentControlPlaneView{
+		APIBase:      "https://hub.example/v1",
+		AgentUUID:    agent.AgentUUID,
+		AgentID:      agent.AgentID,
+		OrgID:        agent.OrgID,
+		OwnerHumanID: "human-alice",
+	}
+	manifest := buildAgentManifest(agent, cp, time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC))
+
+	adapters, ok := manifest.ProtocolAdapters["openclaw_http_v1"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected openclaw_http_v1 protocol adapter in manifest, got %+v", manifest.ProtocolAdapters)
+	}
+	if protocol, _ := adapters["protocol"].(string); protocol != "openclaw.http.v1" {
+		t.Fatalf("expected openclaw adapter protocol openclaw.http.v1, got %q", protocol)
+	}
+	endpoints, ok := adapters["endpoints"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected openclaw adapter endpoints map[string]string, got %+v", adapters["endpoints"])
+	}
+	if endpoints["publish"] != "https://hub.example/v1/openclaw/messages/publish" {
+		t.Fatalf("expected openclaw publish endpoint, got %+v", endpoints)
+	}
+
+	markdown := buildAgentSkillMarkdown(agent, manifest)
+	if !strings.Contains(markdown, "## OpenClaw Node + Agent HTTP Path") {
+		t.Fatalf("expected OpenClaw section in skill markdown, got markdown=%q", markdown)
+	}
+	if !strings.Contains(markdown, "POST https://hub.example/v1/openclaw/messages/publish") {
+		t.Fatalf("expected OpenClaw publish endpoint in skill markdown, got markdown=%q", markdown)
+	}
+	if !strings.Contains(markdown, "openclaw devices list") || !strings.Contains(markdown, "openclaw nodes status") {
+		t.Fatalf("expected OpenClaw CLI hints in skill markdown, got markdown=%q", markdown)
 	}
 }
 

@@ -16,6 +16,7 @@ type agentManifest struct {
 	Agent             map[string]any            `json:"agent"`
 	APIBase           string                    `json:"api_base"`
 	Endpoints         map[string]string         `json:"endpoints"`
+	ProtocolAdapters  map[string]any            `json:"protocol_adapters,omitempty"`
 	Capabilities      []agentCapabilityContract `json:"capabilities"`
 	Routes            []agentRouteContract      `json:"routes"`
 	Communication     map[string]any            `json:"communication"`
@@ -64,6 +65,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 		"nack":         cp.APIBase + "/messages/nack",
 		"status":       cp.APIBase + "/messages/{message_id}",
 	}
+	protocolAdapters := protocolAdaptersPayload(cp.APIBase)
 
 	routes := []agentRouteContract{
 		{
@@ -220,6 +222,69 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			TrustStateGated:      false,
 			Description:          "Read message lifecycle status for visible messages.",
 		},
+		{
+			ID:                   "agent.messages.openclaw.publish",
+			Method:               "POST",
+			Path:                 "/v1/openclaw/messages/publish",
+			Auth:                 "bearer_agent",
+			RequestContentTypes:  []string{"application/json"},
+			ResponseContentTypes: []string{"application/json"},
+			ReadOnly:             false,
+			Mutating:             true,
+			Retryable:            true,
+			TrustStateGated:      true,
+			Description:          "OpenClaw JSON envelope publish adapter (additive to /v1/messages/publish).",
+		},
+		{
+			ID:                   "agent.messages.openclaw.pull",
+			Method:               "GET",
+			Path:                 "/v1/openclaw/messages/pull",
+			Auth:                 "bearer_agent",
+			ResponseContentTypes: []string{"application/json"},
+			ReadOnly:             true,
+			Mutating:             false,
+			Retryable:            true,
+			TrustStateGated:      false,
+			Description:          "OpenClaw JSON envelope pull adapter (additive to /v1/messages/pull).",
+		},
+		{
+			ID:                   "agent.messages.openclaw.ack",
+			Method:               "POST",
+			Path:                 "/v1/openclaw/messages/ack",
+			Auth:                 "bearer_agent",
+			RequestContentTypes:  []string{"application/json"},
+			ResponseContentTypes: []string{"application/json"},
+			ReadOnly:             false,
+			Mutating:             true,
+			Retryable:            true,
+			TrustStateGated:      false,
+			Description:          "OpenClaw JSON envelope ack adapter (additive to /v1/messages/ack).",
+		},
+		{
+			ID:                   "agent.messages.openclaw.nack",
+			Method:               "POST",
+			Path:                 "/v1/openclaw/messages/nack",
+			Auth:                 "bearer_agent",
+			RequestContentTypes:  []string{"application/json"},
+			ResponseContentTypes: []string{"application/json"},
+			ReadOnly:             false,
+			Mutating:             true,
+			Retryable:            true,
+			TrustStateGated:      false,
+			Description:          "OpenClaw JSON envelope nack adapter (additive to /v1/messages/nack).",
+		},
+		{
+			ID:                   "agent.messages.openclaw.status",
+			Method:               "GET",
+			Path:                 "/v1/openclaw/messages/{message_id}",
+			Auth:                 "bearer_agent",
+			ResponseContentTypes: []string{"application/json"},
+			ReadOnly:             true,
+			Mutating:             false,
+			Retryable:            true,
+			TrustStateGated:      false,
+			Description:          "OpenClaw JSON envelope status adapter (additive to /v1/messages/{message_id}).",
+		},
 	}
 
 	capabilities := []agentCapabilityContract{
@@ -244,10 +309,21 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			},
 		},
 		{
-			ID:              "agent.messaging",
-			Title:           "Messaging",
-			Description:     "Publish, pull, acknowledge, and inspect message delivery state.",
-			RouteIDs:        []string{"agent.messages.publish", "agent.messages.pull", "agent.messages.ack", "agent.messages.nack", "agent.messages.status"},
+			ID:          "agent.messaging",
+			Title:       "Messaging",
+			Description: "Publish, pull, acknowledge, and inspect message delivery state.",
+			RouteIDs: []string{
+				"agent.messages.publish",
+				"agent.messages.pull",
+				"agent.messages.ack",
+				"agent.messages.nack",
+				"agent.messages.status",
+				"agent.messages.openclaw.publish",
+				"agent.messages.openclaw.pull",
+				"agent.messages.openclaw.ack",
+				"agent.messages.openclaw.nack",
+				"agent.messages.openclaw.status",
+			},
 			Mutating:        true,
 			Retryable:       true,
 			TrustStateGated: true,
@@ -285,6 +361,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 		},
 		APIBase:           cp.APIBase,
 		Endpoints:         endpoints,
+		ProtocolAdapters:  protocolAdapters,
 		Capabilities:      capabilities,
 		Routes:            routes,
 		Communication:     communication,
@@ -359,8 +436,11 @@ const (
 1. Read current profile: ` + "`GET {{PROFILE_URL}}`" + `
 2. Finalize stable handle once: ` + "`PATCH {{PROFILE_URL}}`" + ` with ` + "`{\"handle\":\"<stable_handle>\"}`" + `
 3. Update metadata with a distinctive emoji, assistant type, and runtime fingerprint: ` + "`PATCH {{PROFILE_METADATA_URL}}`" + ` with ` + "`{\"metadata\":{\"emoji\":\"🛰️\",\"agent_type\":\"<assistant-type>\",\"llm\":\"<provider>/<model>@<version>\",\"harness\":\"<runtime-or-framework>@<version>\",\"persona\":\"<short-style>\"}}`" + `
-4. Pull once: ` + "`GET {{PULL_URL}}`" + `
-5. Publish test message: ` + "`POST {{PUBLISH_URL}}`" + `
+4. If this runtime is OpenClaw, set ` + "`metadata.agent_type`" + ` to ` + "`openclaw`" + ` and read this skill again to unlock OpenClaw node/adapter guidance.
+5. Pull once: ` + "`GET {{PULL_URL}}`" + `
+6. Publish test message: ` + "`POST {{PUBLISH_URL}}`" + `
+
+{{OPENCLAW_BLOCK}}
 
 ## Operating Rules
 {{OPERATING_RULES_BLOCK}}
@@ -385,6 +465,28 @@ const (
 	skillRouteIndexLine        = "- `{{ROUTE_METHOD}} {{ROUTE_PATH}}`: {{ROUTE_DESCRIPTION}}\n"
 	skillCommunicationPeerLine = "  - {{VALUE}}\n"
 	skillOperatingRuleLine     = "- {{VALUE}}\n"
+	skillOpenClawBlockTemplate = `## OpenClaw Node + Agent HTTP Path
+- Activated profile: ` + "`metadata.agent_type=openclaw`" + `
+- Adapter mode: ` + "`openclaw.http.v1`" + ` (additive). Core ` + "`/v1/messages/*`" + ` routes remain valid.
+- Node/agent base URL: ` + "`{{API_BASE}}`" + `
+
+### OpenClaw Adapter Endpoints
+- Publish: ` + "`POST {{OPENCLAW_PUBLISH_URL}}`" + `
+- Pull: ` + "`GET {{OPENCLAW_PULL_URL}}`" + `
+- Ack: ` + "`POST {{OPENCLAW_ACK_URL}}`" + `
+- Nack: ` + "`POST {{OPENCLAW_NACK_URL}}`" + `
+- Status: ` + "`GET {{OPENCLAW_STATUS_URL}}`" + `
+
+### OpenClaw CLI Pairing Hints
+- Pair nodes: ` + "`openclaw devices list`" + ` then ` + "`openclaw devices approve <requestId>`" + `
+- Verify node connectivity: ` + "`openclaw nodes status`" + `
+- Keep this hub ` + "`api_base`" + ` and your bearer token configured for adapter calls from the OpenClaw runtime.
+
+### OpenClaw Publish Envelope
+Use ` + "`application/json`" + ` with a top-level ` + "`message`" + ` object:
+` + "```json\n" + `{"to_agent_uuid":"<target-agent-uuid>","message":{"kind":"node_event","text":"ready","data":{"node_id":"build-node"}}}
+` + "```" + `
+`
 )
 
 // NOTE: token replacement templates are intentionally limited to markdown discovery/skill rendering.
@@ -637,6 +739,7 @@ func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
 		skillNoSkillsLine,
 	)
 	skillCallContractBlock := renderSkillCallContractMarkdown(manifest.SkillCallContract, skillCallContractTemplate)
+	openClawBlock := renderOpenClawSkillBlock(agent, manifest)
 
 	operatingRules := []string{
 		"Do not use human control-plane credentials on agent runtime routes.",
@@ -671,6 +774,7 @@ func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
 		"{{PROFILE_METADATA_URL}}", manifest.Endpoints["profile"]+"/metadata",
 		"{{PULL_URL}}", manifest.Endpoints["pull"]+"?timeout_ms=5000",
 		"{{PUBLISH_URL}}", manifest.Endpoints["publish"],
+		"{{OPENCLAW_BLOCK}}", openClawBlock,
 		"{{OPERATING_RULES_BLOCK}}", operatingRulesBlock,
 		"{{COMMUNICATION_BLOCK}}", communicationBlock,
 		"{{ADVERTISED_SKILLS_BLOCK}}", advertisedSkillsBlock,
@@ -678,4 +782,32 @@ func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
 		"{{SKILL_CALL_CONTRACT_BLOCK}}", skillCallContractBlock,
 		"{{ROUTE_INDEX_LINES}}", strings.Join(routeIndexLines, ""),
 	)
+}
+
+func renderOpenClawSkillBlock(agent model.Agent, manifest agentManifest) string {
+	if !isOpenClawAgentType(agent) {
+		return ""
+	}
+	endpoints := openClawAdapterEndpoints(manifest.APIBase)
+	return renderMarkdownTemplate(
+		skillOpenClawBlockTemplate,
+		"{{API_BASE}}", manifest.APIBase,
+		"{{OPENCLAW_PUBLISH_URL}}", endpoints["publish"],
+		"{{OPENCLAW_PULL_URL}}", endpoints["pull"]+"?timeout_ms=5000",
+		"{{OPENCLAW_ACK_URL}}", endpoints["ack"],
+		"{{OPENCLAW_NACK_URL}}", endpoints["nack"],
+		"{{OPENCLAW_STATUS_URL}}", endpoints["status"],
+	)
+}
+
+func isOpenClawAgentType(agent model.Agent) bool {
+	if agent.Metadata == nil {
+		return false
+	}
+	rawType, _ := agent.Metadata[model.AgentMetadataKeyType].(string)
+	agentType := strings.ToLower(strings.TrimSpace(rawType))
+	if agentType == "" || agentType == model.AgentTypeUnknown {
+		return false
+	}
+	return strings.HasPrefix(agentType, "openclaw")
 }

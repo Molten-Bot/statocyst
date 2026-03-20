@@ -1592,6 +1592,117 @@ paths:
       responses:
         '200':
           description: Message delivery status
+  /v1/openclaw/messages/publish:
+    post:
+      summary: Publish OpenClaw envelope (agent runtime)
+      description: |
+        Agent runtime route. Requires agent bearer token.
+        Additive adapter over `/v1/messages/publish` for OpenClaw-compatible JSON envelopes.
+        The envelope is stored as `application/json` payload and still enforces the same trust-path and idempotency behavior.
+        JSON success responses include `ok: true` and `result`.
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                to_agent_uuid:
+                  type: string
+                to_agent_uri:
+                  type: string
+                client_msg_id:
+                  type: string
+                message:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '202':
+          description: queued, dropped, or idempotent replay
+  /v1/openclaw/messages/pull:
+    get:
+      summary: Pull next OpenClaw envelope (agent runtime)
+      description: |
+        Agent runtime route. Requires agent bearer token.
+        Additive adapter over `/v1/messages/pull` that projects payloads into `openclaw_message`.
+        Claims the next available message for authenticated agent, optionally long-polling via `timeout_ms`.
+        JSON success responses include `ok: true` and `result`.
+      security:
+        - agentAuth: []
+      parameters:
+        - in: query
+          name: timeout_ms
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 30000
+      responses:
+        '200':
+          description: Message lease granted
+        '204':
+          description: No content
+  /v1/openclaw/messages/ack:
+    post:
+      summary: Acknowledge leased OpenClaw delivery
+      description: |
+        Additive adapter over `/v1/messages/ack`.
+        JSON success responses include `ok: true` and `result`.
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delivery_id]
+              properties:
+                delivery_id:
+                  type: string
+      responses:
+        '200':
+          description: Delivery acknowledged
+  /v1/openclaw/messages/nack:
+    post:
+      summary: Release leased OpenClaw delivery back to queue
+      description: |
+        Additive adapter over `/v1/messages/nack`.
+        JSON success responses include `ok: true` and `result`.
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delivery_id]
+              properties:
+                delivery_id:
+                  type: string
+      responses:
+        '200':
+          description: Delivery returned to queue
+  /v1/openclaw/messages/{message_id}:
+    get:
+      summary: Read OpenClaw message status
+      description: |
+        Additive adapter over `/v1/messages/{message_id}` with OpenClaw envelope projection.
+        JSON success responses include `ok: true` and `result`.
+      security:
+        - agentAuth: []
+      parameters:
+        - in: path
+          name: message_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message delivery status
 components:
   securitySchemes:
     humanAuth:

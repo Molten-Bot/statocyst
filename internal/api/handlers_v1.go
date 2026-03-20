@@ -948,6 +948,7 @@ func (h *Handler) handleAgentMeCapabilities(w http.ResponseWriter, r *http.Reque
 		"advertised_skills":   manifest.AdvertisedSkills,
 		"peer_skill_catalog":  manifest.PeerSkillCatalog,
 		"skill_call_contract": manifest.SkillCallContract,
+		"protocol_adapters":   manifest.ProtocolAdapters,
 		"manifest_url":        cp.APIBase + "/agents/me/manifest",
 	})
 }
@@ -999,6 +1000,7 @@ func (h *Handler) handleAgentMeSkill(w http.ResponseWriter, r *http.Request) {
 		"advertised_skills":   manifest.AdvertisedSkills,
 		"peer_skill_catalog":  manifest.PeerSkillCatalog,
 		"skill_call_contract": manifest.SkillCallContract,
+		"protocol_adapters":   manifest.ProtocolAdapters,
 		"skill": map[string]any{
 			"schema_version": manifest.SchemaVersion,
 			"format":         "markdown",
@@ -1142,6 +1144,7 @@ func (h *Handler) agentControlPlanePayload(cp agentControlPlaneView) map[string]
 		"advertised_skills":   cp.AdvertisedSkills,
 		"peer_skill_catalog":  cp.PeerSkillCatalog,
 		"skill_call_contract": defaultSkillCallContract(cp.APIBase),
+		"protocol_adapters":   protocolAdaptersPayload(cp.APIBase),
 		"endpoints": map[string]string{
 			"publish":      cp.APIBase + "/messages/publish",
 			"pull":         cp.APIBase + "/messages/pull",
@@ -2473,9 +2476,10 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 	writeBindSuccess := func(agent model.Agent) {
 		apiBase := h.apiBaseURL(r)
 		writeAgentRuntimeSuccess(w, http.StatusCreated, map[string]any{
-			"token":    agentToken,
-			"api_base": apiBase,
-			"agent":    h.agentResponsePayload(agent),
+			"token":             agentToken,
+			"api_base":          apiBase,
+			"agent":             h.agentResponsePayload(agent),
+			"protocol_adapters": protocolAdaptersPayload(apiBase),
 			"endpoints": map[string]string{
 				"profile":      apiBase + "/agents/me",
 				"manifest":     apiBase + "/agents/me/manifest",

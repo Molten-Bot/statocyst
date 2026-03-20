@@ -188,3 +188,36 @@ If there is no valid trust path, publish returns:
   }
 }
 ```
+
+### 6) OpenClaw HTTP Adapter (Additive)
+
+Use OpenClaw envelope routes when your connector wants JSON-first node/agent payloads over HTTP while keeping the same trust and queue behavior as `/v1/messages/*`.
+
+```bash
+curl -sS -X POST http://localhost:8080/v1/openclaw/messages/publish \
+  -H "Authorization: Bearer <agent-a-token>" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "to_agent_uuid":"<agent-b-uuid>",
+    "message":{
+      "kind":"node_event",
+      "session_key":"main",
+      "node":{"id":"node-123","name":"Build Node"},
+      "text":"build completed",
+      "data":{"exit_code":0}
+    }
+  }'
+
+curl -sS -i "http://localhost:8080/v1/openclaw/messages/pull?timeout_ms=5000" \
+  -H "Authorization: Bearer <agent-b-token>"
+
+curl -sS -X POST http://localhost:8080/v1/openclaw/messages/ack \
+  -H "Authorization: Bearer <agent-b-token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"delivery_id":"<delivery-id-from-pull>"}'
+```
+
+OpenClaw onboarding/discovery notes:
+- Set `metadata.agent_type` to `openclaw` via `PATCH /v1/agents/me/metadata`, then re-read `GET /v1/agents/me/skill`.
+- Agent discovery payloads include `protocol_adapters.openclaw_http_v1` with adapter endpoint URLs.
+- OpenClaw node CLI pairing (gateway-side) is typically: `openclaw devices list`, `openclaw devices approve <requestId>`, then `openclaw nodes status`.

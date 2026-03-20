@@ -33,6 +33,12 @@ type deliveryActionRequest struct {
 	DeliveryID string `json:"delivery_id"`
 }
 
+type runtimeHandlerError struct {
+	status  int
+	code    string
+	message string
+}
+
 func publishResponse(record model.MessageRecord, idempotent bool) map[string]any {
 	return map[string]any{
 		"message_id":        record.Message.MessageID,
@@ -78,6 +84,13 @@ func queueRuntimeFailureSummary(operation string, err error) string {
 	return base + ": " + detail
 }
 
+func writeRuntimeHandlerError(w http.ResponseWriter, err *runtimeHandlerError) {
+	if err == nil {
+		return
+	}
+	writeError(w, err.status, err.code, err.message)
+}
+
 func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -99,52 +112,78 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	result, handlerErr := h.publishFromAgent(r.Context(), senderAgentUUID, req)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
+		return
+	}
+	writeAgentRuntimeSuccess(w, http.StatusAccepted, result)
+}
+
+func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, req publishRequest) (map[string]any, *runtimeHandlerError) {
 	req.ToAgentUUID = normalizeUUID(req.ToAgentUUID)
 	req.ToAgentURI = strings.TrimSpace(req.ToAgentURI)
 	req.ContentType = strings.TrimSpace(req.ContentType)
 
 	if _, ok := allowedContentTypes[req.ContentType]; !ok {
-		writeError(w, http.StatusBadRequest, "invalid_content_type", "content_type must be one of: text/plain, application/json")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_content_type",
+			message: "content_type must be one of: text/plain, application/json",
+		}
 	}
 
 	senderAgent, err := h.control.GetAgentByUUID(senderAgentUUID)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusUnauthorized,
+			code:    "unauthorized",
+			message: "missing or invalid bearer token",
+		}
 	}
 
 	if req.ToAgentUUID == "" && req.ToAgentURI == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "to_agent_uuid or to_agent_uri is required")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_request",
+			message: "to_agent_uuid or to_agent_uri is required",
+		}
 	}
 
 	localBase := normalizeCanonicalBaseURL(h.canonicalBaseURL)
 	if req.ToAgentURI != "" {
 		targetBase, targetRef, err := splitCanonicalAgentURI(req.ToAgentURI)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_to_agent_uri", "to_agent_uri must be a valid canonical agent URI")
-			return
+			return nil, &runtimeHandlerError{
+				status:  http.StatusBadRequest,
+				code:    "invalid_to_agent_uri",
+				message: "to_agent_uri must be a valid canonical agent URI",
+			}
 		}
 		if targetBase != localBase {
 			peer, err := h.control.ResolvePeerByCanonicalBase(targetBase)
 			if err != nil {
-				writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_uri is not registered on a trusted peer")
-				return
+				return nil, &runtimeHandlerError{
+					status:  http.StatusNotFound,
+					code:    "unknown_receiver",
+					message: "to_agent_uri is not registered on a trusted peer",
+				}
 			}
 			remoteScope := remoteOrgHandleFromAgentRef(targetRef)
 			if !h.hasActiveFederatedTrustPath(senderAgent, senderAgentUUID, peer.PeerID, req.ToAgentURI, targetRef) {
 				h.control.RecordMessageDropped(senderAgent.OrgID)
-				writeAgentRuntimeSuccess(w, http.StatusAccepted, map[string]any{
+				return map[string]any{
 					"status": "dropped",
 					"reason": "no_trust_path",
-				})
-				return
+				}, nil
 			}
 			messageID, err := newUUIDv7()
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to create message_id")
-				return
+				return nil, &runtimeHandlerError{
+					status:  http.StatusInternalServerError,
+					code:    "id_generation_failed",
+					message: "failed to create message_id",
+				}
 			}
 			message := model.Message{
 				MessageID:      messageID,
@@ -162,86 +201,121 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 			}
 			record, replay, err := h.control.CreateOrGetMessageRecord(message, message.CreatedAt)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "store_error", "failed to register message")
-				return
+				return nil, &runtimeHandlerError{
+					status:  http.StatusInternalServerError,
+					code:    "store_error",
+					message: "failed to register message",
+				}
 			}
 			if replay {
-				writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, true))
-				return
+				return publishResponse(record, true), nil
 			}
 			outboundID, err := h.idFactory()
 			if err != nil {
 				_ = h.control.AbortMessageRecord(message.MessageID)
-				writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to create outbound_id")
-				return
+				return nil, &runtimeHandlerError{
+					status:  http.StatusInternalServerError,
+					code:    "id_generation_failed",
+					message: "failed to create outbound_id",
+				}
 			}
 			if _, err := h.control.EnqueuePeerOutbound(peer.PeerID, outboundID, message, message.CreatedAt); err != nil {
 				_ = h.control.AbortMessageRecord(message.MessageID)
-				writeError(w, http.StatusInternalServerError, "store_error", "failed to enqueue peer delivery")
-				return
+				return nil, &runtimeHandlerError{
+					status:  http.StatusInternalServerError,
+					code:    "store_error",
+					message: "failed to enqueue peer delivery",
+				}
 			}
-			h.processPeerOutboxes(r.Context(), 1)
+			h.processPeerOutboxes(ctx, 1)
 			updatedRecord, err := h.control.GetMessageRecord(message.MessageID)
 			if err == nil {
 				record = updatedRecord
 			}
 			h.control.RecordMessageQueued(senderAgent.OrgID)
-			writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, false))
-			return
+			return publishResponse(record, false), nil
 		}
 		if req.ToAgentUUID == "" {
 			resolvedUUID, err := h.control.ResolveAgentUUID(targetRef)
 			if err != nil {
 				if errors.Is(err, store.ErrAgentNotFound) {
-					writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_uri is not registered")
-					return
+					return nil, &runtimeHandlerError{
+						status:  http.StatusNotFound,
+						code:    "unknown_receiver",
+						message: "to_agent_uri is not registered",
+					}
 				}
-				writeError(w, http.StatusInternalServerError, "store_error", "failed to resolve receiver")
-				return
+				return nil, &runtimeHandlerError{
+					status:  http.StatusInternalServerError,
+					code:    "store_error",
+					message: "failed to resolve receiver",
+				}
 			}
 			req.ToAgentUUID = resolvedUUID
 		}
 	}
 	if !validateUUID(req.ToAgentUUID) {
-		writeError(w, http.StatusBadRequest, "invalid_to_agent_uuid", "to_agent_uuid must be a valid UUID")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_to_agent_uuid",
+			message: "to_agent_uuid must be a valid UUID",
+		}
 	}
 
 	targetAgent, err := h.control.GetAgentByUUID(req.ToAgentUUID)
 	if err != nil {
 		if errors.Is(err, store.ErrAgentNotFound) {
-			writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_uuid is not registered")
-			return
+			return nil, &runtimeHandlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_receiver",
+				message: "to_agent_uuid is not registered",
+			}
 		}
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to resolve receiver")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to resolve receiver",
+		}
 	}
 	if req.ToAgentURI != "" && req.ToAgentURI != h.agentURI(targetAgent) {
-		writeError(w, http.StatusBadRequest, "agent_ref_mismatch", "to_agent_uuid and to_agent_uri refer to different agents")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusBadRequest,
+			code:    "agent_ref_mismatch",
+			message: "to_agent_uuid and to_agent_uri refer to different agents",
+		}
 	}
 
 	senderOrgID, receiverOrgID, err := h.control.CanPublish(senderAgentUUID, targetAgent.AgentUUID)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):
-			writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_uuid is not registered")
+			return nil, &runtimeHandlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_receiver",
+				message: "to_agent_uuid is not registered",
+			}
 		case errors.Is(err, store.ErrNoTrustPath):
 			h.control.RecordMessageDropped(senderOrgID)
-			writeAgentRuntimeSuccess(w, http.StatusAccepted, map[string]any{
+			return map[string]any{
 				"status": "dropped",
 				"reason": "no_trust_path",
-			})
+			}, nil
 		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to authorize publish")
+			return nil, &runtimeHandlerError{
+				status:  http.StatusInternalServerError,
+				code:    "store_error",
+				message: "failed to authorize publish",
+			}
 		}
-		return
 	}
 
 	messageID, err := newUUIDv7()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to create message_id")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "id_generation_failed",
+			message: "failed to create message_id",
+		}
 	}
 
 	message := model.Message{
@@ -262,15 +336,17 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 
 	record, replay, err := h.control.CreateOrGetMessageRecord(message, message.CreatedAt)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to register message")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to register message",
+		}
 	}
 	if replay {
-		writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, true))
-		return
+		return publishResponse(record, true), nil
 	}
 
-	if err := h.queue.Enqueue(r.Context(), message); err != nil {
+	if err := h.queue.Enqueue(ctx, message); err != nil {
 		_ = h.control.AbortMessageRecord(message.MessageID)
 		summary := queueRuntimeFailureSummary("enqueue", err)
 		h.setQueueRuntimeError(summary)
@@ -282,17 +358,23 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 			summary,
 		)
 		if errors.Is(err, store.ErrAgentNotFound) {
-			writeError(w, http.StatusNotFound, "unknown_receiver", "to_agent_uuid is not registered")
-			return
+			return nil, &runtimeHandlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_receiver",
+				message: "to_agent_uuid is not registered",
+			}
 		}
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to enqueue message")
-		return
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to enqueue message",
+		}
 	}
 
 	h.clearQueueRuntimeError()
 	h.control.RecordMessageQueued(senderOrgID)
 	h.waiters.Notify(targetAgent.AgentUUID)
-	writeAgentRuntimeSuccess(w, http.StatusAccepted, publishResponse(record, false))
+	return publishResponse(record, false), nil
 }
 
 func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
@@ -313,62 +395,84 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.requeueExpiredLeases(r.Context())
+	status, result, handlerErr := h.pullForAgent(r.Context(), receiverAgentUUID, timeout)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
+		return
+	}
+	if status == 0 {
+		return
+	}
+	if status == http.StatusNoContent {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeAgentRuntimeSuccess(w, status, result)
+}
+
+func (h *Handler) pullForAgent(ctx context.Context, receiverAgentUUID string, timeout time.Duration) (int, map[string]any, *runtimeHandlerError) {
+	h.requeueExpiredLeases(ctx)
 
 	deadline := h.now().Add(timeout)
 	for {
-		if message, ok, err := h.queue.Dequeue(r.Context(), receiverAgentUUID); err != nil {
+		if message, ok, err := h.queue.Dequeue(ctx, receiverAgentUUID); err != nil {
 			summary := queueRuntimeFailureSummary("dequeue", err)
 			h.setQueueRuntimeError(summary)
 			log.Printf("pull dequeue failed: receiver_agent_uuid=%s err_summary=%q", receiverAgentUUID, summary)
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to dequeue message")
-			return
-		} else if ok {
-			if h.writeClaimedMessage(w, r, receiverAgentUUID, message) {
-				return
+			return 0, nil, &runtimeHandlerError{
+				status:  http.StatusInternalServerError,
+				code:    "store_error",
+				message: "failed to dequeue message",
 			}
-			return
+		} else if ok {
+			result, handlerErr := h.claimMessageForAgent(ctx, receiverAgentUUID, message)
+			if handlerErr != nil {
+				return 0, nil, handlerErr
+			}
+			return http.StatusOK, result, nil
 		} else {
 			h.clearQueueRuntimeError()
 		}
 
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return http.StatusNoContent, nil, nil
 		}
 
 		notifyCh, cancel := h.waiters.Register(receiverAgentUUID)
-		if message, ok, err := h.queue.Dequeue(r.Context(), receiverAgentUUID); err != nil {
+		if message, ok, err := h.queue.Dequeue(ctx, receiverAgentUUID); err != nil {
 			summary := queueRuntimeFailureSummary("dequeue", err)
 			h.setQueueRuntimeError(summary)
 			log.Printf("pull dequeue failed after waiter register: receiver_agent_uuid=%s err_summary=%q", receiverAgentUUID, summary)
 			cancel()
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to dequeue message")
-			return
+			return 0, nil, &runtimeHandlerError{
+				status:  http.StatusInternalServerError,
+				code:    "store_error",
+				message: "failed to dequeue message",
+			}
 		} else if ok {
 			cancel()
-			if h.writeClaimedMessage(w, r, receiverAgentUUID, message) {
-				return
+			result, handlerErr := h.claimMessageForAgent(ctx, receiverAgentUUID, message)
+			if handlerErr != nil {
+				return 0, nil, handlerErr
 			}
-			return
+			return http.StatusOK, result, nil
 		} else {
 			h.clearQueueRuntimeError()
 		}
 
 		timer := time.NewTimer(remaining)
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			timer.Stop()
 			cancel()
-			return
+			return 0, nil, nil
 		case <-notifyCh:
 			timer.Stop()
 			cancel()
 		case <-timer.C:
 			cancel()
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return http.StatusNoContent, nil, nil
 		}
 	}
 }
@@ -425,16 +529,9 @@ func (h *Handler) handleAckDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_delivery_id", "delivery_id is required")
 		return
 	}
-	record, err := h.control.AckMessageDelivery(receiverAgentUUID, req.DeliveryID, h.now().UTC())
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrMessageDeliveryNotFound):
-			writeError(w, http.StatusNotFound, "unknown_delivery", "delivery_id is not active")
-		case errors.Is(err, store.ErrMessageDeliveryMismatch):
-			writeError(w, http.StatusForbidden, "forbidden", "delivery_id does not belong to this agent")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to acknowledge delivery")
-		}
+	record, handlerErr := h.ackDeliveryForAgent(receiverAgentUUID, req.DeliveryID)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
 		return
 	}
 	writeAgentRuntimeSuccess(w, http.StatusOK, messageStatusResponse(record))
@@ -463,25 +560,11 @@ func (h *Handler) handleNackDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_delivery_id", "delivery_id is required")
 		return
 	}
-	message, record, err := h.control.ReleaseMessageDelivery(receiverAgentUUID, req.DeliveryID, h.now().UTC(), "receiver_nack")
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrMessageDeliveryNotFound):
-			writeError(w, http.StatusNotFound, "unknown_delivery", "delivery_id is not active")
-		case errors.Is(err, store.ErrMessageDeliveryMismatch):
-			writeError(w, http.StatusForbidden, "forbidden", "delivery_id does not belong to this agent")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to requeue delivery")
-		}
+	record, handlerErr := h.nackDeliveryForAgent(r.Context(), receiverAgentUUID, req.DeliveryID)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
 		return
 	}
-	if err := h.queue.Enqueue(r.Context(), message); err != nil {
-		h.setQueueRuntimeError(queueRuntimeFailureSummary("requeue", err))
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to requeue message")
-		return
-	}
-	h.clearQueueRuntimeError()
-	h.waiters.Notify(receiverAgentUUID)
 	writeAgentRuntimeSuccess(w, http.StatusOK, messageStatusResponse(record))
 }
 
@@ -495,20 +578,102 @@ func (h *Handler) handleMessageStatus(w http.ResponseWriter, r *http.Request, me
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
-	record, err := h.control.GetMessageRecord(strings.TrimSpace(messageID))
-	if err != nil {
-		if errors.Is(err, store.ErrMessageNotFound) {
-			writeError(w, http.StatusNotFound, "unknown_message", "message_id is not registered")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to load message status")
-		return
-	}
-	if record.Message.FromAgentUUID != agentUUID && record.Message.ToAgentUUID != agentUUID {
-		writeError(w, http.StatusForbidden, "forbidden", "message_id is not visible to this agent")
+	record, handlerErr := h.messageStatusForAgent(agentUUID, messageID)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
 		return
 	}
 	writeAgentRuntimeSuccess(w, http.StatusOK, messageStatusResponse(record))
+}
+
+func (h *Handler) ackDeliveryForAgent(receiverAgentUUID, deliveryID string) (model.MessageRecord, *runtimeHandlerError) {
+	record, err := h.control.AckMessageDelivery(receiverAgentUUID, deliveryID, h.now().UTC())
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrMessageDeliveryNotFound):
+			return model.MessageRecord{}, &runtimeHandlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_delivery",
+				message: "delivery_id is not active",
+			}
+		case errors.Is(err, store.ErrMessageDeliveryMismatch):
+			return model.MessageRecord{}, &runtimeHandlerError{
+				status:  http.StatusForbidden,
+				code:    "forbidden",
+				message: "delivery_id does not belong to this agent",
+			}
+		default:
+			return model.MessageRecord{}, &runtimeHandlerError{
+				status:  http.StatusInternalServerError,
+				code:    "store_error",
+				message: "failed to acknowledge delivery",
+			}
+		}
+	}
+	return record, nil
+}
+
+func (h *Handler) nackDeliveryForAgent(ctx context.Context, receiverAgentUUID, deliveryID string) (model.MessageRecord, *runtimeHandlerError) {
+	message, record, err := h.control.ReleaseMessageDelivery(receiverAgentUUID, deliveryID, h.now().UTC(), "receiver_nack")
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrMessageDeliveryNotFound):
+			return model.MessageRecord{}, &runtimeHandlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_delivery",
+				message: "delivery_id is not active",
+			}
+		case errors.Is(err, store.ErrMessageDeliveryMismatch):
+			return model.MessageRecord{}, &runtimeHandlerError{
+				status:  http.StatusForbidden,
+				code:    "forbidden",
+				message: "delivery_id does not belong to this agent",
+			}
+		default:
+			return model.MessageRecord{}, &runtimeHandlerError{
+				status:  http.StatusInternalServerError,
+				code:    "store_error",
+				message: "failed to requeue delivery",
+			}
+		}
+	}
+	if err := h.queue.Enqueue(ctx, message); err != nil {
+		h.setQueueRuntimeError(queueRuntimeFailureSummary("requeue", err))
+		return model.MessageRecord{}, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to requeue message",
+		}
+	}
+	h.clearQueueRuntimeError()
+	h.waiters.Notify(receiverAgentUUID)
+	return record, nil
+}
+
+func (h *Handler) messageStatusForAgent(agentUUID, messageID string) (model.MessageRecord, *runtimeHandlerError) {
+	record, err := h.control.GetMessageRecord(strings.TrimSpace(messageID))
+	if err != nil {
+		if errors.Is(err, store.ErrMessageNotFound) {
+			return model.MessageRecord{}, &runtimeHandlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_message",
+				message: "message_id is not registered",
+			}
+		}
+		return model.MessageRecord{}, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to load message status",
+		}
+	}
+	if record.Message.FromAgentUUID != agentUUID && record.Message.ToAgentUUID != agentUUID {
+		return model.MessageRecord{}, &runtimeHandlerError{
+			status:  http.StatusForbidden,
+			code:    "forbidden",
+			message: "message_id is not visible to this agent",
+		}
+	}
+	return record, nil
 }
 
 func (h *Handler) requeueExpiredLeases(ctx context.Context) {
@@ -534,23 +699,38 @@ func (h *Handler) requeueExpiredLeases(ctx context.Context) {
 }
 
 func (h *Handler) writeClaimedMessage(w http.ResponseWriter, r *http.Request, receiverAgentUUID string, message model.Message) bool {
+	result, handlerErr := h.claimMessageForAgent(r.Context(), receiverAgentUUID, message)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
+		return false
+	}
+	writeAgentRuntimeSuccess(w, http.StatusOK, result)
+	return true
+}
+
+func (h *Handler) claimMessageForAgent(ctx context.Context, receiverAgentUUID string, message model.Message) (map[string]any, *runtimeHandlerError) {
 	h.clearQueueRuntimeError()
 	deliveryID, err := h.idFactory()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "id_generation_failed", "failed to create delivery_id")
-		return false
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "id_generation_failed",
+			message: "failed to create delivery_id",
+		}
 	}
 	leasedAt := h.now().UTC()
 	leaseExpiresAt := leasedAt.Add(defaultMessageLease)
 	delivery, record, err := h.control.LeaseMessage(message.MessageID, receiverAgentUUID, deliveryID, leasedAt, leaseExpiresAt)
 	if err != nil {
-		_ = h.queue.Enqueue(r.Context(), message)
+		_ = h.queue.Enqueue(ctx, message)
 		h.setQueueRuntimeError(queueRuntimeFailureSummary("lease", err))
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to lease message")
-		return false
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to lease message",
+		}
 	}
-	writeAgentRuntimeSuccess(w, http.StatusOK, deliveryResponse(record, delivery))
-	return true
+	return deliveryResponse(record, delivery), nil
 }
 
 func newUUIDv7() (string, error) {
