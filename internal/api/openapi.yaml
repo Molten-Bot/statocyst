@@ -569,15 +569,32 @@ paths:
   /v1/me/agent-trusts:
     get:
       summary: List agent trust edges manageable by current human
+      description: |
+        Returns agent trust edges where the caller can manage at least one side.
+        A human can manage an agent when they are:
+        - org owner/admin for the agent's org-scoped identity, or
+        - personal owner for a human-owned identity.
       security:
         - humanAuth: []
       responses:
         '200':
           description: Agent trust list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentTrustListResponse'
     post:
       summary: Create or join an agent trust request (UUIDs or agent refs)
       description: |
-        `org_id` is optional. Set it for org-scoped initiations; omit/empty for human-owned agent trusts.
+        Creates a new agent trust edge or joins/refreshes an existing edge.
+        Caller must manage the initiating agent (`agent_uuid`/`agent_id`):
+        org owner/admin for org-scoped agents, or personal owner for human-owned agents.
+        `org_id` is optional; when provided, it must match the initiating agent's org.
+
+        Approval semantics:
+        - Request creation marks caller side approved and sets `state=pending`.
+        - If caller manages both sides (or is statocyst admin), both approvals are set
+          and trust becomes immediately `active`.
       security:
         - humanAuth: []
       requestBody:
@@ -600,8 +617,16 @@ paths:
       responses:
         '200':
           description: Existing trust updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustMutationResponse'
         '201':
           description: Trust created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustMutationResponse'
   /v1/orgs:
     post:
       summary: Create organization
@@ -930,6 +955,11 @@ paths:
   /v1/orgs/{org_id}/agents:
     get:
       summary: List agents in org
+      description: |
+        Returns all agents currently scoped to `org_id`.
+        Includes org-owned agents and human-owned agents that were transferred into the org
+        during invite acceptance.
+        Requires active org membership (owner/admin/member/viewer) or statocyst admin.
       security:
         - humanAuth: []
       parameters:
@@ -1281,6 +1311,13 @@ paths:
   /v1/org-trusts:
     post:
       summary: Create or join org trust request
+      description: |
+        Creates a new org trust edge or joins/refreshes an existing edge.
+        Caller must be owner/admin on `org_id` (or statocyst admin).
+
+        Approval semantics:
+        - Request creation marks caller side approved and sets `state=pending`.
+        - Trust becomes `active` only when both sides are approved.
       security:
         - humanAuth: []
       requestBody:
@@ -1298,11 +1335,23 @@ paths:
       responses:
         '201':
           description: Trust edge created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustMutationResponse'
         '200':
           description: Trust edge updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustMutationResponse'
   /v1/org-trusts/{id}/approve:
     post:
       summary: Approve org trust from caller side
+      description: |
+        Approves the caller side of an org trust edge.
+        Caller must be owner/admin on either side of the edge (or statocyst admin).
+        Trust becomes `active` once both sides are approved.
       security:
         - humanAuth: []
       parameters:
@@ -1314,9 +1363,17 @@ paths:
       responses:
         '200':
           description: Trust updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustResponse'
   /v1/org-trusts/{id}/block:
     post:
       summary: Block org trust
+      description: |
+        Blocks the org trust edge from caller side.
+        Caller must be owner/admin on either side of the edge (or statocyst admin).
+        Blocking sets `state=blocked` and clears both approval flags.
       security:
         - humanAuth: []
       parameters:
@@ -1328,9 +1385,17 @@ paths:
       responses:
         '200':
           description: Trust blocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustResponse'
   /v1/org-trusts/{id}:
     delete:
       summary: Revoke org trust
+      description: |
+        Revokes the org trust edge.
+        Caller must be owner/admin on either side of the edge (or statocyst admin).
+        Revoking sets `state=revoked` and clears both approval flags.
       security:
         - humanAuth: []
       parameters:
@@ -1342,11 +1407,23 @@ paths:
       responses:
         '200':
           description: Trust revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustResponse'
   /v1/agent-trusts:
     post:
       summary: Create or join agent trust request (UUIDs or agent refs)
       description: |
-        `org_id` is optional. Set it for org-scoped initiations; omit/empty for human-owned agent trusts.
+        Creates a new agent trust edge or joins/refreshes an existing edge.
+        Caller must manage the initiating agent (`agent_uuid`/`agent_id`):
+        org owner/admin for org-scoped agents, or personal owner for human-owned agents.
+        `org_id` is optional; when provided, it must match the initiating agent's org.
+
+        Approval semantics:
+        - Request creation marks caller side approved and sets `state=pending`.
+        - If caller manages both sides (or is statocyst admin), both approvals are set
+          and trust becomes immediately `active`.
       security:
         - humanAuth: []
       requestBody:
@@ -1369,11 +1446,24 @@ paths:
       responses:
         '201':
           description: Trust edge created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustMutationResponse'
         '200':
           description: Trust edge updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustMutationResponse'
   /v1/agent-trusts/{id}/approve:
     post:
       summary: Approve agent trust
+      description: |
+        Approves the caller side of an agent trust edge.
+        Caller must manage at least one side of the edge (or be statocyst admin).
+        If caller manages both sides, approval completes both sides immediately and
+        trust becomes `active`.
       security:
         - humanAuth: []
       parameters:
@@ -1385,9 +1475,17 @@ paths:
       responses:
         '200':
           description: Trust updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustResponse'
   /v1/agent-trusts/{id}/block:
     post:
       summary: Block agent trust
+      description: |
+        Blocks an agent trust edge.
+        Caller must manage at least one side of the edge (or be statocyst admin).
+        Blocking sets `state=blocked` and clears both approval flags.
       security:
         - humanAuth: []
       parameters:
@@ -1399,9 +1497,17 @@ paths:
       responses:
         '200':
           description: Trust blocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustResponse'
   /v1/agent-trusts/{id}:
     delete:
       summary: Revoke agent trust
+      description: |
+        Revokes an agent trust edge.
+        Caller must manage at least one side of the edge (or be statocyst admin).
+        Revoking sets `state=revoked` and clears both approval flags.
       security:
         - humanAuth: []
       parameters:
@@ -1413,6 +1519,10 @@ paths:
       responses:
         '200':
           description: Trust revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustResponse'
   /v1/messages/publish:
     post:
       summary: Publish message (agent runtime)
@@ -1707,3 +1817,73 @@ components:
       in: header
       name: X-Org-Access-Key
       description: Organization scoped access key secret for limited cross-org reads.
+  schemas:
+    TrustEdge:
+      type: object
+      description: |
+        Bilateral trust edge between two orgs or two agents.
+        `left_approved` and `right_approved` capture per-side approval state.
+        `state` transitions:
+        - `pending`: one side has requested/approved, awaiting opposite side
+        - `active`: both sides approved
+        - `blocked`: blocked from either side; approvals cleared
+        - `revoked`: revoked from either side; approvals cleared
+      required:
+        - edge_id
+        - edge_type
+        - left_id
+        - right_id
+        - state
+        - left_approved
+        - right_approved
+        - created_by
+        - created_at
+        - updated_at
+      properties:
+        edge_id:
+          type: string
+        edge_type:
+          type: string
+          enum: [org, agent]
+        left_id:
+          type: string
+        right_id:
+          type: string
+        state:
+          type: string
+          enum: [pending, active, blocked, revoked]
+        left_approved:
+          type: boolean
+        right_approved:
+          type: boolean
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TrustResponse:
+      type: object
+      required: [trust]
+      properties:
+        trust:
+          $ref: '#/components/schemas/TrustEdge'
+    TrustMutationResponse:
+      type: object
+      required: [trust, created]
+      properties:
+        trust:
+          $ref: '#/components/schemas/TrustEdge'
+        created:
+          type: boolean
+          description: True when edge was created in this call; false when existing edge was updated.
+    AgentTrustListResponse:
+      type: object
+      required: [agent_trusts]
+      properties:
+        agent_trusts:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrustEdge'
