@@ -1483,6 +1483,93 @@ func TestMyAgentsAndImmediateSelfBond(t *testing.T) {
 	}
 }
 
+func TestOrgMemberCanRequestAgentTrustForOwnerReview(t *testing.T) {
+	router := newTestRouter()
+	orgA := createOrg(t, router, "alice", "alice@a.test", "Org A")
+	orgB := createOrg(t, router, "bob", "bob@b.test", "Org B")
+
+	inviteID := createInvite(t, router, "alice", "alice@a.test", orgA, "charlie@c.test", "member")
+	acceptInvite(t, router, "charlie", "charlie@c.test", inviteID)
+
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	bobHumanID := currentHumanID(t, router, "bob", "bob@b.test")
+	_, agentUUIDA := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgA, "agent-a", aliceHumanID)
+	_, agentUUIDB := registerAgentWithUUID(t, router, "bob", "bob@b.test", orgB, "agent-b", bobHumanID)
+
+	requestResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agent-trusts", map[string]any{
+		"org_id":          orgA,
+		"agent_uuid":      agentUUIDA,
+		"peer_agent_uuid": agentUUIDB,
+	}, humanHeaders("charlie", "charlie@c.test"))
+	if requestResp.Code != http.StatusCreated {
+		t.Fatalf("member trust request failed: %d %s", requestResp.Code, requestResp.Body.String())
+	}
+	requestPayload := decodeJSONMap(t, requestResp.Body.Bytes())
+	requestedTrust, _ := requestPayload["trust"].(map[string]any)
+	edgeID, _ := requestedTrust["edge_id"].(string)
+	if edgeID == "" {
+		t.Fatalf("expected trust edge_id in response")
+	}
+	if requestedTrust["state"] != "pending" {
+		t.Fatalf("expected pending trust from member request, got %v", requestedTrust["state"])
+	}
+	if requestedTrust["left_approved"] != false || requestedTrust["right_approved"] != false {
+		t.Fatalf("expected no auto-approval for member request, got left=%v right=%v", requestedTrust["left_approved"], requestedTrust["right_approved"])
+	}
+
+	memberApprove := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts/"+edgeID+"/approve", nil, humanHeaders("charlie", "charlie@c.test"))
+	if memberApprove.Code != http.StatusForbidden {
+		t.Fatalf("expected member approve forbidden, got %d %s", memberApprove.Code, memberApprove.Body.String())
+	}
+
+	ownerList := doJSONRequest(t, router, http.MethodGet, "/v1/me/agent-trusts", nil, humanHeaders("alice", "alice@a.test"))
+	if ownerList.Code != http.StatusOK {
+		t.Fatalf("owner list trusts failed: %d %s", ownerList.Code, ownerList.Body.String())
+	}
+	ownerPayload := decodeJSONMap(t, ownerList.Body.Bytes())
+	ownerEdges, ok := ownerPayload["agent_trusts"].([]any)
+	if !ok {
+		t.Fatalf("expected agent_trusts array, got %T", ownerPayload["agent_trusts"])
+	}
+	ownerSeesRequest := false
+	for _, entry := range ownerEdges {
+		edge, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if edge["edge_id"] == edgeID {
+			ownerSeesRequest = true
+			break
+		}
+	}
+	if !ownerSeesRequest {
+		t.Fatalf("expected org owner to see member-submitted request edge=%s", edgeID)
+	}
+
+	ownerApprove := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts/"+edgeID+"/approve", nil, humanHeaders("alice", "alice@a.test"))
+	if ownerApprove.Code != http.StatusOK {
+		t.Fatalf("owner approve failed: %d %s", ownerApprove.Code, ownerApprove.Body.String())
+	}
+	ownerApprovePayload := decodeJSONMap(t, ownerApprove.Body.Bytes())
+	ownerApproveTrust, _ := ownerApprovePayload["trust"].(map[string]any)
+	if ownerApproveTrust["state"] != "pending" {
+		t.Fatalf("expected pending after one-side approve, got %v", ownerApproveTrust["state"])
+	}
+
+	peerApprove := doJSONRequest(t, router, http.MethodPost, "/v1/agent-trusts/"+edgeID+"/approve", nil, humanHeaders("bob", "bob@b.test"))
+	if peerApprove.Code != http.StatusOK {
+		t.Fatalf("peer owner approve failed: %d %s", peerApprove.Code, peerApprove.Body.String())
+	}
+	peerApprovePayload := decodeJSONMap(t, peerApprove.Body.Bytes())
+	peerApproveTrust, _ := peerApprovePayload["trust"].(map[string]any)
+	if peerApproveTrust["state"] != "active" {
+		t.Fatalf("expected active after second-side approve, got %v", peerApproveTrust["state"])
+	}
+	if peerApproveTrust["left_approved"] != true || peerApproveTrust["right_approved"] != true {
+		t.Fatalf("expected bilateral approvals true after second-side approve, got left=%v right=%v", peerApproveTrust["left_approved"], peerApproveTrust["right_approved"])
+	}
+}
+
 func TestMyAgentBindTokenRedeemUsesRequestedHandle(t *testing.T) {
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")

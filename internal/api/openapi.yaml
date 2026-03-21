@@ -587,12 +587,16 @@ paths:
       summary: Create or join an agent trust request (UUIDs or agent refs)
       description: |
         Creates a new agent trust edge or joins/refreshes an existing edge.
-        Caller must manage the initiating agent (`agent_uuid`/`agent_id`):
-        org owner/admin for org-scoped agents, or personal owner for human-owned agents.
+        Caller must be allowed to request trust for the initiating agent (`agent_uuid`/`agent_id`):
+        - org member for org-scoped agents (owner/admin/member), or
+        - personal owner for human-owned agents.
         `org_id` is optional; when provided, it must match the initiating agent's org.
 
         Approval semantics:
-        - Request creation marks caller side approved and sets `state=pending`.
+        - If caller can manage the initiating agent (org owner/admin or personal owner),
+          request creation marks caller side approved and sets `state=pending`.
+        - If caller is org member without manage rights, request creation does not
+          auto-approve either side and remains `state=pending`.
         - If caller manages both sides (or is statocyst admin), both approvals are set
           and trust becomes immediately `active`.
       security:
@@ -1416,12 +1420,16 @@ paths:
       summary: Create or join agent trust request (UUIDs or agent refs)
       description: |
         Creates a new agent trust edge or joins/refreshes an existing edge.
-        Caller must manage the initiating agent (`agent_uuid`/`agent_id`):
-        org owner/admin for org-scoped agents, or personal owner for human-owned agents.
+        Caller must be allowed to request trust for the initiating agent (`agent_uuid`/`agent_id`):
+        - org member for org-scoped agents (owner/admin/member), or
+        - personal owner for human-owned agents.
         `org_id` is optional; when provided, it must match the initiating agent's org.
 
         Approval semantics:
-        - Request creation marks caller side approved and sets `state=pending`.
+        - If caller can manage the initiating agent (org owner/admin or personal owner),
+          request creation marks caller side approved and sets `state=pending`.
+        - If caller is org member without manage rights, request creation does not
+          auto-approve either side and remains `state=pending`.
         - If caller manages both sides (or is statocyst admin), both approvals are set
           and trust becomes immediately `active`.
       security:

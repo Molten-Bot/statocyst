@@ -620,7 +620,7 @@ func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 			return
 		}
-		h.handleAgentTrustCreate(w, actor, req, "owner required for initiating agent")
+		h.handleAgentTrustCreate(w, actor, req, "org membership or personal owner required for initiating agent")
 		return
 	default:
 		writeMethodNotAllowed(w)
@@ -2842,7 +2842,7 @@ func (h *Handler) handleAgentTrusts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 		return
 	}
-	h.handleAgentTrustCreate(w, actor, req, "owner required in org")
+	h.handleAgentTrustCreate(w, actor, req, "org membership or personal owner required for initiating agent")
 }
 
 func (h *Handler) handleAgentTrustByID(w http.ResponseWriter, r *http.Request) {

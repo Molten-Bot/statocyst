@@ -2212,7 +2212,7 @@ func (s *MemoryStore) CreateOrJoinAgentTrust(orgID, agentUUID, peerAgentUUID, ac
 	if orgID != "" && a.OrgID != orgID {
 		return model.TrustEdge{}, false, ErrUnauthorizedRole
 	}
-	if !isSuperAdmin && !s.canManageAgentLocked(a, actorHumanID) {
+	if !isSuperAdmin && !s.canRequestAgentTrustLocked(a, actorHumanID) {
 		return model.TrustEdge{}, false, ErrUnauthorizedRole
 	}
 	peer, ok := s.agents[peerAgentUUID]
@@ -3205,7 +3205,8 @@ func (s *MemoryStore) createOrJoinTrustLocked(edgeType, leftInput, rightInput, a
 		return model.TrustEdge{}, false, ErrAgentNotFound
 	}
 	actorSideOrg := actorSideAgent.OrgID
-	if !isSuperAdmin && !s.canManageAgentLocked(actorSideAgent, actorHumanID) {
+	actorCanApprove := isSuperAdmin || s.canManageAgentLocked(actorSideAgent, actorHumanID)
+	if !isSuperAdmin && !s.canRequestAgentTrustLocked(actorSideAgent, actorHumanID) {
 		return model.TrustEdge{}, false, ErrUnauthorizedRole
 	}
 
@@ -3213,7 +3214,7 @@ func (s *MemoryStore) createOrJoinTrustLocked(edgeType, leftInput, rightInput, a
 	if existingID, ok := s.agentTrustByPair[key]; ok {
 		edge := s.agentTrusts[existingID]
 		isLeftActor := leftInput == edge.LeftID
-		edge = applyTrustRequest(edge, isLeftActor, now)
+		edge = applyAgentTrustRequest(edge, isLeftActor, actorCanApprove, now)
 		if isSuperAdmin || (s.canManageAgentLockedByID(edge.LeftID, actorHumanID) && s.canManageAgentLockedByID(edge.RightID, actorHumanID)) {
 			edge.LeftApproved = true
 			edge.RightApproved = true
@@ -3238,7 +3239,7 @@ func (s *MemoryStore) createOrJoinTrustLocked(edgeType, leftInput, rightInput, a
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	edge = applyTrustRequest(edge, leftInput == edge.LeftID, now)
+	edge = applyAgentTrustRequest(edge, leftInput == edge.LeftID, actorCanApprove, now)
 	if isSuperAdmin || (s.canManageAgentLockedByID(edge.LeftID, actorHumanID) && s.canManageAgentLockedByID(edge.RightID, actorHumanID)) {
 		edge.LeftApproved = true
 		edge.RightApproved = true
@@ -3385,6 +3386,16 @@ func (s *MemoryStore) canManageAgentLocked(agent model.Agent, humanID string) bo
 		return true
 	}
 	return agent.OwnerHumanID != nil && *agent.OwnerHumanID == humanID
+}
+
+func (s *MemoryStore) canRequestAgentTrustLocked(agent model.Agent, humanID string) bool {
+	if s.canManageAgentLocked(agent, humanID) {
+		return true
+	}
+	if agent.OrgID == "" {
+		return false
+	}
+	return s.membershipRoleLocked(agent.OrgID, humanID) != ""
 }
 
 func (s *MemoryStore) canDeleteAgentLocked(agent model.Agent, humanID string) bool {
@@ -3587,6 +3598,28 @@ func applyTrustRequest(edge model.TrustEdge, isLeftRequester bool, now time.Time
 		edge.LeftApproved = true
 	} else {
 		edge.RightApproved = true
+	}
+	if edge.LeftApproved && edge.RightApproved {
+		edge.State = model.StatusActive
+	} else {
+		edge.State = model.StatusPending
+	}
+	edge.UpdatedAt = now
+	return edge
+}
+
+func applyAgentTrustRequest(edge model.TrustEdge, isLeftRequester, requesterCanApprove bool, now time.Time) model.TrustEdge {
+	if edge.State == model.StatusBlocked || edge.State == model.StatusRevoked {
+		edge.State = model.StatusPending
+		edge.LeftApproved = false
+		edge.RightApproved = false
+	}
+	if requesterCanApprove {
+		if isLeftRequester {
+			edge.LeftApproved = true
+		} else {
+			edge.RightApproved = true
+		}
 	}
 	if edge.LeftApproved && edge.RightApproved {
 		edge.State = model.StatusActive

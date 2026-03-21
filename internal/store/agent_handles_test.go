@@ -266,6 +266,105 @@ func TestMemoryStoreRevokeAgentPurgesTrustAndQueuedMessages(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreMemberCanRequestAgentTrustWithoutAutoApproval(t *testing.T) {
+	now := time.Date(2026, 3, 8, 0, 0, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	bob := mustCreateHuman(t, mem, ids, "bob", "bob@b.test", "bob", now)
+	charlie := mustCreateHuman(t, mem, ids, "charlie", "charlie@c.test", "charlie", now)
+
+	orgA := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+	orgB := mustCreateOrg(t, mem, ids, bob, "org-b", "Org B", now)
+
+	invite, err := mem.CreateInvite(
+		orgA.OrgID,
+		charlie.Email,
+		model.RoleMember,
+		alice.HumanID,
+		ids.mustID(t),
+		"invite-charlie-org-a",
+		now.Add(24*time.Hour),
+		now,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("create invite for charlie failed: %v", err)
+	}
+	if _, err := mem.AcceptInvite(invite.InviteID, charlie.HumanID, charlie.Email, now.Add(time.Minute), ids.next); err != nil {
+		t.Fatalf("accept invite for charlie failed: %v", err)
+	}
+
+	agentA, err := mem.RegisterAgent(orgA.OrgID, "agent-a", &alice.HumanID, "tok-agent-a", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("register agent A failed: %v", err)
+	}
+	agentB, err := mem.RegisterAgent(orgB.OrgID, "agent-b", &bob.HumanID, "tok-agent-b", bob.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("register agent B failed: %v", err)
+	}
+
+	edge, created, err := mem.CreateOrJoinAgentTrust(orgA.OrgID, agentA.AgentUUID, agentB.AgentUUID, charlie.HumanID, ids.mustID(t), now, false)
+	if err != nil {
+		t.Fatalf("member trust request failed: %v", err)
+	}
+	if !created {
+		t.Fatalf("expected trust edge to be created")
+	}
+	if edge.State != model.StatusPending {
+		t.Fatalf("expected member request state pending, got %q", edge.State)
+	}
+	if edge.LeftApproved || edge.RightApproved {
+		t.Fatalf("expected member request to avoid auto-approval, got left=%v right=%v", edge.LeftApproved, edge.RightApproved)
+	}
+
+	memberEdges := mem.ListHumanAgentTrusts(charlie.HumanID)
+	for _, candidate := range memberEdges {
+		if candidate.EdgeID == edge.EdgeID {
+			t.Fatalf("expected non-managing member not to see edge in managed trust list")
+		}
+	}
+
+	ownerEdges := mem.ListHumanAgentTrusts(alice.HumanID)
+	foundForOwner := false
+	for _, candidate := range ownerEdges {
+		if candidate.EdgeID == edge.EdgeID {
+			foundForOwner = true
+			break
+		}
+	}
+	if !foundForOwner {
+		t.Fatalf("expected org owner to see member-submitted request")
+	}
+
+	if _, err := mem.ApproveAgentTrust(edge.EdgeID, charlie.HumanID, now.Add(2*time.Minute), false); !errors.Is(err, ErrUnauthorizedRole) {
+		t.Fatalf("expected member approve to fail with ErrUnauthorizedRole, got %v", err)
+	}
+
+	afterAliceApprove, err := mem.ApproveAgentTrust(edge.EdgeID, alice.HumanID, now.Add(3*time.Minute), false)
+	if err != nil {
+		t.Fatalf("owner approve failed: %v", err)
+	}
+	if afterAliceApprove.State != model.StatusPending {
+		t.Fatalf("expected state pending after one-side approval, got %q", afterAliceApprove.State)
+	}
+	if afterAliceApprove.LeftApproved == afterAliceApprove.RightApproved {
+		t.Fatalf("expected exactly one side approved after owner approval, got left=%v right=%v", afterAliceApprove.LeftApproved, afterAliceApprove.RightApproved)
+	}
+
+	afterBobApprove, err := mem.ApproveAgentTrust(edge.EdgeID, bob.HumanID, now.Add(4*time.Minute), false)
+	if err != nil {
+		t.Fatalf("peer owner approve failed: %v", err)
+	}
+	if afterBobApprove.State != model.StatusActive {
+		t.Fatalf("expected state active after second-side approval, got %q", afterBobApprove.State)
+	}
+	if !afterBobApprove.LeftApproved || !afterBobApprove.RightApproved {
+		t.Fatalf("expected bilateral approvals after second approval, got left=%v right=%v", afterBobApprove.LeftApproved, afterBobApprove.RightApproved)
+	}
+}
+
 func TestMemoryStoreDeleteAgentAuthorizationMatrix(t *testing.T) {
 	now := time.Date(2026, 3, 8, 0, 0, 0, 0, time.UTC)
 	ids := &seqID{}
