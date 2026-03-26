@@ -887,14 +887,52 @@ func TestMemoryStoreAgentMetadataNormalizesAgentType(t *testing.T) {
 		t.Fatalf("expected metadata.public=true, got %v", got)
 	}
 
-	unknownType, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+	codexType, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
 		"public": false,
 	}, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatalf("UpdateAgentMetadataSelf without agent_type failed: %v", err)
 	}
-	if got := unknownType.Metadata[model.AgentMetadataKeyType]; got != model.AgentTypeUnknown {
-		t.Fatalf("expected missing agent_type to default to %q, got %v", model.AgentTypeUnknown, got)
+	if got := codexType.Metadata[model.AgentMetadataKeyType]; got != "codex" {
+		t.Fatalf("expected missing agent_type update to preserve existing value codex, got %v", got)
+	}
+	clearedPublic, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"public": nil,
+	}, now.Add(130*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateAgentMetadataSelf null-delete public failed: %v", err)
+	}
+	if _, ok := clearedPublic.Metadata["public"]; ok {
+		t.Fatalf("expected metadata.public to be removed via null delete, got %v", clearedPublic.Metadata["public"])
+	}
+	withActivityA, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"activities": []any{"bound to hub"},
+	}, now.Add(140*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateAgentMetadataSelf first activities append failed: %v", err)
+	}
+	withActivityB, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"activities": []any{"published first message"},
+	}, now.Add(150*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateAgentMetadataSelf second activities append failed: %v", err)
+	}
+	rawActivities, ok := withActivityB.Metadata[model.AgentMetadataKeyActivities].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected metadata.activities to be normalized []map[string]any, got %T %v", withActivityB.Metadata[model.AgentMetadataKeyActivities], withActivityB.Metadata[model.AgentMetadataKeyActivities])
+	}
+	if len(rawActivities) < 2 {
+		t.Fatalf("expected additive metadata.activities entries, got %v", rawActivities)
+	}
+	if rawActivities[0]["activity"] != "bound to hub" || rawActivities[1]["activity"] != "published first message" {
+		t.Fatalf("expected additive activity ordering preserved, got %v", rawActivities)
+	}
+	if rawActivities[0]["source"] != "agent" || rawActivities[1]["source"] != "agent" {
+		t.Fatalf("expected metadata.activities entries normalized with source=agent, got %v", rawActivities)
+	}
+	rawActivitiesA, ok := withActivityA.Metadata[model.AgentMetadataKeyActivities].([]map[string]any)
+	if !ok || len(rawActivitiesA) == 0 {
+		t.Fatalf("expected first activity append to persist, got %v", withActivityA.Metadata[model.AgentMetadataKeyActivities])
 	}
 	updatedSkills, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
 		"agent_type": "codex",

@@ -384,6 +384,7 @@ func agentOwnerPayload(agent model.Agent) map[string]any {
 }
 
 func agentResponsePayload(agent model.Agent) map[string]any {
+	metadata := agentMetadataForRender(agent.Metadata)
 	payload := map[string]any{
 		"agent_uuid":          agent.AgentUUID,
 		"agent_id":            agent.AgentID,
@@ -391,10 +392,13 @@ func agentResponsePayload(agent model.Agent) map[string]any {
 		"handle_finalized_at": agent.HandleFinalizedAt,
 		"org_id":              agent.OrgID,
 		"status":              agent.Status,
-		"metadata":            agent.Metadata,
+		"metadata":            metadata,
 		"created_by":          agent.CreatedBy,
 		"created_at":          agent.CreatedAt,
 		"revoked_at":          agent.RevokedAt,
+	}
+	if activityLog := agentSystemActivityLog(agent.Metadata); len(activityLog) > 0 {
+		payload["activity_log"] = activityLog
 	}
 	if owner := agentOwnerPayload(agent); owner != nil {
 		payload["owner"] = owner
@@ -1388,7 +1392,83 @@ func entityMetadataForRender(metadata map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(metadata))
 	for k, v := range metadata {
+		if k == model.AgentMetadataKeySystemActivityLog {
+			continue
+		}
 		out[k] = v
+	}
+	return out
+}
+
+func agentMetadataForRender(metadata map[string]any) map[string]any {
+	return entityMetadataForRender(metadata)
+}
+
+func agentSystemActivityLog(metadata map[string]any) []map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+	raw, ok := metadata[model.AgentMetadataKeySystemActivityLog]
+	if !ok {
+		return nil
+	}
+
+	out := []map[string]any{}
+	appendEntry := func(entry map[string]any) {
+		if entry == nil {
+			return
+		}
+		activity := metadataStringAliasValue(entry, "activity", "text", "title")
+		if activity == "" {
+			return
+		}
+		row := map[string]any{
+			"activity": activity,
+			"source":   "system",
+		}
+		if at := metadataStringAliasValue(entry, "at", "timestamp"); at != "" {
+			row["at"] = at
+		}
+		if category := metadataStringAliasValue(entry, "category"); category != "" {
+			row["category"] = category
+		}
+		if action := metadataStringAliasValue(entry, "action"); action != "" {
+			row["action"] = action
+		}
+		if eventID := metadataStringAliasValue(entry, "event_id"); eventID != "" {
+			row["event_id"] = eventID
+		}
+		if subjectID := metadataStringAliasValue(entry, "subject_id"); subjectID != "" {
+			row["subject_id"] = subjectID
+		}
+		out = append(out, row)
+	}
+
+	switch typed := raw.(type) {
+	case []map[string]any:
+		for _, entry := range typed {
+			appendEntry(entry)
+		}
+	case []any:
+		for _, value := range typed {
+			switch entry := value.(type) {
+			case map[string]any:
+				appendEntry(entry)
+			case string:
+				text := strings.TrimSpace(entry)
+				if text == "" {
+					continue
+				}
+				out = append(out, map[string]any{
+					"activity": text,
+					"source":   "system",
+				})
+			}
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

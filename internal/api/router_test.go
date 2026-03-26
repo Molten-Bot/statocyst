@@ -3064,6 +3064,181 @@ func TestAgentMeMetadataUpdateEndpoint(t *testing.T) {
 	}
 }
 
+func TestAgentMeMetadataPatchMergesAndNullDeletes(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+	headers := map[string]string{"Authorization": "Bearer " + tokenA}
+
+	firstPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"public":           false,
+			"profile_markdown": "# About\nFirst version",
+			"llm":              "openai/gpt-5.4@2026-03-01",
+		},
+	}, headers)
+	if firstPatch.Code != http.StatusOK {
+		t.Fatalf("expected first metadata patch 200, got %d %s", firstPatch.Code, firstPatch.Body.String())
+	}
+
+	secondPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"profile_markdown": "# About\nSecond version",
+		},
+	}, headers)
+	if secondPatch.Code != http.StatusOK {
+		t.Fatalf("expected second metadata patch 200, got %d %s", secondPatch.Code, secondPatch.Body.String())
+	}
+	secondPayload := decodeJSONMap(t, secondPatch.Body.Bytes())
+	secondResult := requireAgentRuntimeSuccessEnvelope(t, secondPayload)
+	secondAgent, _ := secondResult["agent"].(map[string]any)
+	secondMetadata, _ := secondAgent["metadata"].(map[string]any)
+	if got, _ := secondMetadata["profile_markdown"].(string); got != "# About\nSecond version" {
+		t.Fatalf("expected profile_markdown merge update, got %q metadata=%v", got, secondMetadata)
+	}
+	if got, _ := secondMetadata["llm"].(string); got != "openai/gpt-5.4@2026-03-01" {
+		t.Fatalf("expected llm to be preserved by merge patch, got %q metadata=%v", got, secondMetadata)
+	}
+	if got, ok := secondMetadata["public"].(bool); !ok || got {
+		t.Fatalf("expected public=false preserved by merge patch, got %v metadata=%v", secondMetadata["public"], secondMetadata)
+	}
+
+	thirdPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"llm": nil,
+		},
+	}, headers)
+	if thirdPatch.Code != http.StatusOK {
+		t.Fatalf("expected null-delete metadata patch 200, got %d %s", thirdPatch.Code, thirdPatch.Body.String())
+	}
+	thirdPayload := decodeJSONMap(t, thirdPatch.Body.Bytes())
+	thirdResult := requireAgentRuntimeSuccessEnvelope(t, thirdPayload)
+	thirdAgent, _ := thirdResult["agent"].(map[string]any)
+	thirdMetadata, _ := thirdAgent["metadata"].(map[string]any)
+	if _, exists := thirdMetadata["llm"]; exists {
+		t.Fatalf("expected metadata.llm removed by null delete, got %v", thirdMetadata["llm"])
+	}
+	if got, _ := thirdMetadata["profile_markdown"].(string); got != "# About\nSecond version" {
+		t.Fatalf("expected profile_markdown to remain after llm delete, got %q metadata=%v", got, thirdMetadata)
+	}
+}
+
+func TestAgentSystemActivityLogIsAppendOnlyAndReadOnly(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+	headersA := map[string]string{"Authorization": "Bearer " + tokenA}
+	headersB := map[string]string{"Authorization": "Bearer " + tokenB}
+
+	forgedPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"_system_activity_log": []map[string]any{
+				{"activity": "forged activity should not persist", "source": "system"},
+			},
+			"activities": []any{"agent-authored note"},
+		},
+	}, headersA)
+	if forgedPatch.Code != http.StatusOK {
+		t.Fatalf("expected metadata patch with forged system activity to succeed safely, got %d %s", forgedPatch.Code, forgedPatch.Body.String())
+	}
+	forgedPayload := decodeJSONMap(t, forgedPatch.Body.Bytes())
+	forgedResult := requireAgentRuntimeSuccessEnvelope(t, forgedPayload)
+	forgedAgent, _ := forgedResult["agent"].(map[string]any)
+	forgedMetadata, _ := forgedAgent["metadata"].(map[string]any)
+	if _, exists := forgedMetadata[model.AgentMetadataKeySystemActivityLog]; exists {
+		t.Fatalf("expected internal system activity key to be hidden from metadata response, got %v", forgedMetadata[model.AgentMetadataKeySystemActivityLog])
+	}
+
+	hasSystemActivity := func(log []any, target string) bool {
+		target = strings.TrimSpace(target)
+		for _, raw := range log {
+			row, _ := raw.(map[string]any)
+			if row == nil {
+				continue
+			}
+			activity, _ := row["activity"].(string)
+			if strings.TrimSpace(activity) != target {
+				continue
+			}
+			source, _ := row["source"].(string)
+			if source == "system" {
+				return true
+			}
+		}
+		return false
+	}
+	hasActivityText := func(log []any, target string) bool {
+		target = strings.TrimSpace(target)
+		for _, raw := range log {
+			row, _ := raw.(map[string]any)
+			if row == nil {
+				continue
+			}
+			activity, _ := row["activity"].(string)
+			if strings.TrimSpace(activity) == target {
+				return true
+			}
+		}
+		return false
+	}
+
+	readA := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, headersA)
+	if readA.Code != http.StatusOK {
+		t.Fatalf("expected initial GET /v1/agents/me 200, got %d %s", readA.Code, readA.Body.String())
+	}
+	readAPayload := decodeJSONMap(t, readA.Body.Bytes())
+	readAResult := requireAgentRuntimeSuccessEnvelope(t, readAPayload)
+	readAAgent, _ := readAResult["agent"].(map[string]any)
+	readALog, _ := readAAgent["activity_log"].([]any)
+	if hasActivityText(readALog, "forged activity should not persist") {
+		t.Fatalf("expected forged system activity to be ignored, got activity_log=%v", readALog)
+	}
+
+	pub := publish(t, router, tokenA, agentUUIDB, "activity-log-message")
+	if pub.Code != http.StatusAccepted {
+		t.Fatalf("publish failed: %d %s", pub.Code, pub.Body.String())
+	}
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("pull failed: %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
+	delivery, _ := pullResult["delivery"].(map[string]any)
+	deliveryID, _ := delivery["delivery_id"].(string)
+	if strings.TrimSpace(deliveryID) == "" {
+		t.Fatalf("expected pull delivery_id, got %v", pullResult)
+	}
+
+	ackResp := ackDelivery(t, router, tokenB, deliveryID)
+	if ackResp.Code != http.StatusOK {
+		t.Fatalf("ack failed: %d %s", ackResp.Code, ackResp.Body.String())
+	}
+
+	readAAfter := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, headersA)
+	if readAAfter.Code != http.StatusOK {
+		t.Fatalf("expected GET /v1/agents/me for sender 200, got %d %s", readAAfter.Code, readAAfter.Body.String())
+	}
+	readAAfterPayload := decodeJSONMap(t, readAAfter.Body.Bytes())
+	readAAfterResult := requireAgentRuntimeSuccessEnvelope(t, readAAfterPayload)
+	readAAfterAgent, _ := readAAfterResult["agent"].(map[string]any)
+	readAAfterLog, _ := readAAfterAgent["activity_log"].([]any)
+	if !hasSystemActivity(readAAfterLog, "sent message") {
+		t.Fatalf("expected sender activity_log to include system 'sent message' entry, got %v", readAAfterLog)
+	}
+
+	readBAfter := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, headersB)
+	if readBAfter.Code != http.StatusOK {
+		t.Fatalf("expected GET /v1/agents/me for receiver 200, got %d %s", readBAfter.Code, readBAfter.Body.String())
+	}
+	readBAfterPayload := decodeJSONMap(t, readBAfter.Body.Bytes())
+	readBAfterResult := requireAgentRuntimeSuccessEnvelope(t, readBAfterPayload)
+	readBAfterAgent, _ := readBAfterResult["agent"].(map[string]any)
+	readBAfterLog, _ := readBAfterAgent["activity_log"].([]any)
+	if !hasSystemActivity(readBAfterLog, "received message") {
+		t.Fatalf("expected receiver activity_log to include system 'received message' entry, got %v", readBAfterLog)
+	}
+}
+
 func TestAgentMeMetadataRejectsInvalidAgentType(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)

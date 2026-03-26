@@ -59,6 +59,10 @@ var (
 	ErrRemoteAgentTrustNotFound = errors.New("remote agent trust not found")
 )
 
+const (
+	maxAgentActivityEntries = 512
+)
+
 type MemoryStore struct {
 	mu sync.RWMutex
 
@@ -1461,7 +1465,7 @@ func (s *MemoryStore) UpdateAgentMetadata(agentUUID string, metadata map[string]
 	if !isSuperAdmin && !s.canManageAgentLocked(agent, actorHumanID) {
 		return model.Agent{}, ErrUnauthorizedRole
 	}
-	normalizedMetadata, err := validateAndNormalizeAgentMetadata(metadata)
+	normalizedMetadata, err := mergeAndNormalizeAgentMetadata(agent.Metadata, metadata, now)
 	if err != nil {
 		return model.Agent{}, err
 	}
@@ -1481,7 +1485,7 @@ func (s *MemoryStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[str
 	if !ok || agent.Status == model.StatusRevoked {
 		return model.Agent{}, ErrAgentNotFound
 	}
-	normalizedMetadata, err := validateAndNormalizeAgentMetadata(metadata)
+	normalizedMetadata, err := mergeAndNormalizeAgentMetadata(agent.Metadata, metadata, now)
 	if err != nil {
 		return model.Agent{}, err
 	}
@@ -1603,6 +1607,223 @@ func copyMetadata(metadata map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func mergeAndNormalizeAgentMetadata(current, patch map[string]any, now time.Time) (map[string]any, error) {
+	merged := mergeMetadataMaps(current, patch)
+	if rawActivities, hasActivitiesUpdate := patch[model.AgentMetadataKeyActivities]; hasActivitiesUpdate {
+		activities := mergeAgentCustomActivities(current[model.AgentMetadataKeyActivities], rawActivities, now)
+		if len(activities) == 0 {
+			delete(merged, model.AgentMetadataKeyActivities)
+		} else {
+			merged[model.AgentMetadataKeyActivities] = activities
+		}
+	}
+	normalized, err := validateAndNormalizeAgentMetadata(merged)
+	if err != nil {
+		return nil, err
+	}
+	if existingLog := parseActivityEntries(current[model.AgentMetadataKeySystemActivityLog]); len(existingLog) > 0 {
+		normalized[model.AgentMetadataKeySystemActivityLog] = dedupeAndTrimActivityEntries(existingLog, maxAgentActivityEntries)
+	}
+	return normalized, nil
+}
+
+func mergeMetadataMaps(current, patch map[string]any) map[string]any {
+	merged := copyMetadata(current)
+	for key, value := range patch {
+		if key == model.AgentMetadataKeySystemActivityLog {
+			continue
+		}
+		if value == nil {
+			delete(merged, key)
+			continue
+		}
+		patchMap, isPatchMap := value.(map[string]any)
+		if !isPatchMap {
+			merged[key] = value
+			continue
+		}
+		existingMap, _ := merged[key].(map[string]any)
+		merged[key] = mergeMetadataMaps(existingMap, patchMap)
+	}
+	return merged
+}
+
+func mergeAgentCustomActivities(existingRaw, incomingRaw any, now time.Time) []map[string]any {
+	existing := parseActivityEntries(existingRaw)
+	incoming := normalizeIncomingAgentActivities(incomingRaw, now)
+	if len(existing) == 0 && len(incoming) == 0 {
+		return nil
+	}
+	merged := make([]map[string]any, 0, len(existing)+len(incoming))
+	merged = append(merged, existing...)
+	merged = append(merged, incoming...)
+	return dedupeAndTrimActivityEntries(merged, maxAgentActivityEntries)
+}
+
+func parseActivityEntries(raw any) []map[string]any {
+	out := []map[string]any{}
+	appendText := func(text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		out = append(out, map[string]any{
+			"activity": text,
+		})
+	}
+	appendObject := func(obj map[string]any) {
+		entry, ok := parseActivityEntryObject(obj)
+		if !ok {
+			return
+		}
+		out = append(out, entry)
+	}
+	switch typed := raw.(type) {
+	case nil:
+		return nil
+	case []map[string]any:
+		for _, item := range typed {
+			appendObject(item)
+		}
+	case []string:
+		for _, item := range typed {
+			appendText(item)
+		}
+	case []any:
+		for _, item := range typed {
+			switch entry := item.(type) {
+			case string:
+				appendText(entry)
+			case map[string]any:
+				appendObject(entry)
+			}
+		}
+	case string:
+		appendText(typed)
+	case map[string]any:
+		appendObject(typed)
+	}
+	return out
+}
+
+func parseActivityEntryObject(raw map[string]any) (map[string]any, bool) {
+	entry := copyMetadata(raw)
+	activity := stringValue(entry["activity"])
+	if activity == "" {
+		activity = stringValue(entry["text"])
+	}
+	if activity == "" {
+		activity = stringValue(entry["title"])
+	}
+	if activity == "" {
+		return nil, false
+	}
+	entry["activity"] = activity
+
+	at := stringValue(entry["at"])
+	if at == "" {
+		at = stringValue(entry["timestamp"])
+	}
+	if at == "" {
+		delete(entry, "at")
+	} else {
+		entry["at"] = at
+	}
+	delete(entry, "timestamp")
+
+	source := stringValue(entry["source"])
+	if source == "" {
+		delete(entry, "source")
+	} else {
+		entry["source"] = source
+	}
+	return entry, true
+}
+
+func normalizeIncomingAgentActivities(raw any, now time.Time) []map[string]any {
+	parsed := parseActivityEntries(raw)
+	if len(parsed) == 0 {
+		return nil
+	}
+	defaultAt := now.UTC().Format(time.RFC3339)
+	out := make([]map[string]any, 0, len(parsed))
+	for _, item := range parsed {
+		activity := stringValue(item["activity"])
+		if activity == "" {
+			continue
+		}
+		at := stringValue(item["at"])
+		if at == "" {
+			at = defaultAt
+		}
+		out = append(out, map[string]any{
+			"activity": activity,
+			"at":       at,
+			"source":   "agent",
+		})
+	}
+	return dedupeAndTrimActivityEntries(out, maxAgentActivityEntries)
+}
+
+func dedupeAndTrimActivityEntries(entries []map[string]any, limit int) []map[string]any {
+	if len(entries) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]map[string]any, 0, len(entries))
+	for _, raw := range entries {
+		if raw == nil {
+			continue
+		}
+		entry := copyMetadata(raw)
+		activity := stringValue(entry["activity"])
+		if activity == "" {
+			continue
+		}
+		entry["activity"] = activity
+
+		at := stringValue(entry["at"])
+		if at == "" {
+			delete(entry, "at")
+		} else {
+			entry["at"] = at
+		}
+
+		source := stringValue(entry["source"])
+		if source == "" {
+			delete(entry, "source")
+		} else {
+			entry["source"] = source
+		}
+
+		key := activityEntryDedupeKey(entry)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, entry)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out
+}
+
+func activityEntryDedupeKey(entry map[string]any) string {
+	if eventID := stringValue(entry["event_id"]); eventID != "" {
+		return "event:" + eventID
+	}
+	return strings.ToLower(stringValue(entry["source"])) + "|" + stringValue(entry["activity"]) + "|" + stringValue(entry["at"])
+}
+
+func stringValue(value any) string {
+	asString, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(asString)
 }
 
 func defaultAgentMetadata() map[string]any {
@@ -3488,7 +3709,7 @@ func (s *MemoryStore) resolveAgentRefLocked(agentRef string) (string, error) {
 func (s *MemoryStore) appendAuditLocked(orgID, actorHumanID, category, action, subjectID string, details map[string]any, now time.Time) {
 	events := s.auditByOrg[orgID]
 	eventID := fmt.Sprintf("%d-%d", now.UnixNano(), len(events)+1)
-	events = append(events, model.AuditEvent{
+	event := model.AuditEvent{
 		EventID:    eventID,
 		OrgID:      orgID,
 		ActorHuman: actorHumanID,
@@ -3497,11 +3718,155 @@ func (s *MemoryStore) appendAuditLocked(orgID, actorHumanID, category, action, s
 		SubjectID:  subjectID,
 		Details:    details,
 		CreatedAt:  now,
-	})
+	}
+	events = append(events, event)
 	if len(events) > 200 {
 		events = events[len(events)-200:]
 	}
 	s.auditByOrg[orgID] = events
+	s.appendSystemActivityFromAuditLocked(event)
+}
+
+func (s *MemoryStore) appendSystemActivityFromAuditLocked(event model.AuditEvent) {
+	targets := s.activityTargetsFromAuditEventLocked(event)
+	if len(targets) == 0 {
+		return
+	}
+	activity := auditActivityLabel(event)
+	if strings.TrimSpace(activity) == "" {
+		return
+	}
+	for _, agentUUID := range targets {
+		s.appendSystemActivityToAgentLocked(agentUUID, event, activity)
+	}
+}
+
+func (s *MemoryStore) appendSystemActivityToAgentLocked(agentUUID string, event model.AuditEvent, activity string) {
+	agent, ok := s.agents[agentUUID]
+	if !ok {
+		return
+	}
+	metadata := copyMetadata(agent.Metadata)
+	systemLog := parseActivityEntries(metadata[model.AgentMetadataKeySystemActivityLog])
+	entry := map[string]any{
+		"activity":   strings.TrimSpace(activity),
+		"source":     "system",
+		"at":         event.CreatedAt.UTC().Format(time.RFC3339),
+		"event_id":   event.EventID,
+		"category":   event.Category,
+		"action":     event.Action,
+		"subject_id": event.SubjectID,
+	}
+	systemLog = append(systemLog, entry)
+	systemLog = dedupeAndTrimActivityEntries(systemLog, maxAgentActivityEntries)
+	if len(systemLog) == 0 {
+		delete(metadata, model.AgentMetadataKeySystemActivityLog)
+	} else {
+		metadata[model.AgentMetadataKeySystemActivityLog] = systemLog
+	}
+	agent.Metadata = metadata
+	s.agents[agentUUID] = agent
+}
+
+func (s *MemoryStore) activityTargetsFromAuditEventLocked(event model.AuditEvent) []string {
+	targets := map[string]struct{}{}
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		if _, ok := s.agents[candidate]; !ok {
+			return
+		}
+		targets[candidate] = struct{}{}
+	}
+
+	switch event.Category {
+	case "agent":
+		add(event.SubjectID)
+		add(auditEventDetailString(event.Details, "agent_uuid"))
+	case "agent_bind":
+		add(auditEventDetailString(event.Details, "agent_uuid"))
+	case "message":
+		fromAgent := auditEventDetailString(event.Details, "from_agent_uuid")
+		toAgent := auditEventDetailString(event.Details, "to_agent_uuid")
+		switch event.Action {
+		case "publish", "publish_replay", "forward", "publish_abort":
+			add(fromAgent)
+		case "lease", "ack", "nack", "lease_expire":
+			add(toAgent)
+		default:
+			add(fromAgent)
+			add(toAgent)
+		}
+	case "trust_agent":
+		add(auditEventDetailString(event.Details, "agent_uuid"))
+		add(auditEventDetailString(event.Details, "peer_agent_uuid"))
+	default:
+		add(auditEventDetailString(event.Details, "agent_uuid"))
+		add(auditEventDetailString(event.Details, "from_agent_uuid"))
+		add(auditEventDetailString(event.Details, "to_agent_uuid"))
+	}
+
+	ids := make([]string, 0, len(targets))
+	for agentUUID := range targets {
+		ids = append(ids, agentUUID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func auditEventDetailString(details map[string]any, key string) string {
+	if len(details) == 0 {
+		return ""
+	}
+	value, ok := details[key]
+	if !ok {
+		return ""
+	}
+	return stringValue(value)
+}
+
+func auditActivityLabel(event model.AuditEvent) string {
+	switch event.Category {
+	case "agent":
+		switch event.Action {
+		case "register":
+			return "bound to hub"
+		case "set_metadata", "set_metadata_self":
+			return "updated profile"
+		case "finalize_handle_self":
+			return "finalized handle"
+		case "rotate_token":
+			return "rotated auth token"
+		case "revoke", "delete":
+			return "deactivated profile"
+		}
+	case "agent_bind":
+		if event.Action == "redeem" {
+			return "completed bind"
+		}
+	case "message":
+		switch event.Action {
+		case "publish", "publish_replay", "forward":
+			return "sent message"
+		case "lease", "ack":
+			return "received message"
+		case "nack", "lease_expire":
+			return "message delivery retry"
+		case "publish_abort":
+			return "aborted message publish"
+		}
+	}
+	category := strings.TrimSpace(event.Category)
+	action := strings.TrimSpace(event.Action)
+	if category == "" {
+		return action
+	}
+	if action == "" {
+		return category
+	}
+	return category + ":" + action
 }
 
 func (s *MemoryStore) ensureOrgStatsLocked(orgID string) model.OrgStats {

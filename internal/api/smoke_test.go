@@ -273,7 +273,7 @@ func TestLaunchSmoke(t *testing.T) {
 		})
 	})
 
-	t.Run("Alice creates a bind token and the agent clears profile metadata", func(t *testing.T) {
+	t.Run("Alice creates a bind token and the agent clears selected profile metadata keys", func(t *testing.T) {
 		router := newTestRouter()
 		token := createBoundAgentForSmoke(t, router, "Launch Agents", "launch-agent-a")
 		patchAgentMetadata(t, router, token, map[string]any{
@@ -281,7 +281,10 @@ func TestLaunchSmoke(t *testing.T) {
 			"role":   "primary",
 		})
 
-		resp := patchAgentMetadata(t, router, token, map[string]any{})
+		resp := patchAgentMetadata(t, router, token, map[string]any{
+			"public": nil,
+			"role":   nil,
+		})
 		requireEntityMetadata(t, decodeJSONMap(t, resp.Body.Bytes()), "agent", map[string]any{})
 	})
 
