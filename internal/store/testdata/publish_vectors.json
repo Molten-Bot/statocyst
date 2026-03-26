@@ -17,6 +17,14 @@
       "expect": "deny_no_trust_path"
     },
     {
+      "name": "cross_org_agent_only_denied",
+      "same_org": false,
+      "activate_org_trust": false,
+      "activate_agent_trust": true,
+      "block_org_trust": false,
+      "expect": "deny_no_trust_path"
+    },
+    {
       "name": "cross_org_org_and_agent_allow",
       "same_org": false,
       "activate_org_trust": true,

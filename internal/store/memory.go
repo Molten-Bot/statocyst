@@ -2729,8 +2729,10 @@ func (s *MemoryStore) CanPublish(senderAgentUUID, receiverAgentUUID string) (str
 }
 
 func (s *MemoryStore) canPublishLocked(sender, receiver model.Agent) bool {
-	if sender.OrgID != receiver.OrgID {
-		orgEdgeID, ok := s.orgTrustByPair[pairKey(sender.OrgID, receiver.OrgID)]
+	senderOrgID := strings.TrimSpace(sender.OrgID)
+	receiverOrgID := strings.TrimSpace(receiver.OrgID)
+	if senderOrgID != "" && receiverOrgID != "" && senderOrgID != receiverOrgID {
+		orgEdgeID, ok := s.orgTrustByPair[pairKey(senderOrgID, receiverOrgID)]
 		if !ok {
 			return false
 		}

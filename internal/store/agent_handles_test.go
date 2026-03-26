@@ -365,6 +365,39 @@ func TestMemoryStoreMemberCanRequestAgentTrustWithoutAutoApproval(t *testing.T) 
 	}
 }
 
+func TestMemoryStoreCanPublishBetweenOrgAndPersonalAgentsWithActiveAgentTrust(t *testing.T) {
+	now := time.Date(2026, 3, 8, 0, 0, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	org := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+
+	orgAgent, err := mem.RegisterAgent(org.OrgID, "org-agent", &alice.HumanID, "tok-org-agent", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("register org agent failed: %v", err)
+	}
+	personalAgent, err := mem.RegisterAgent("", "personal-agent", &alice.HumanID, "tok-personal-agent", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("register personal agent failed: %v", err)
+	}
+
+	edge, _, err := mem.CreateOrJoinAgentTrust(org.OrgID, orgAgent.AgentUUID, personalAgent.AgentUUID, alice.HumanID, ids.mustID(t), now.Add(time.Minute), false)
+	if err != nil {
+		t.Fatalf("create org->personal agent trust failed: %v", err)
+	}
+	if edge.State != model.StatusActive {
+		t.Fatalf("expected org->personal trust to be active, got %q", edge.State)
+	}
+
+	if _, _, err := mem.CanPublish(orgAgent.AgentUUID, personalAgent.AgentUUID); err != nil {
+		t.Fatalf("expected org->personal publish to be allowed, got %v", err)
+	}
+	if _, _, err := mem.CanPublish(personalAgent.AgentUUID, orgAgent.AgentUUID); err != nil {
+		t.Fatalf("expected personal->org publish to be allowed, got %v", err)
+	}
+}
+
 func TestMemoryStoreDeleteAgentAuthorizationMatrix(t *testing.T) {
 	now := time.Date(2026, 3, 8, 0, 0, 0, 0, time.UTC)
 	ids := &seqID{}
