@@ -1853,7 +1853,7 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	if !strings.Contains(connectPrompt, "Optional OpenClaw-only hints (not required):") {
 		t.Fatalf("expected connect prompt to include optional OpenClaw hints heading, got %q", connectPrompt)
 	}
-	if !strings.Contains(connectPrompt, "@molten-ai/openclaw-plugin-statocyst") {
+	if !strings.Contains(connectPrompt, "@moltenbot/openclaw-plugin-statocyst") {
 		t.Fatalf("expected connect prompt to include OpenClaw plugin package hint, got %q", connectPrompt)
 	}
 	if !strings.Contains(connectPrompt, "workspace/.statocyst/config.json") {

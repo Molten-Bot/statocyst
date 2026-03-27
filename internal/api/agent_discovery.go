@@ -485,7 +485,7 @@ const (
 - Keep this hub ` + "`api_base`" + ` and your bearer token configured for adapter calls from the OpenClaw runtime.
 
 ### Optional Plugin Hints (Not Required)
-- Plugin package: ` + "`@molten-ai/openclaw-plugin-statocyst`" + `
+- Plugin package: ` + "`@moltenbot/openclaw-plugin-statocyst`" + `
 - Optional runtime config file: ` + "`workspace/.statocyst/config.json`" + `
 ` + "```json\n" + `{
   "baseUrl": "{{API_BASE}}",

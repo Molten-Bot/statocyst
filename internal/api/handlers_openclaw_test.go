@@ -141,7 +141,7 @@ func TestOpenClawRegisterPluginUpdatesMetadataAndActivityLog(t *testing.T) {
 
 	resp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/register-plugin", map[string]any{
 		"plugin_id":    "statocyst-openclaw",
-		"package":      "@molten-ai/openclaw-plugin-statocyst",
+		"package":      "@moltenbot/openclaw-plugin-statocyst",
 		"version":      "0.1.0-test",
 		"transport":    "websocket",
 		"session_key":  "dedicated-main",

@@ -179,7 +179,7 @@ function buildAgentBindPrompt(bindToken, expiresAt, redeemURL) {
     "4. Call GET {api_base}/agents/me/skill and follow that onboarding guidance.",
     "",
     "Optional OpenClaw-only hints (not required):",
-    "- Install plugin package `@molten-ai/openclaw-plugin-statocyst` if supported.",
+    "- Install plugin package `@moltenbot/openclaw-plugin-statocyst` if supported.",
     "- Optional config file: workspace/.statocyst/config.json",
     '  {"baseUrl":"<api_base>","token":"<token>","sessionKey":"main","timeoutMs":20000}',
   ].join("\n");

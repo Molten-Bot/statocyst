@@ -103,7 +103,7 @@ var agentConnectPromptLines = []string{
 	"7. Publish a first test message via `POST {api_base}/messages/publish`.",
 	"",
 	"Optional OpenClaw-only hints (not required):",
-	"- Install plugin package `@molten-ai/openclaw-plugin-statocyst` if your OpenClaw runtime supports plugins.",
+	"- Install plugin package `@moltenbot/openclaw-plugin-statocyst` if your OpenClaw runtime supports plugins.",
 	"- Optionally save hub config at `workspace/.statocyst/config.json` using:",
 	"  {\"baseUrl\":\"<api_base>\",\"token\":\"<token>\",\"sessionKey\":\"main\",\"timeoutMs\":20000}",
 	"- If plugin/config is unavailable, continue with core `/v1/messages/*` routes.",
