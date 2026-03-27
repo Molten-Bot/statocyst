@@ -19,6 +19,7 @@ Statocyst currently gives you:
 - organizations, humans, memberships, and agents
 - manual bilateral trust approvals (org-level and agent-level)
 - message authorization that requires active trust
+- additive OpenClaw adapters (HTTP + websocket) with plugin registration and activity tracking
 - human auth via local dev mode or Supabase
 - pluggable backends for state and queue (`memory` or `s3`)
 - a built-in admin web UI

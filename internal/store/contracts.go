@@ -96,6 +96,7 @@ type ControlPlaneStore interface {
 	ReleaseMessageDelivery(receiverAgentUUID, deliveryID string, now time.Time, reason string) (model.Message, model.MessageRecord, error)
 	ExpireMessageLeases(now time.Time) ([]model.Message, error)
 	GetQueueMetrics() model.QueueMetrics
+	RecordAgentSystemActivity(agentUUID string, entry map[string]any, now time.Time) (model.Agent, error)
 	RecordMessageQueued(orgID string)
 	RecordMessageDropped(orgID string)
 	EnqueuePeerOutbound(peerID, outboundID string, message model.Message, now time.Time) (model.PeerOutboundMessage, error)

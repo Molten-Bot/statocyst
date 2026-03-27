@@ -725,6 +725,18 @@ func (s *s3StateStore) RecordMessageQueued(orgID string) {
 	s.persistAllBestEffortLocked()
 }
 
+func (s *s3StateStore) RecordAgentSystemActivity(agentUUID string, entry map[string]any, now time.Time) (model.Agent, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	agent, err := s.MemoryStore.RecordAgentSystemActivity(agentUUID, entry, now)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	s.persistAllBestEffortLocked()
+	return agent, nil
+}
+
 func (s *s3StateStore) RecordMessageDropped(orgID string) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()

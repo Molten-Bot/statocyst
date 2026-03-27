@@ -1767,6 +1767,33 @@ func normalizeIncomingAgentActivities(raw any, now time.Time) []map[string]any {
 	return dedupeAndTrimActivityEntries(out, maxAgentActivityEntries)
 }
 
+func normalizeSystemAgentActivityEntry(entry map[string]any, now time.Time) map[string]any {
+	if len(entry) == 0 {
+		return nil
+	}
+	parsed, ok := parseActivityEntryObject(entry)
+	if !ok {
+		return nil
+	}
+	parsed["source"] = "system"
+	if at := stringValue(parsed["at"]); at == "" {
+		parsed["at"] = now.UTC().Format(time.RFC3339)
+	}
+	if category := stringValue(parsed["category"]); category != "" {
+		parsed["category"] = category
+	}
+	if action := stringValue(parsed["action"]); action != "" {
+		parsed["action"] = action
+	}
+	if eventID := stringValue(parsed["event_id"]); eventID != "" {
+		parsed["event_id"] = eventID
+	}
+	if subjectID := stringValue(parsed["subject_id"]); subjectID != "" {
+		parsed["subject_id"] = subjectID
+	}
+	return parsed
+}
+
 func dedupeAndTrimActivityEntries(entries []map[string]any, limit int) []map[string]any {
 	if len(entries) == 0 {
 		return nil
@@ -3353,6 +3380,38 @@ func (s *MemoryStore) RecordMessageQueued(orgID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.incrementQueuedLocked(orgID, time.Now().UTC())
+}
+
+func (s *MemoryStore) RecordAgentSystemActivity(agentUUID string, entry map[string]any, now time.Time) (model.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agents[strings.TrimSpace(agentUUID)]
+	if !ok || agent.Status == model.StatusRevoked {
+		return model.Agent{}, ErrAgentNotFound
+	}
+
+	normalized := normalizeSystemAgentActivityEntry(entry, now)
+	if normalized == nil {
+		return agent, nil
+	}
+
+	metadata := copyMetadata(agent.Metadata)
+	existing := parseActivityEntries(metadata[model.AgentMetadataKeySystemActivityLog])
+	existing = append(existing, normalized)
+	metadata[model.AgentMetadataKeySystemActivityLog] = dedupeAndTrimActivityEntries(existing, maxAgentActivityEntries)
+	agent.Metadata = metadata
+	s.agents[agent.AgentUUID] = agent
+
+	if strings.TrimSpace(agent.OrgID) != "" {
+		s.appendAuditLocked(agent.OrgID, "", "agent_activity", "record", agent.AgentUUID, map[string]any{
+			"agent_id": agent.AgentID,
+			"activity": stringValue(normalized["activity"]),
+			"category": stringValue(normalized["category"]),
+			"action":   stringValue(normalized["action"]),
+		}, now)
+	}
+	return agent, nil
 }
 
 func (s *MemoryStore) RecordMessageDropped(orgID string) {

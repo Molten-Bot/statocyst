@@ -65,6 +65,9 @@ func (h *Handler) handleOpenClawPublish(w http.ResponseWriter, r *http.Request) 
 	out := cloneStringAnyMap(result)
 	out["transport"] = openClawTransportMetadata()
 	out["openclaw_message"] = envelope
+	h.recordOpenClawAdapterUsage(senderAgentUUID, "publish", map[string]any{
+		"message_id": openClawMessageIDFromResult(out),
+	})
 	writeAgentRuntimeSuccess(w, http.StatusAccepted, out)
 }
 
@@ -100,6 +103,9 @@ func (h *Handler) handleOpenClawPull(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := withOpenClawProjection(result)
+	h.recordOpenClawAdapterUsage(receiverAgentUUID, "pull", map[string]any{
+		"message_id": openClawMessageIDFromResult(out),
+	})
 	writeAgentRuntimeSuccess(w, status, out)
 }
 
@@ -123,6 +129,12 @@ func (h *Handler) handleOpenClawMessageSubroutes(w http.ResponseWriter, r *http.
 		return
 	case "nack":
 		h.handleOpenClawNackDelivery(w, r)
+		return
+	case "ws":
+		h.handleOpenClawWebSocket(w, r)
+		return
+	case "register-plugin":
+		h.handleOpenClawRegisterPlugin(w, r)
 		return
 	}
 	if strings.TrimSpace(tail) == "" || strings.Contains(tail, "/") {
@@ -165,6 +177,9 @@ func (h *Handler) handleOpenClawAckDelivery(w http.ResponseWriter, r *http.Reque
 	}
 
 	result := withOpenClawProjection(messageStatusResponse(record))
+	h.recordOpenClawAdapterUsage(receiverAgentUUID, "ack", map[string]any{
+		"message_id": openClawMessageIDFromResult(result),
+	})
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
 }
 
@@ -201,6 +216,9 @@ func (h *Handler) handleOpenClawNackDelivery(w http.ResponseWriter, r *http.Requ
 	}
 
 	result := withOpenClawProjection(messageStatusResponse(record))
+	h.recordOpenClawAdapterUsage(receiverAgentUUID, "nack", map[string]any{
+		"message_id": openClawMessageIDFromResult(result),
+	})
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
 }
 
@@ -223,6 +241,9 @@ func (h *Handler) handleOpenClawMessageStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	result := withOpenClawProjection(messageStatusResponse(record))
+	h.recordOpenClawAdapterUsage(agentUUID, "status", map[string]any{
+		"message_id": openClawMessageIDFromResult(result),
+	})
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
 }
 
@@ -256,9 +277,17 @@ func withOpenClawProjection(result map[string]any) map[string]any {
 }
 
 func openClawTransportMetadata() map[string]any {
+	return openClawTransportMetadataForAdapter("http")
+}
+
+func openClawTransportMetadataForAdapter(adapter string) map[string]any {
+	adapter = strings.TrimSpace(adapter)
+	if adapter == "" {
+		adapter = "http"
+	}
 	return map[string]any{
 		"protocol": openClawHTTPProtocol,
-		"adapter":  "http",
+		"adapter":  adapter,
 	}
 }
 
