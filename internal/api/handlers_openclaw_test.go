@@ -241,6 +241,30 @@ func TestOpenClawWebSocketDeliveryAndAckFlow(t *testing.T) {
 	}
 }
 
+func TestOpenClawWebSocketUpgradeWithGzipAcceptEncoding(t *testing.T) {
+	router := newTestRouter()
+	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=gzip-header"
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+tokenB)
+	headers.Set("Accept-Encoding", "gzip")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected websocket dial with Accept-Encoding=gzip to succeed, got err=%v", err)
+	}
+	defer conn.Close()
+
+	ready := readWSMessage(t, conn, 5*time.Second)
+	if got := readStringPath(ready, "type"); got != "session_ready" {
+		t.Fatalf("expected initial ws message type=session_ready, got %q payload=%v", got, ready)
+	}
+}
+
 func readStringPath(root map[string]any, path ...string) string {
 	current := any(root)
 	for _, segment := range path {
