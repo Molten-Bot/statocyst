@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -52,6 +54,21 @@ type openClawWSRequest struct {
 	DeliveryID  string         `json:"delivery_id,omitempty"`
 	MessageID   string         `json:"message_id,omitempty"`
 	TimeoutMS   *int           `json:"timeout_ms,omitempty"`
+}
+
+// openClawWSResponseWriter bridges websocket upgrades through wrappers that may
+// not expose http.Hijacker directly, but still support hijacking via
+// http.ResponseController.
+type openClawWSResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w openClawWSResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(w.ResponseWriter).Hijack()
+}
+
+func (w openClawWSResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func (h *Handler) handleOpenClawRegisterPlugin(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +171,7 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	conn, err := openClawWSUpgrader.Upgrade(w, r, nil)
+	conn, err := openClawWSUpgrader.Upgrade(openClawWSResponseWriter{ResponseWriter: w}, r, nil)
 	if err != nil {
 		return
 	}
