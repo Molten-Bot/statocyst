@@ -265,6 +265,42 @@ func TestOpenClawWebSocketUpgradeWithGzipAcceptEncoding(t *testing.T) {
 	}
 }
 
+func TestOpenClawWebSocketUpgradeWithWrappedWriter(t *testing.T) {
+	router := newTestRouter()
+	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
+
+	wrappedRouter := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate middleware wrappers that hide Hijacker but still expose Unwrap.
+		router.ServeHTTP(openClawUnwrapOnlyResponseWriter{ResponseWriter: w}, r)
+	})
+
+	server := httptest.NewServer(wrappedRouter)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=wrapped-writer"
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+tokenB)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected websocket dial through wrapped writer to succeed, got err=%v", err)
+	}
+	defer conn.Close()
+
+	ready := readWSMessage(t, conn, 5*time.Second)
+	if got := readStringPath(ready, "type"); got != "session_ready" {
+		t.Fatalf("expected initial ws message type=session_ready, got %q payload=%v", got, ready)
+	}
+}
+
+type openClawUnwrapOnlyResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w openClawUnwrapOnlyResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func readStringPath(root map[string]any, path ...string) string {
 	current := any(root)
 	for _, segment := range path {
