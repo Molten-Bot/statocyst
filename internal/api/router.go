@@ -334,6 +334,10 @@ func withAPICompression(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if isWebSocketUpgradeRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		addVaryAcceptEncoding(w.Header())
 		if !acceptsGzip(r.Header.Get("Accept-Encoding")) || strings.EqualFold(r.Method, http.MethodHead) {
@@ -387,6 +391,24 @@ func addVaryAccessControlRequestHeaders(h http.Header) {
 		}
 	}
 	h.Add("Vary", "Access-Control-Request-Headers")
+}
+
+func isWebSocketUpgradeRequest(r *http.Request) bool {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
+		return false
+	}
+	return headerContainsToken(r.Header.Values("Connection"), "upgrade")
+}
+
+func headerContainsToken(values []string, token string) bool {
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func acceptsGzip(raw string) bool {
