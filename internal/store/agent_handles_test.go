@@ -670,6 +670,77 @@ func TestMemoryStoreHumanScopedAgentAndBindWithoutOrg(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreOrgBindTokenOwnerAssignmentRequiresAdminForOthers(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 10, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	bob := mustCreateHuman(t, mem, ids, "bob", "bob@b.test", "bob", now)
+	charlie := mustCreateHuman(t, mem, ids, "charlie", "charlie@c.test", "charlie", now)
+	org := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+
+	inviteBob, err := mem.CreateInvite(org.OrgID, bob.Email, model.RoleMember, alice.HumanID, ids.mustID(t), "invite-bob", now.Add(24*time.Hour), now, false)
+	if err != nil {
+		t.Fatalf("create bob invite failed: %v", err)
+	}
+	if _, err := mem.AcceptInvite(inviteBob.InviteID, bob.HumanID, bob.Email, now.Add(time.Minute), ids.next); err != nil {
+		t.Fatalf("accept bob invite failed: %v", err)
+	}
+
+	inviteCharlie, err := mem.CreateInvite(org.OrgID, charlie.Email, model.RoleMember, alice.HumanID, ids.mustID(t), "invite-charlie", now.Add(24*time.Hour), now, false)
+	if err != nil {
+		t.Fatalf("create charlie invite failed: %v", err)
+	}
+	if _, err := mem.AcceptInvite(inviteCharlie.InviteID, charlie.HumanID, charlie.Email, now.Add(2*time.Minute), ids.next); err != nil {
+		t.Fatalf("accept charlie invite failed: %v", err)
+	}
+
+	if _, err := mem.CreateBindToken(org.OrgID, &charlie.HumanID, bob.HumanID, ids.mustID(t), "bind-member-for-other", now.Add(time.Hour), now, false); !errors.Is(err, ErrUnauthorizedRole) {
+		t.Fatalf("expected member assigning owner_human_id for another human to fail with ErrUnauthorizedRole, got %v", err)
+	}
+	if _, err := mem.CreateBindToken(org.OrgID, &bob.HumanID, bob.HumanID, ids.mustID(t), "bind-member-self", now.Add(time.Hour), now, false); err != nil {
+		t.Fatalf("expected member self-owned bind token to succeed, got %v", err)
+	}
+	if _, err := mem.CreateBindToken(org.OrgID, &charlie.HumanID, alice.HumanID, ids.mustID(t), "bind-owner-for-other", now.Add(time.Hour), now, false); err != nil {
+		t.Fatalf("expected org owner assigning owner_human_id to another member to succeed, got %v", err)
+	}
+}
+
+func TestMemoryStoreListInvitesForHumanRequiresRecipientEmailWhenNotAdmin(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 20, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	bob := mustCreateHuman(t, mem, ids, "bob", "bob@b.test", "bob", now)
+	charlie := mustCreateHuman(t, mem, ids, "charlie", "charlie@c.test", "charlie", now)
+	org := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+
+	if _, err := mem.CreateInvite(org.OrgID, bob.Email, model.RoleMember, alice.HumanID, ids.mustID(t), "invite-bob-email", now.Add(24*time.Hour), now, false); err != nil {
+		t.Fatalf("create bob invite failed: %v", err)
+	}
+	if _, err := mem.CreateInvite(org.OrgID, charlie.Email, model.RoleViewer, alice.HumanID, ids.mustID(t), "invite-charlie-email", now.Add(24*time.Hour), now, false); err != nil {
+		t.Fatalf("create charlie invite failed: %v", err)
+	}
+
+	if invites := mem.ListInvitesForHuman(bob.HumanID, "", false); len(invites) != 0 {
+		t.Fatalf("expected empty-email non-admin invite lookup to return 0 rows, got %d rows=%v", len(invites), invites)
+	}
+
+	invitesForBob := mem.ListInvitesForHuman(bob.HumanID, bob.Email, false)
+	if len(invitesForBob) != 1 {
+		t.Fatalf("expected bob email lookup to return exactly 1 invite, got %d rows=%v", len(invitesForBob), invitesForBob)
+	}
+	if got := invitesForBob[0].Invite.Email; !strings.EqualFold(got, bob.Email) {
+		t.Fatalf("expected bob invite email %q, got %q", bob.Email, got)
+	}
+
+	if invites := mem.ListInvitesForHuman(bob.HumanID, "", true); len(invites) != 2 {
+		t.Fatalf("expected super-admin invite lookup to return all invites, got %d rows=%v", len(invites), invites)
+	}
+}
+
 func TestMemoryStoreAcceptInviteTransfersHumanScopedAgentsToOrg(t *testing.T) {
 	now := time.Date(2026, 3, 6, 1, 0, 0, 0, time.UTC)
 	ids := &seqID{}

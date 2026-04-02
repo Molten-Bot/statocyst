@@ -485,6 +485,28 @@ func TestPeerIngressRejectsTransitiveTarget(t *testing.T) {
 	}
 }
 
+func TestRemoteOrgHandleFromAgentRefRecognizesOnlyPersonalPattern(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "personal-human-agent", ref: "human/alice/agent/bot", want: "alice"},
+		{name: "org-handle-human-prefix", ref: "human/alice/bot", want: "human"},
+		{name: "org-owned-human-agent", ref: "org-a/alice/bot", want: "org-a"},
+		{name: "org-owned", ref: "org-a/bot", want: "org-a"},
+		{name: "invalid-short", ref: "solo", want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := remoteOrgHandleFromAgentRef(tc.ref); got != tc.want {
+				t.Fatalf("expected remote org handle %q for ref %q, got %q", tc.want, tc.ref, got)
+			}
+		})
+	}
+}
+
 func TestRemoteAgentTrustOwnerCanCreateAndDeleteForHumanOwnedAgent(t *testing.T) {
 	router := newTestRouter()
 	const peerID = "alpha-beta"

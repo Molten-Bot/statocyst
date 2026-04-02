@@ -630,8 +630,8 @@ func remoteOrgHandleFromAgentRef(agentRef string) string {
 	if len(parts) < 2 {
 		return ""
 	}
-	// Human-owned URIs use "human/<owner>/agent/<agent>"; namespace trust by owner handle.
-	if parts[0] == "human" {
+	// Personal URIs use "human/<owner>/agent/<agent>"; namespace trust by owner handle.
+	if len(parts) >= 4 && parts[0] == "human" && parts[2] == "agent" {
 		return normalizeHandle(parts[1])
 	}
 	return normalizeHandle(parts[0])

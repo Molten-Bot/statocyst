@@ -714,8 +714,10 @@ func (s *MemoryStore) ListInvitesForHuman(humanID, humanEmail string, isSuperAdm
 	out := make([]model.InviteWithOrg, 0)
 	now := time.Now().UTC()
 	for _, inv := range s.invites {
-		if !isSuperAdmin && email != "" && !strings.EqualFold(inv.Email, email) {
-			continue
+		if !isSuperAdmin {
+			if email == "" || !strings.EqualFold(inv.Email, email) {
+				continue
+			}
 		}
 		org, ok := s.orgs[inv.OrgID]
 		if !ok {
@@ -1139,11 +1141,17 @@ func (s *MemoryStore) CreateBindToken(orgID string, ownerHumanID *string, actorH
 		if _, ok := s.orgs[orgID]; !ok {
 			return model.BindToken{}, ErrOrgNotFound
 		}
-		if !isSuperAdmin && !hasRoleAtLeast(s.membershipRoleLocked(orgID, actorHumanID), model.RoleMember) {
+		actorRole := s.membershipRoleLocked(orgID, actorHumanID)
+		if !isSuperAdmin && !hasRoleAtLeast(actorRole, model.RoleMember) {
 			return model.BindToken{}, ErrUnauthorizedRole
 		}
-		if ownerHumanID != nil && s.membershipRoleLocked(orgID, *ownerHumanID) == "" {
-			return model.BindToken{}, ErrMembershipNotFound
+		if ownerHumanID != nil {
+			if s.membershipRoleLocked(orgID, *ownerHumanID) == "" {
+				return model.BindToken{}, ErrMembershipNotFound
+			}
+			if !isSuperAdmin && actorHumanID != *ownerHumanID && !hasRoleAtLeast(actorRole, model.RoleAdmin) {
+				return model.BindToken{}, ErrUnauthorizedRole
+			}
 		}
 	} else {
 		if ownerHumanID == nil || strings.TrimSpace(*ownerHumanID) == "" {
