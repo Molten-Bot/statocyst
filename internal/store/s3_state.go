@@ -591,6 +591,18 @@ func (s *s3StateStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[st
 	return agent, nil
 }
 
+func (s *s3StateStore) UpdateAgentMetadataSelfBestEffort(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	agent, err := s.MemoryStore.UpdateAgentMetadataSelf(agentUUID, metadata, now)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	s.persistAllBestEffortLocked()
+	return agent, nil
+}
+
 func (s *s3StateStore) FinalizeAgentHandleSelf(agentUUID, handle string, now time.Time) (model.Agent, error) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -602,6 +614,18 @@ func (s *s3StateStore) FinalizeAgentHandleSelf(agentUUID, handle string, now tim
 	if err := s.persistAll(context.Background()); err != nil {
 		return model.Agent{}, err
 	}
+	return agent, nil
+}
+
+func (s *s3StateStore) FinalizeAgentHandleSelfBestEffort(agentUUID, handle string, now time.Time) (model.Agent, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	agent, err := s.MemoryStore.FinalizeAgentHandleSelf(agentUUID, handle, now)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	s.persistAllBestEffortLocked()
 	return agent, nil
 }
 

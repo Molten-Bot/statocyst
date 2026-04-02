@@ -53,6 +53,7 @@ type Handler struct {
 	storageHealthMu   sync.RWMutex
 	storageHealth     store.StorageHealthStatus
 	startupSummary    map[string]any
+	stateRuntimeError string
 	queueRuntimeError string
 	peerHTTPClient    *http.Client
 	peerOutboxMu      sync.Mutex
@@ -552,8 +553,18 @@ func (h *Handler) SetStorageHealth(health store.StorageHealthStatus) {
 func (h *Handler) currentStorageHealth() store.StorageHealthStatus {
 	h.storageHealthMu.RLock()
 	health := h.storageHealth
+	stateRuntimeErr := strings.TrimSpace(h.stateRuntimeError)
 	runtimeErr := strings.TrimSpace(h.queueRuntimeError)
 	h.storageHealthMu.RUnlock()
+
+	if stateRuntimeErr != "" {
+		health.State.Healthy = false
+		if strings.TrimSpace(health.State.Error) == "" {
+			health.State.Error = stateRuntimeErr
+		} else {
+			health.State.Error = health.State.Error + "; runtime: " + stateRuntimeErr
+		}
+	}
 
 	if runtimeErr != "" {
 		health.Queue.Healthy = false
@@ -592,6 +603,22 @@ func (h *Handler) currentStartupSummary() map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func (h *Handler) setStateRuntimeError(msg string) {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return
+	}
+	h.storageHealthMu.Lock()
+	h.stateRuntimeError = msg
+	h.storageHealthMu.Unlock()
+}
+
+func (h *Handler) clearStateRuntimeError() {
+	h.storageHealthMu.Lock()
+	h.stateRuntimeError = ""
+	h.storageHealthMu.Unlock()
 }
 
 func (h *Handler) setQueueRuntimeError(msg string) {

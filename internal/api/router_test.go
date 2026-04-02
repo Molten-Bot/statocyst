@@ -301,6 +301,12 @@ type flakyBindTokenStore struct {
 	failCreateBindLeft int
 }
 
+type flakyStateWriteStore struct {
+	*store.MemoryStore
+	mu                    sync.Mutex
+	failMetadataWriteLeft int
+}
+
 func (s *flakyBindTokenStore) CreateBindToken(orgID string, ownerHumanID *string, actorHumanID, bindID, bindTokenHash string, expiresAt, now time.Time, isSuperAdmin bool) (model.BindToken, error) {
 	s.mu.Lock()
 	shouldFail := s.failCreateBindLeft > 0
@@ -312,6 +318,23 @@ func (s *flakyBindTokenStore) CreateBindToken(orgID string, ownerHumanID *string
 		return model.BindToken{}, context.DeadlineExceeded
 	}
 	return s.MemoryStore.CreateBindToken(orgID, ownerHumanID, actorHumanID, bindID, bindTokenHash, expiresAt, now, isSuperAdmin)
+}
+
+func (s *flakyStateWriteStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
+	s.mu.Lock()
+	shouldFail := s.failMetadataWriteLeft > 0
+	if shouldFail {
+		s.failMetadataWriteLeft--
+	}
+	s.mu.Unlock()
+	if shouldFail {
+		return model.Agent{}, context.DeadlineExceeded
+	}
+	return s.MemoryStore.UpdateAgentMetadataSelf(agentUUID, metadata, now)
+}
+
+func (s *flakyStateWriteStore) UpdateAgentMetadataSelfBestEffort(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
+	return s.MemoryStore.UpdateAgentMetadataSelf(agentUUID, metadata, now)
 }
 
 func (q *failOnceQueue) Enqueue(ctx context.Context, message model.Message) error {
@@ -533,6 +556,176 @@ func TestHealthReportsRuntimeDequeueFailureAndRecovery(t *testing.T) {
 	}
 	if _, exists := recoveryQueue["error"]; exists {
 		t.Fatalf("expected queue error cleared after dequeue recovery, got payload=%v", recoveryPayload)
+	}
+}
+
+func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.T) {
+	stateStore := &flakyStateWriteStore{
+		MemoryStore:           store.NewMemoryStore(),
+		failMetadataWriteLeft: 1,
+	}
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(stateStore, stateStore, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h.SetStorageHealth(store.StorageHealthStatus{
+		StartupMode: store.StorageStartupModeDegraded,
+		State: store.StorageBackendHealth{
+			Backend: "s3",
+			Healthy: true,
+		},
+		Queue: store.StorageBackendHealth{
+			Backend: "memory",
+			Healthy: true,
+		},
+	})
+	router := NewRouter(h)
+
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+
+	updateResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"agent_type":       "openclaw",
+			"profile_markdown": "# Ready",
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("expected metadata patch 200 with degraded fallback, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	updatePayload := decodeJSONMap(t, updateResp.Body.Bytes())
+	result := requireAgentRuntimeSuccessEnvelope(t, updatePayload)
+	agent, _ := result["agent"].(map[string]any)
+	metadata, _ := agent["metadata"].(map[string]any)
+	if got := readStringPath(metadata, "agent_type"); got != "openclaw" {
+		t.Fatalf("expected metadata.agent_type=openclaw, got %q payload=%v", got, updatePayload)
+	}
+
+	healthAfterFallback := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
+	if healthAfterFallback.Code != http.StatusOK {
+		t.Fatalf("expected /health 200, got %d %s", healthAfterFallback.Code, healthAfterFallback.Body.String())
+	}
+	fallbackPayload := decodeJSONMap(t, healthAfterFallback.Body.Bytes())
+	if got := readStringPath(fallbackPayload, "status"); got != "degraded" {
+		t.Fatalf("expected health status degraded after runtime state failure, got %q payload=%v", got, fallbackPayload)
+	}
+	storageObj, _ := fallbackPayload["storage"].(map[string]any)
+	stateObj, _ := storageObj["state"].(map[string]any)
+	if healthy, _ := stateObj["healthy"].(bool); healthy {
+		t.Fatalf("expected state health false after runtime state failure, got %v payload=%v", stateObj["healthy"], fallbackPayload)
+	}
+	stateErr, _ := stateObj["error"].(string)
+	if stateErr != "request timed out" {
+		t.Fatalf("expected sanitized runtime state error after metadata fallback, got %q payload=%v", stateErr, fallbackPayload)
+	}
+
+	retryResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"profile_markdown": "# Recovered",
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if retryResp.Code != http.StatusOK {
+		t.Fatalf("expected metadata retry 200 after state write recovery, got %d %s", retryResp.Code, retryResp.Body.String())
+	}
+
+	healthAfterRecovery := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
+	if healthAfterRecovery.Code != http.StatusOK {
+		t.Fatalf("expected /health 200, got %d %s", healthAfterRecovery.Code, healthAfterRecovery.Body.String())
+	}
+	recoveryPayload := decodeJSONMap(t, healthAfterRecovery.Body.Bytes())
+	if got := readStringPath(recoveryPayload, "status"); got != "ok" {
+		t.Fatalf("expected health status ok after metadata state recovery, got %q payload=%v", got, recoveryPayload)
+	}
+	recoveryStorage, _ := recoveryPayload["storage"].(map[string]any)
+	recoveryState, _ := recoveryStorage["state"].(map[string]any)
+	if healthy, _ := recoveryState["healthy"].(bool); !healthy {
+		t.Fatalf("expected state health true after metadata state recovery, got %v payload=%v", recoveryState["healthy"], recoveryPayload)
+	}
+	if _, exists := recoveryState["error"]; exists {
+		t.Fatalf("expected state runtime error cleared after successful strict metadata write, got payload=%v", recoveryPayload)
+	}
+}
+
+func TestOpenClawRegisterPluginUsesBestEffortFallbackWhenStateWriteFails(t *testing.T) {
+	stateStore := &flakyStateWriteStore{
+		MemoryStore:           store.NewMemoryStore(),
+		failMetadataWriteLeft: 1,
+	}
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(stateStore, stateStore, waiters, auth.NewDevHumanAuthProvider(), "https://hub.molten.bot", "", "", "", "", "molten.bot", true, 15*time.Minute, false)
+	h.SetStorageHealth(store.StorageHealthStatus{
+		StartupMode: store.StorageStartupModeDegraded,
+		State: store.StorageBackendHealth{
+			Backend: "s3",
+			Healthy: true,
+		},
+		Queue: store.StorageBackendHealth{
+			Backend: "memory",
+			Healthy: true,
+		},
+	})
+	router := NewRouter(h)
+
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+
+	registerResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/register-plugin", map[string]any{
+		"plugin_id":    "moltenhub-openclaw",
+		"package":      "@moltenbot/openclaw-plugin-moltenhub",
+		"version":      "0.1.0-test",
+		"transport":    "websocket",
+		"session_key":  "dedicated-main",
+		"session_mode": "dedicated",
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if registerResp.Code != http.StatusOK {
+		t.Fatalf("expected register-plugin 200 with degraded fallback, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	registerPayload := decodeJSONMap(t, registerResp.Body.Bytes())
+	registerResult := requireAgentRuntimeSuccessEnvelope(t, registerPayload)
+	agent, _ := registerResult["agent"].(map[string]any)
+	metadata, _ := agent["metadata"].(map[string]any)
+	if got := readStringPath(metadata, "agent_type"); got != "openclaw" {
+		t.Fatalf("expected metadata.agent_type=openclaw, got %q payload=%v", got, registerPayload)
+	}
+
+	healthAfterFallback := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
+	if healthAfterFallback.Code != http.StatusOK {
+		t.Fatalf("expected /health 200, got %d %s", healthAfterFallback.Code, healthAfterFallback.Body.String())
+	}
+	fallbackPayload := decodeJSONMap(t, healthAfterFallback.Body.Bytes())
+	if got := readStringPath(fallbackPayload, "status"); got != "degraded" {
+		t.Fatalf("expected health status degraded after register fallback, got %q payload=%v", got, fallbackPayload)
+	}
+	storageObj, _ := fallbackPayload["storage"].(map[string]any)
+	stateObj, _ := storageObj["state"].(map[string]any)
+	stateErr, _ := stateObj["error"].(string)
+	if stateErr != "request timed out" {
+		t.Fatalf("expected sanitized runtime state error after register fallback, got %q payload=%v", stateErr, fallbackPayload)
+	}
+
+	registerRetry := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/register-plugin", map[string]any{
+		"plugin_id":    "moltenhub-openclaw",
+		"package":      "@moltenbot/openclaw-plugin-moltenhub",
+		"version":      "0.1.1-test",
+		"transport":    "websocket",
+		"session_key":  "dedicated-main",
+		"session_mode": "dedicated",
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if registerRetry.Code != http.StatusOK {
+		t.Fatalf("expected register-plugin retry 200 after state write recovery, got %d %s", registerRetry.Code, registerRetry.Body.String())
+	}
+
+	healthAfterRecovery := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
+	if healthAfterRecovery.Code != http.StatusOK {
+		t.Fatalf("expected /health 200, got %d %s", healthAfterRecovery.Code, healthAfterRecovery.Body.String())
+	}
+	recoveryPayload := decodeJSONMap(t, healthAfterRecovery.Body.Bytes())
+	if got := readStringPath(recoveryPayload, "status"); got != "ok" {
+		t.Fatalf("expected health status ok after register state recovery, got %q payload=%v", got, recoveryPayload)
+	}
+	recoveryStorage, _ := recoveryPayload["storage"].(map[string]any)
+	recoveryState, _ := recoveryStorage["state"].(map[string]any)
+	if healthy, _ := recoveryState["healthy"].(bool); !healthy {
+		t.Fatalf("expected state health true after register state recovery, got %v payload=%v", recoveryState["healthy"], recoveryPayload)
+	}
+	if _, exists := recoveryState["error"]; exists {
+		t.Fatalf("expected state runtime error cleared after successful strict register write, got payload=%v", recoveryPayload)
 	}
 }
 

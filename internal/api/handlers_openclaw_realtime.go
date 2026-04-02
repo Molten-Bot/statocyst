@@ -130,7 +130,7 @@ func (h *Handler) handleOpenClawRegisterPlugin(w http.ResponseWriter, r *http.Re
 			pluginKey: marker,
 		},
 	}
-	agent, err := h.control.UpdateAgentMetadataSelf(agentUUID, patch, now)
+	agent, err := h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, patch, now)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):

@@ -867,7 +867,7 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 
 	var agent model.Agent
 	if handle != nil {
-		agent, err = h.control.FinalizeAgentHandleSelf(agentUUID, *handle, h.now().UTC())
+		agent, err = h.finalizeAgentHandleSelfWithRuntimeFallback(agentUUID, *handle, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrAgentNotFound):
@@ -885,7 +885,7 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 		}
 	}
 	if metadata != nil {
-		agent, err = h.control.UpdateAgentMetadataSelf(agentUUID, metadata, h.now().UTC())
+		agent, err = h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, metadata, h.now().UTC())
 		if err != nil {
 			switch {
 			case errors.Is(err, store.ErrAgentNotFound):
