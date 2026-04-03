@@ -775,6 +775,66 @@ func TestS3StateStore_PersistAllAppliesDeadlineWhenContextHasNone(t *testing.T) 
 	}
 }
 
+func TestS3StateStore_PersistAllUsesPerOperationDeadlineWhenContextHasNone(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		putCount int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "state-bucket" && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			type listResult struct {
+				XMLName     xml.Name `xml:"ListBucketResult"`
+				IsTruncated bool     `xml:"IsTruncated"`
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = xml.NewEncoder(w).Encode(listResult{IsTruncated: false})
+			return
+		}
+		if strings.HasPrefix(path, "state-bucket/") && r.Method == http.MethodPut {
+			_, _ = io.Copy(io.Discard, r.Body)
+			_ = r.Body.Close()
+			time.Sleep(150 * time.Millisecond)
+			mu.Lock()
+			putCount++
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	store := &s3StateStore{
+		MemoryStore:    NewMemoryStore(),
+		httpClient:     server.Client(),
+		endpoint:       server.URL,
+		bucket:         "state-bucket",
+		region:         "us-east-1",
+		prefix:         "moltenhub-state",
+		pathStyle:      true,
+		persistTimeout: 300 * time.Millisecond,
+	}
+
+	now := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
+	id := &idGen{}
+	start := time.Now()
+	_, err := store.UpsertHuman("dev", "slow-multi", "slow-multi@a.test", true, now, id.Next)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected UpsertHuman to succeed with per-operation timeout, got: %v", err)
+	}
+	if elapsed < 350*time.Millisecond {
+		t.Fatalf("expected multi-object persist to exceed a single timeout window, took %s", elapsed)
+	}
+	mu.Lock()
+	seenPuts := putCount
+	mu.Unlock()
+	if seenPuts < 2 {
+		t.Fatalf("expected multiple state puts, saw %d", seenPuts)
+	}
+}
+
 func TestS3StateStore_BestEffortPersistUsesShortTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
