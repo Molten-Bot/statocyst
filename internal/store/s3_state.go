@@ -26,7 +26,7 @@ import (
 const (
 	defaultS3StateRegion = "us-east-1"
 	defaultS3StatePrefix = "moltenhub-state"
-	// Cap end-to-end state flush time per mutation to avoid long request stalls.
+	// Cap each state PUT/DELETE call when no caller deadline is provided.
 	defaultS3StatePersistTimeout = 8 * time.Second
 	// Best-effort metrics/status writes should not block request paths for long.
 	defaultS3StateBestEffortPersistTimeout = 750 * time.Millisecond
@@ -47,7 +47,7 @@ type s3StateStore struct {
 	prefix     string
 	pathStyle  bool
 	signer     *s3Signer
-	// persistTimeout bounds one persistAll call when the caller context has no deadline.
+	// persistTimeout bounds one state write/delete request when the caller context has no deadline.
 	persistTimeout time.Duration
 	// bestEffortPersistTimeout bounds persist for fire-and-forget style writes.
 	bestEffortPersistTimeout time.Duration
@@ -809,17 +809,6 @@ func (s *s3StateStore) persistAll(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		timeout := s.persistTimeout
-		if timeout <= 0 {
-			timeout = defaultS3StatePersistTimeout
-		}
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
-		}
-	}
 
 	desired := flattenS3Objects(s.buildDesiredObjects())
 	previous := s.persistedObjects
@@ -836,7 +825,10 @@ func (s *s3StateStore) persistAll(ctx context.Context) error {
 	}
 	sort.Strings(writeKeys)
 	for _, key := range writeKeys {
-		if err := s.putObject(ctx, key, desired[key]); err != nil {
+		opCtx, cancel := s.persistOperationContext(ctx)
+		err := s.putObject(opCtx, key, desired[key])
+		cancel()
+		if err != nil {
 			return err
 		}
 	}
@@ -850,13 +842,33 @@ func (s *s3StateStore) persistAll(ctx context.Context) error {
 	}
 	sort.Strings(deleteKeys)
 	for _, key := range deleteKeys {
-		if err := s.deleteObject(ctx, key); err != nil {
+		opCtx, cancel := s.persistOperationContext(ctx)
+		err := s.deleteObject(opCtx, key)
+		cancel()
+		if err != nil {
 			return err
 		}
 	}
 
 	s.persistedObjects = cloneS3Objects(desired)
 	return nil
+}
+
+func (s *s3StateStore) persistOperationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	timeout := s.persistTimeout
+	if timeout <= 0 {
+		timeout = defaultS3StatePersistTimeout
+	}
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
