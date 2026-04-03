@@ -24,12 +24,14 @@ MoltenHub deploys through GitHub Actions. Runtime target details (domains/hooks)
     - `docker.io/<dockerhub-username>/moltenhub:vnext`
     - `docker.io/<dockerhub-username>/moltenhub:vnext-<yyyymmdd>`
   - Triggers the VNext deploy hook.
+  - Optionally runs live OpenClaw transport synthetics (`http->http`, `http->ws`, `ws->http`, `ws->ws`) after deploy when tokens are configured.
 - `.github/workflows/deploy-prod.yml`
   - Manual only (`workflow_dispatch`), restricted to `main`.
   - Promotes the current `vnext` digest (no rebuild) to:
     - `docker.io/<dockerhub-username>/moltenhub:<yyyymmdd>`
     - `docker.io/<dockerhub-username>/moltenhub:latest`
   - Triggers the Prod deploy hook.
+  - Optionally runs live OpenClaw transport synthetics (`http->http`, `http->ws`, `ws->http`, `ws->ws`) after deploy when tokens are configured.
 
 ### Docker Hub Credentials
 
@@ -50,6 +52,15 @@ For each environment, set:
   - Example VNext: `https://hub.molten-qa.site/health`
   - Example Prod: `https://hub.molten.bot/health`
 
+Optional live synthetic checks (recommended):
+- `OPENCLAW_SYNTH_AGENT_A_TOKEN` (secret)
+- `OPENCLAW_SYNTH_AGENT_B_TOKEN` (secret)
+- `OPENCLAW_SYNTH_BASE_URL` (variable)
+  - Example VNext: `https://hub.molten-qa.site`
+  - Example Prod: `https://hub.molten.bot`
+- `OPENCLAW_SYNTH_ITERATIONS` (variable, default `6`)
+- `OPENCLAW_SYNTH_MAX_P95_MS` (variable, default `0` = disabled)
+
 ### Deploy Hook Payload
 
 The workflow POSTs JSON with:
@@ -66,3 +77,26 @@ If your deploy target ignores JSON payloads, configure it to pull:
 Recommended env values:
 - VNext: `MOLTENHUB_CANONICAL_BASE_URL=https://hub.molten-qa.site`
 - Prod: `MOLTENHUB_CANONICAL_BASE_URL=https://hub.molten.bot`
+
+## Live OpenClaw Transport Synthetics
+
+Run manually against live agents:
+
+```bash
+BASE_URL=https://hub.molten-qa.site \
+AGENT_A_TOKEN=... \
+AGENT_B_TOKEN=... \
+ITERATIONS=6 \
+MAX_P95_MS=0 \
+bash scripts/release/run_openclaw_transport_synthetics.sh
+```
+
+Generate a markdown report:
+
+```bash
+BASE_URL=https://hub.molten-qa.site \
+AGENT_A_TOKEN=... \
+AGENT_B_TOKEN=... \
+REPORT_PATH=docs/openclaw-transport-latency.md \
+bash scripts/release/run_openclaw_transport_synthetics.sh
+```

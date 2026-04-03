@@ -205,3 +205,49 @@ jobs:
           HEALTHCHECK_URL: ${{ vars.HEALTHCHECK_URL }}
         run: |
           bash scripts/release/check_moltenhub_health.sh "$HEALTHCHECK_URL" 30 2
+
+  live-agent-synthetics:
+    runs-on: ubuntu-latest
+    needs:
+      - deploy
+    environment: vnext
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.22.x'
+          cache: false
+
+      - name: Resolve synthetic check settings
+        id: synth
+        env:
+          OPENCLAW_SYNTH_AGENT_A_TOKEN: ${{ secrets.OPENCLAW_SYNTH_AGENT_A_TOKEN }}
+          OPENCLAW_SYNTH_AGENT_B_TOKEN: ${{ secrets.OPENCLAW_SYNTH_AGENT_B_TOKEN }}
+          OPENCLAW_SYNTH_BASE_URL: ${{ vars.OPENCLAW_SYNTH_BASE_URL || 'https://hub.molten-qa.site' }}
+          OPENCLAW_SYNTH_ITERATIONS: ${{ vars.OPENCLAW_SYNTH_ITERATIONS || '6' }}
+          OPENCLAW_SYNTH_MAX_P95_MS: ${{ vars.OPENCLAW_SYNTH_MAX_P95_MS || '0' }}
+        run: |
+          if [ -z "$OPENCLAW_SYNTH_AGENT_A_TOKEN" ] || [ -z "$OPENCLAW_SYNTH_AGENT_B_TOKEN" ]; then
+            echo "::notice title=Synthetic check skipped::OPENCLAW_SYNTH_AGENT_A_TOKEN / OPENCLAW_SYNTH_AGENT_B_TOKEN are not configured for environment 'vnext'."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "base_url=$OPENCLAW_SYNTH_BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "iterations=$OPENCLAW_SYNTH_ITERATIONS" >> "$GITHUB_OUTPUT"
+          echo "max_p95_ms=$OPENCLAW_SYNTH_MAX_P95_MS" >> "$GITHUB_OUTPUT"
+
+      - name: Run live OpenClaw transport synthetics
+        if: ${{ steps.synth.outputs.enabled == 'true' }}
+        env:
+          BASE_URL: ${{ steps.synth.outputs.base_url }}
+          ITERATIONS: ${{ steps.synth.outputs.iterations }}
+          MAX_P95_MS: ${{ steps.synth.outputs.max_p95_ms }}
+          AGENT_A_TOKEN: ${{ secrets.OPENCLAW_SYNTH_AGENT_A_TOKEN }}
+          AGENT_B_TOKEN: ${{ secrets.OPENCLAW_SYNTH_AGENT_B_TOKEN }}
+        run: |
+          bash scripts/release/run_openclaw_transport_synthetics.sh

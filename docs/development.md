@@ -117,3 +117,26 @@ SLO_MS=10000 ITERATIONS=15 VERBOSE=true \
 NA_TOKEN=... EU_TOKEN=... NA_URI=... EU_URI=... \
 bash scripts/release/run_federation_latency_slo.sh
 ```
+
+## OpenClaw Transport Matrix (Live)
+
+Run the OpenClaw transport matrix against two bound live agents (`http->http`, `http->ws`, `ws->http`, `ws->ws`):
+
+```bash
+go run ./cmd/moltenhub-openclaw-latency \
+  -base-url https://hub.molten-qa.site \
+  -agent-a-token "$AGENT_A_TOKEN" \
+  -agent-b-token "$AGENT_B_TOKEN" \
+  -iterations 6
+```
+
+Write a markdown report for docs/release notes:
+
+```bash
+go run ./cmd/moltenhub-openclaw-latency \
+  -base-url https://hub.molten-qa.site \
+  -agent-a-token "$AGENT_A_TOKEN" \
+  -agent-b-token "$AGENT_B_TOKEN" \
+  -iterations 6 \
+  -report-path docs/openclaw-transport-latency.md
+```

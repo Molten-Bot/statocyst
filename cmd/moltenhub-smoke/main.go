@@ -6,11 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type runner struct {
@@ -62,6 +66,9 @@ func main() {
 		{name: "Alice creates a bind token and the agent changes profile metadata", run: (*runner).stepAgentChangesMetadata},
 		{name: "Alice creates a bind token and the agent clears profile metadata", run: (*runner).stepAgentClearsMetadata},
 		{name: "Alice invites two agents by bind token, binds both agents, and sees both in her list", run: (*runner).stepAliceSeesBothAgents},
+		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
+		{name: "OpenClaw HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
+		{name: "OpenClaw websocket delivery and ack succeeds", run: (*runner).stepOpenClawWebSocketDelivery},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},
 	}
@@ -444,6 +451,322 @@ func (r *runner) stepAliceRevokesBothAgents() error {
 	return requireAgentStatus(agents, r.agentUUIDB, "revoked")
 }
 
+func (r *runner) stepOpenClawRegisterPlugin() error {
+	for _, target := range []struct {
+		label string
+		token string
+	}{
+		{label: "a", token: r.tokenA},
+		{label: "b", token: r.tokenB},
+	} {
+		pluginID := "moltenhub-openclaw-smoke-" + target.label
+		status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/register-plugin", agentHeaders(target.token), map[string]any{
+			"plugin_id":    pluginID,
+			"package":      "@moltenbot/openclaw-plugin-moltenhub",
+			"transport":    "websocket",
+			"session_mode": "dedicated",
+			"session_key":  "smoke-main",
+		})
+		if err != nil {
+			return err
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("expected register-plugin 200, got %d payload=%v", status, payload)
+		}
+
+		result := runtimeResult(payload)
+		plugin, err := requireEntity(result, "plugin")
+		if err != nil {
+			return err
+		}
+		if got := asString(plugin, "transport"); got != "websocket" {
+			return fmt.Errorf("expected plugin transport websocket, got %q payload=%v", got, payload)
+		}
+		agent, err := requireEntity(result, "agent")
+		if err != nil {
+			return err
+		}
+		metadata, _ := agent["metadata"].(map[string]any)
+		if got := readStringPath(metadata, "agent_type"); got != "openclaw" {
+			return fmt.Errorf("expected metadata.agent_type openclaw, got %q payload=%v", got, payload)
+		}
+		plugins, _ := metadata["plugins"].(map[string]any)
+		if _, ok := plugins[pluginID].(map[string]any); !ok {
+			return fmt.Errorf("expected metadata.plugins.%s object, got %T payload=%v", pluginID, plugins[pluginID], payload)
+		}
+	}
+	return nil
+}
+
+func (r *runner) stepOpenClawHTTPDelivery() error {
+	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+		return err
+	}
+
+	messageText := fmt.Sprintf("smoke-openclaw-http-%d", time.Now().UnixNano())
+	messageID, err := r.publishOpenClawMessage(r.tokenA, r.agentUUIDB, messageText)
+	if err != nil {
+		return err
+	}
+
+	deliveryID, receivedText, err := r.pullOpenClawMessage(r.tokenB, messageID, 12*time.Second)
+	if err != nil {
+		return err
+	}
+	if receivedText != messageText {
+		return fmt.Errorf("expected pull text %q, got %q", messageText, receivedText)
+	}
+	return r.ackOpenClawDeliveryHTTP(r.tokenB, deliveryID)
+}
+
+func (r *runner) stepOpenClawWebSocketDelivery() error {
+	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+		return err
+	}
+
+	conn, err := r.openOpenClawWebSocket(r.tokenB, fmt.Sprintf("smoke-session-%d", time.Now().UnixNano()))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	messageText := fmt.Sprintf("smoke-openclaw-ws-%d", time.Now().UnixNano())
+	messageID, err := r.publishOpenClawMessage(r.tokenA, r.agentUUIDB, messageText)
+	if err != nil {
+		return err
+	}
+
+	deliveryID, receivedText, err := r.waitForOpenClawWSDelivery(conn, messageID, 12*time.Second)
+	if err != nil {
+		return err
+	}
+	if receivedText != messageText {
+		return fmt.Errorf("expected websocket delivery text %q, got %q", messageText, receivedText)
+	}
+	return r.ackOpenClawDeliveryWS(conn, deliveryID)
+}
+
+func (r *runner) publishOpenClawMessage(token, toAgentUUID, text string) (string, error) {
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/publish", agentHeaders(token), map[string]any{
+		"to_agent_uuid": toAgentUUID,
+		"message": map[string]any{
+			"kind": "text_message",
+			"text": text,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusAccepted {
+		return "", fmt.Errorf("expected openclaw publish 202, got %d payload=%v", status, payload)
+	}
+	result := runtimeResult(payload)
+	messageID := readStringPath(result, "message_id")
+	if messageID == "" {
+		messageID = readStringPath(result, "message", "message_id")
+	}
+	if messageID == "" {
+		return "", fmt.Errorf("expected openclaw publish response to include message_id payload=%v", payload)
+	}
+	return messageID, nil
+}
+
+func (r *runner) pullOpenClawMessage(token, expectedMessageID string, timeout time.Duration) (string, string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status, payload, err := r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", agentHeaders(token), nil)
+		if err != nil {
+			return "", "", err
+		}
+		if status == http.StatusNoContent {
+			continue
+		}
+		if status != http.StatusOK {
+			return "", "", fmt.Errorf("expected openclaw pull 200/204, got %d payload=%v", status, payload)
+		}
+
+		result := runtimeResult(payload)
+		messageID := readStringPath(result, "message", "message_id")
+		if messageID == "" {
+			messageID = readStringPath(result, "message_id")
+		}
+		deliveryID := readStringPath(result, "delivery", "delivery_id")
+		if deliveryID == "" {
+			return "", "", fmt.Errorf("expected openclaw pull to include delivery_id payload=%v", payload)
+		}
+
+		openClawMessage, err := requireEntity(result, "openclaw_message")
+		if err != nil {
+			return "", "", err
+		}
+		text := asString(openClawMessage, "text")
+		if messageID == expectedMessageID {
+			return deliveryID, text, nil
+		}
+		if err := r.ackOpenClawDeliveryHTTP(token, deliveryID); err != nil {
+			return "", "", err
+		}
+	}
+	return "", "", fmt.Errorf("timed out waiting for openclaw pull message_id=%q", expectedMessageID)
+}
+
+func (r *runner) drainOpenClawQueue(token string) error {
+	for i := 0; i < 64; i++ {
+		status, payload, err := r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", agentHeaders(token), nil)
+		if err != nil {
+			return err
+		}
+		if status == http.StatusNoContent {
+			return nil
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("expected openclaw drain pull 200/204, got %d payload=%v", status, payload)
+		}
+
+		result := runtimeResult(payload)
+		deliveryID := readStringPath(result, "delivery", "delivery_id")
+		if deliveryID == "" {
+			continue
+		}
+		if err := r.ackOpenClawDeliveryHTTP(token, deliveryID); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("openclaw queue drain exceeded maximum attempts")
+}
+
+func (r *runner) ackOpenClawDeliveryHTTP(token, deliveryID string) error {
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/ack", agentHeaders(token), map[string]any{
+		"delivery_id": deliveryID,
+	})
+	if err != nil {
+		return err
+	}
+	if status == http.StatusOK {
+		return nil
+	}
+	if status == http.StatusNotFound && asString(payload, "error") == "unknown_delivery" {
+		return nil
+	}
+	return fmt.Errorf("expected openclaw ack 200, got %d payload=%v", status, payload)
+}
+
+func (r *runner) openOpenClawWebSocket(token, sessionKey string) (*websocket.Conn, error) {
+	base, err := url.Parse(r.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse base url %q: %w", r.baseURL, err)
+	}
+	switch strings.ToLower(strings.TrimSpace(base.Scheme)) {
+	case "https":
+		base.Scheme = "wss"
+	case "http":
+		base.Scheme = "ws"
+	default:
+		return nil, fmt.Errorf("unsupported base url scheme %q", base.Scheme)
+	}
+	base.Path = "/v1/openclaw/messages/ws"
+	query := base.Query()
+	query.Set("session_key", sessionKey)
+	base.RawQuery = query.Encode()
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+token)
+	conn, resp, err := websocket.DefaultDialer.Dial(base.String(), headers)
+	if err != nil {
+		if resp != nil {
+			return nil, fmt.Errorf("openclaw websocket dial failed status=%d: %w", resp.StatusCode, err)
+		}
+		return nil, fmt.Errorf("openclaw websocket dial failed: %w", err)
+	}
+	first, err := readWSJSON(conn, 8*time.Second)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if got := readStringPath(first, "type"); got != "session_ready" {
+		_ = conn.Close()
+		return nil, fmt.Errorf("expected websocket session_ready, got %q payload=%v", got, first)
+	}
+	return conn, nil
+}
+
+func (r *runner) waitForOpenClawWSDelivery(conn *websocket.Conn, expectedMessageID string, timeout time.Duration) (string, string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		evt, err := readWSJSON(conn, time.Until(deadline))
+		if err != nil {
+			return "", "", err
+		}
+		if readStringPath(evt, "type") != "delivery" {
+			continue
+		}
+		result := runtimeResult(evt)
+		messageID := readStringPath(result, "message", "message_id")
+		if messageID == "" {
+			messageID = readStringPath(result, "message_id")
+		}
+		deliveryID := readStringPath(result, "delivery", "delivery_id")
+		if deliveryID == "" {
+			return "", "", fmt.Errorf("expected websocket delivery_id payload=%v", evt)
+		}
+
+		openClawMessage, err := requireEntity(result, "openclaw_message")
+		if err != nil {
+			return "", "", err
+		}
+		text := asString(openClawMessage, "text")
+		if messageID == expectedMessageID {
+			return deliveryID, text, nil
+		}
+		if err := r.ackOpenClawDeliveryHTTP(r.tokenB, deliveryID); err != nil {
+			return "", "", err
+		}
+	}
+	return "", "", fmt.Errorf("timed out waiting for websocket delivery message_id=%q", expectedMessageID)
+}
+
+func (r *runner) ackOpenClawDeliveryWS(conn *websocket.Conn, deliveryID string) error {
+	requestID := fmt.Sprintf("smoke-ws-ack-%d", time.Now().UnixNano())
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return fmt.Errorf("set websocket write deadline: %w", err)
+	}
+	if err := conn.WriteJSON(map[string]any{
+		"type":        "ack",
+		"request_id":  requestID,
+		"delivery_id": deliveryID,
+	}); err != nil {
+		return fmt.Errorf("write websocket ack frame: %w", err)
+	}
+
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		evt, err := readWSJSON(conn, time.Until(deadline))
+		if err != nil {
+			return err
+		}
+		if readStringPath(evt, "type") != "response" {
+			if readStringPath(evt, "type") == "delivery" {
+				strayDeliveryID := readStringPath(runtimeResult(evt), "delivery", "delivery_id")
+				if strayDeliveryID != "" {
+					_ = r.ackOpenClawDeliveryHTTP(r.tokenB, strayDeliveryID)
+				}
+			}
+			continue
+		}
+		if readStringPath(evt, "request_id") != requestID {
+			continue
+		}
+		if readStringPath(evt, "ok") != "true" {
+			return fmt.Errorf("expected websocket ack response ok=true payload=%v", evt)
+		}
+		if got := readStringPath(evt, "status"); got != "200" {
+			return fmt.Errorf("expected websocket ack response status=200, got %q payload=%v", got, evt)
+		}
+		return nil
+	}
+	return fmt.Errorf("timed out waiting for websocket ack response request_id=%q", requestID)
+}
+
 func (r *runner) setHumanHandle(humanID, email, handle string) (map[string]any, error) {
 	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/me", humanHeaders(humanID, email), map[string]any{
 		"handle": handle,
@@ -732,4 +1055,60 @@ func requireAgentStatus(agents []map[string]any, agentUUID, wantStatus string) e
 func asString(payload map[string]any, key string) string {
 	value, _ := payload[key].(string)
 	return value
+}
+
+func runtimeResult(payload map[string]any) map[string]any {
+	if payload == nil {
+		return map[string]any{}
+	}
+	result, ok := payload["result"].(map[string]any)
+	if ok {
+		return result
+	}
+	return payload
+}
+
+func readStringPath(root map[string]any, path ...string) string {
+	current := any(root)
+	for _, segment := range path {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		next, ok := object[segment]
+		if !ok {
+			return ""
+		}
+		current = next
+	}
+	switch value := current.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case bool:
+		if value {
+			return "true"
+		}
+		return "false"
+	case float64:
+		if math.Mod(value, 1) == 0 {
+			return fmt.Sprintf("%.0f", value)
+		}
+		return fmt.Sprintf("%f", value)
+	default:
+		return ""
+	}
+}
+
+func readWSJSON(conn *websocket.Conn, timeout time.Duration) (map[string]any, error) {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, fmt.Errorf("set websocket read deadline: %w", err)
+	}
+	var payload map[string]any
+	if err := conn.ReadJSON(&payload); err != nil {
+		return nil, fmt.Errorf("read websocket json: %w", err)
+	}
+	return payload, nil
 }
