@@ -30,6 +30,8 @@ const (
 	defaultS3StatePersistTimeout = 8 * time.Second
 	// Best-effort metrics/status writes should not block request paths for long.
 	defaultS3StateBestEffortPersistTimeout = 750 * time.Millisecond
+	// Startup check should fail fast so readiness decisions are not delayed too long.
+	defaultS3StateStartupCheckTimeout = 5 * time.Second
 	defaultS3StateHydrationTimeout         = 20 * time.Second
 	defaultS3StateListConcurrency          = 6
 	defaultS3StateGetConcurrency           = 24
@@ -244,6 +246,30 @@ func NewS3StateStoreFromEnv() (*s3StateStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func (s *s3StateStore) StartupCheck(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultS3StateStartupCheckTimeout)
+		defer cancel()
+	}
+
+	probeKey := s.objectKey(
+		s.prefixed("startup-check"),
+		fmt.Sprintf("%019d.json", time.Now().UTC().UnixNano()),
+	)
+	body := []byte(`{"check":"state_startup"}`)
+	if err := s.putObject(ctx, probeKey, body); err != nil {
+		return fmt.Errorf("state startup check write failed: %w", err)
+	}
+	if err := s.deleteObject(ctx, probeKey); err != nil {
+		return fmt.Errorf("state startup check cleanup failed: %w", err)
+	}
+	return nil
 }
 
 func parseDurationSecondsEnv(name string, fallback time.Duration) time.Duration {

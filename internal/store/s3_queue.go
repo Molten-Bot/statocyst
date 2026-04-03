@@ -123,6 +123,14 @@ func (s *s3QueueStore) StartupCheck(ctx context.Context) error {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("queue startup check status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
+
+	probeKey := fmt.Sprintf("%s/startup-check/%019d.json", s.prefix, time.Now().UTC().UnixNano())
+	if err := s.putObject(ctx, probeKey, []byte(`{"check":"queue_startup"}`)); err != nil {
+		return fmt.Errorf("queue startup check write failed: %w", err)
+	}
+	if err := s.deleteObject(ctx, probeKey); err != nil {
+		return fmt.Errorf("queue startup check cleanup failed: %w", err)
+	}
 	return nil
 }
 
@@ -138,25 +146,7 @@ func (s *s3QueueStore) Enqueue(ctx context.Context, message model.Message) error
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, s.objectURL(key, nil), bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build put request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if err := s.signRequest(req, body); err != nil {
-		return err
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("put object: %w", err)
-	}
-	defer resp.Body.Close()
-	if !isS3WriteStatus(resp.StatusCode) {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("put object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	return nil
+	return s.putObject(ctx, key, body)
 }
 
 func (s *s3QueueStore) Dequeue(ctx context.Context, agentUUID string) (model.Message, bool, error) {
@@ -287,6 +277,27 @@ func (s *s3QueueStore) deleteObject(ctx context.Context, key string) error {
 	if !isS3WriteStatus(resp.StatusCode) {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("delete object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return nil
+}
+
+func (s *s3QueueStore) putObject(ctx context.Context, key string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, s.objectURL(key, nil), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build put request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := s.signRequest(req, body); err != nil {
+		return err
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("put object: %w", err)
+	}
+	defer resp.Body.Close()
+	if !isS3WriteStatus(resp.StatusCode) {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("put object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
 }

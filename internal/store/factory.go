@@ -127,6 +127,11 @@ func NewStoresFromEnvWithMode(mode StorageStartupMode) (ControlPlaneStore, Messa
 
 	if stateBackend == "s3" {
 		state, stateErr := NewS3StateStoreFromEnv()
+		if stateErr == nil {
+			if checker, ok := any(state).(interface{ StartupCheck(context.Context) error }); ok {
+				stateErr = checker.StartupCheck(context.Background())
+			}
+		}
 		if stateErr != nil {
 			health.State.Healthy = false
 			health.State.Error = stateErr.Error()

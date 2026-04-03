@@ -245,6 +245,40 @@ func TestNewStoresFromEnv_S3StateAuthRequiredEndpointFailsStartup(t *testing.T) 
 	}
 }
 
+func TestNewStoresFromEnv_StrictFailsWhenS3StateStartupWriteCheckFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "state-bucket" && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult></ListBucketResult>`)
+			return
+		}
+		if strings.HasPrefix(path, "state-bucket/moltenhub-state/startup-check/") && r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `access denied`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	t.Setenv("MOLTENHUB_STATE_BACKEND", "s3")
+	t.Setenv("MOLTENHUB_QUEUE_BACKEND", "memory")
+	t.Setenv("MOLTENHUB_STATE_S3_ENDPOINT", server.URL)
+	t.Setenv("MOLTENHUB_STATE_S3_BUCKET", "state-bucket")
+	t.Setenv("MOLTENHUB_STATE_S3_PREFIX", "moltenhub-state")
+	t.Setenv("MOLTENHUB_STATE_S3_PATH_STYLE", "true")
+
+	_, _, err := NewStoresFromEnv()
+	if err == nil {
+		t.Fatalf("expected strict startup to fail when s3 state write probe fails")
+	}
+	if !strings.Contains(err.Error(), "state startup check write failed") {
+		t.Fatalf("expected state startup write check error, got %v", err)
+	}
+}
+
 func TestNewStoresFromEnvWithMode_DegradedFallbackForS3State(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
