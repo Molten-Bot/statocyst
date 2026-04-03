@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -580,6 +581,7 @@ func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request
 	}
 	bind, bindSecret, err := h.createBindTokenWithRetry(req.OrgID, &ownerHumanID, actor.Human.HumanID, actor.IsSuperAdmin)
 	if err != nil {
+		logBindTokenCreateFailure(r, req.OrgID, &ownerHumanID, actor.Human.HumanID, err)
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
 			writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
@@ -2504,6 +2506,7 @@ func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) 
 
 	bind, bindSecret, err := h.createBindTokenWithRetry(req.OrgID, req.OwnerHumanID, actor.Human.HumanID, actor.IsSuperAdmin)
 	if err != nil {
+		logBindTokenCreateFailure(r, req.OrgID, req.OwnerHumanID, actor.Human.HumanID, err)
 		switch {
 		case errors.Is(err, store.ErrOrgNotFound):
 			writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
@@ -2582,6 +2585,35 @@ func isRetryableStoreMutationError(err error) bool {
 		}
 	}
 	return false
+}
+
+func logBindTokenCreateFailure(r *http.Request, orgID string, ownerHumanID *string, actorHumanID string, err error) {
+	requestID, _ := r.Context().Value(requestIDContextKey{}).(string)
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		requestID = strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	}
+	owner := ""
+	if ownerHumanID != nil {
+		owner = strings.TrimSpace(*ownerHumanID)
+	}
+	if owner == "" {
+		owner = "(none)"
+	}
+	summary := strings.TrimSpace(store.SanitizeError(err))
+	if summary == "" {
+		summary = strings.TrimSpace(store.SanitizeErrorText(err.Error()))
+	}
+	log.Printf(
+		"create bind token failed: path=%s request_id=%s org_id=%s owner_human_id=%s actor_human_id=%s retryable=%t err_summary=%q",
+		strings.TrimSpace(r.URL.Path),
+		requestID,
+		strings.TrimSpace(orgID),
+		owner,
+		strings.TrimSpace(actorHumanID),
+		isRetryableStoreMutationError(err),
+		summary,
+	)
 }
 
 func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) {
