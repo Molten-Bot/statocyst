@@ -175,8 +175,14 @@ func TestHealthSanitizesBackendErrorDetails(t *testing.T) {
 	if got, _ := stateObj["error"].(string); got != "authorization failed" {
 		t.Fatalf("expected sanitized state error, got %q payload=%v", got, payload)
 	}
+	if got, _ := stateObj["error_detail"].(string); got != "status=403, s3_code=SignatureDoesNotMatch" {
+		t.Fatalf("expected sanitized state error detail, got %q payload=%v", got, payload)
+	}
 	if got, _ := queueObj["error"].(string); got != "request failed" {
 		t.Fatalf("expected sanitized queue error, got %q payload=%v", got, payload)
+	}
+	if got, _ := queueObj["error_detail"].(string); got != "status=500" {
+		t.Fatalf("expected sanitized queue error detail, got %q payload=%v", got, payload)
 	}
 }
 
@@ -458,6 +464,10 @@ func TestHealthReportsRuntimeQueueFailureAndRecovery(t *testing.T) {
 	if !strings.Contains(queueErr, "enqueue unavailable") {
 		t.Fatalf("expected runtime queue error to preserve safe enqueue detail, got %q payload=%v", queueErr, payload)
 	}
+	queueRuntimeErr, _ := queueObj["runtime_error"].(string)
+	if !strings.Contains(queueRuntimeErr, "queue enqueue failed") {
+		t.Fatalf("expected queue runtime error after enqueue failure, got %q payload=%v", queueRuntimeErr, payload)
+	}
 
 	successfulPublish := publish(t, router, tokenA, agentUUIDB, "second")
 	if successfulPublish.Code != http.StatusAccepted {
@@ -479,6 +489,9 @@ func TestHealthReportsRuntimeQueueFailureAndRecovery(t *testing.T) {
 	}
 	if _, exists := recoveryQueue["error"]; exists {
 		t.Fatalf("expected queue error cleared after recovery, got payload=%v", recoveryPayload)
+	}
+	if _, exists := recoveryQueue["runtime_error"]; exists {
+		t.Fatalf("expected queue runtime error cleared after recovery, got payload=%v", recoveryPayload)
 	}
 }
 
@@ -535,6 +548,10 @@ func TestHealthReportsRuntimeDequeueFailureAndRecovery(t *testing.T) {
 	if !strings.Contains(queueErr, "dequeue unavailable") {
 		t.Fatalf("expected runtime queue error to preserve safe dequeue detail, got %q payload=%v", queueErr, payload)
 	}
+	queueRuntimeErr, _ := queueObj["runtime_error"].(string)
+	if !strings.Contains(queueRuntimeErr, "queue dequeue failed") {
+		t.Fatalf("expected queue runtime error after dequeue failure, got %q payload=%v", queueRuntimeErr, payload)
+	}
 
 	recoveredPull := pull(t, router, tokenB, 10)
 	if recoveredPull.Code != http.StatusOK {
@@ -556,6 +573,9 @@ func TestHealthReportsRuntimeDequeueFailureAndRecovery(t *testing.T) {
 	}
 	if _, exists := recoveryQueue["error"]; exists {
 		t.Fatalf("expected queue error cleared after dequeue recovery, got payload=%v", recoveryPayload)
+	}
+	if _, exists := recoveryQueue["runtime_error"]; exists {
+		t.Fatalf("expected queue runtime error cleared after dequeue recovery, got payload=%v", recoveryPayload)
 	}
 }
 
@@ -615,6 +635,9 @@ func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.
 	if stateErr != "request timed out" {
 		t.Fatalf("expected sanitized runtime state error after metadata fallback, got %q payload=%v", stateErr, fallbackPayload)
 	}
+	if stateRuntimeErr, _ := stateObj["runtime_error"].(string); stateRuntimeErr != "state agent metadata update failed: request timed out" {
+		t.Fatalf("expected state runtime error after metadata fallback, got %q payload=%v", stateRuntimeErr, fallbackPayload)
+	}
 
 	retryResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
 		"metadata": map[string]any{
@@ -640,6 +663,9 @@ func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.
 	}
 	if _, exists := recoveryState["error"]; exists {
 		t.Fatalf("expected state runtime error cleared after successful strict metadata write, got payload=%v", recoveryPayload)
+	}
+	if _, exists := recoveryState["runtime_error"]; exists {
+		t.Fatalf("expected state runtime details cleared after successful strict metadata write, got payload=%v", recoveryPayload)
 	}
 }
 
@@ -698,6 +724,9 @@ func TestOpenClawRegisterPluginUsesBestEffortFallbackWhenStateWriteFails(t *test
 	if stateErr != "request timed out" {
 		t.Fatalf("expected sanitized runtime state error after register fallback, got %q payload=%v", stateErr, fallbackPayload)
 	}
+	if stateRuntimeErr, _ := stateObj["runtime_error"].(string); stateRuntimeErr != "state agent metadata update failed: request timed out" {
+		t.Fatalf("expected state runtime error after register fallback, got %q payload=%v", stateRuntimeErr, fallbackPayload)
+	}
 
 	registerRetry := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/register-plugin", map[string]any{
 		"plugin_id":    "moltenhub-openclaw",
@@ -726,6 +755,9 @@ func TestOpenClawRegisterPluginUsesBestEffortFallbackWhenStateWriteFails(t *test
 	}
 	if _, exists := recoveryState["error"]; exists {
 		t.Fatalf("expected state runtime error cleared after successful strict register write, got payload=%v", recoveryPayload)
+	}
+	if _, exists := recoveryState["runtime_error"]; exists {
+		t.Fatalf("expected state runtime details cleared after successful strict register write, got payload=%v", recoveryPayload)
 	}
 }
 

@@ -78,7 +78,7 @@ func messageStatusResponse(record model.MessageRecord) map[string]any {
 
 func queueRuntimeFailureSummary(operation string, err error) string {
 	base := strings.TrimSpace("queue " + operation + " failed")
-	detail := strings.TrimSpace(store.SanitizeError(err))
+	detail := strings.TrimSpace(store.SanitizeErrorWithDetail(err))
 	if detail == "" {
 		return base
 	}

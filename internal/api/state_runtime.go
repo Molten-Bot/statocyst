@@ -19,7 +19,7 @@ type stateHandleBestEffortStore interface {
 
 func stateRuntimeFailureSummary(operation string, err error) string {
 	base := strings.TrimSpace("state " + operation + " failed")
-	detail := strings.TrimSpace(store.SanitizeError(err))
+	detail := strings.TrimSpace(store.SanitizeErrorWithDetail(err))
 	if detail == "" {
 		return base
 	}
