@@ -6,13 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"reflect"
 	"sort"
 	"strconv"
@@ -32,21 +28,16 @@ const (
 	defaultS3StateBestEffortPersistTimeout = 750 * time.Millisecond
 	// Startup check should fail fast so readiness decisions are not delayed too long.
 	defaultS3StateStartupCheckTimeout = 5 * time.Second
-	defaultS3StateHydrationTimeout         = 20 * time.Second
-	defaultS3StateListConcurrency          = 6
-	defaultS3StateGetConcurrency           = 24
+	defaultS3StateHydrationTimeout    = 20 * time.Second
+	defaultS3StateListConcurrency     = 6
+	defaultS3StateGetConcurrency      = 24
 )
 
 type s3StateStore struct {
 	*MemoryStore
 
-	httpClient *http.Client
-	endpoint   string
-	bucket     string
-	region     string
-	prefix     string
-	pathStyle  bool
-	signer     *s3Signer
+	conn   *s3Connection
+	prefix string
 	// persistTimeout bounds one state write/delete request when the caller context has no deadline.
 	persistTimeout time.Duration
 	// bestEffortPersistTimeout bounds persist for fire-and-forget style writes.
@@ -61,14 +52,6 @@ type s3StateStore struct {
 	persistedObjects map[string][]byte
 	// hydrationPrefetch is populated only while loadFromS3 is running to avoid repeated list/get calls.
 	hydrationPrefetch map[string]map[string][]byte
-}
-
-type s3StateListBucketResult struct {
-	Contents []struct {
-		Key string `xml:"Key"`
-	} `xml:"Contents"`
-	IsTruncated           bool   `xml:"IsTruncated"`
-	NextContinuationToken string `xml:"NextContinuationToken"`
 }
 
 type s3IndexValue struct {
@@ -220,16 +203,23 @@ func NewS3StateStoreFromEnv() (*s3StateStore, error) {
 	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
 		return nil, fmt.Errorf("MOLTENHUB_STATE_S3_ENDPOINT must include http:// or https:// scheme")
 	}
+	conn, err := newS3Connection(s3ConnectionConfig{
+		HTTPClient:      newS3HTTPClient(10 * time.Second),
+		Endpoint:        endpoint,
+		Bucket:          bucket,
+		Region:          region,
+		PathStyle:       pathStyle,
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	store := &s3StateStore{
 		MemoryStore:              NewMemoryStore(),
-		httpClient:               newS3HTTPClient(10 * time.Second),
-		endpoint:                 strings.TrimSuffix(endpoint, "/"),
-		bucket:                   bucket,
-		region:                   region,
+		conn:                     conn,
 		prefix:                   prefix,
-		pathStyle:                pathStyle,
-		signer:                   newS3Signer(accessKeyID, secretAccessKey, region),
 		persistTimeout:           defaultS3StatePersistTimeout,
 		bestEffortPersistTimeout: defaultS3StateBestEffortPersistTimeout,
 		hydrationTimeout:         hydrationTimeout,
@@ -2048,149 +2038,30 @@ func (s *s3StateStore) listKeys(ctx context.Context, prefix string) ([]string, e
 	token := ""
 	out := make([]string, 0)
 	for {
-		query := url.Values{}
-		query.Set("list-type", "2")
-		query.Set("prefix", strings.TrimSpace(prefix))
-		if token != "" {
-			query.Set("continuation-token", token)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.objectURL("", query), nil)
+		listed, err := s.conn.ListObjects(ctx, strings.TrimSpace(prefix), 0, token, true)
 		if err != nil {
-			return nil, fmt.Errorf("build list request: %w", err)
-		}
-		if err := s.signRequest(req, nil); err != nil {
 			return nil, err
 		}
-		resp, err := s.httpClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("list objects: %w", err)
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			if resp.StatusCode == http.StatusNotFound {
-				return out, nil
-			}
-			return nil, fmt.Errorf("list objects status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-
-		var parsed s3StateListBucketResult
-		if err := xml.Unmarshal(body, &parsed); err != nil {
-			return nil, fmt.Errorf("decode list result: %w", err)
-		}
-		for _, item := range parsed.Contents {
-			key := strings.TrimSpace(item.Key)
-			if key == "" {
-				continue
-			}
-			out = append(out, key)
-		}
-		if !parsed.IsTruncated || strings.TrimSpace(parsed.NextContinuationToken) == "" {
+		out = append(out, listed.Keys...)
+		if !listed.IsTruncated || strings.TrimSpace(listed.NextContinuationToken) == "" {
 			break
 		}
-		token = strings.TrimSpace(parsed.NextContinuationToken)
+		token = strings.TrimSpace(listed.NextContinuationToken)
 	}
 	sort.Strings(out)
 	return out, nil
 }
 
 func (s *s3StateStore) putObject(ctx context.Context, key string, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, s.objectURL(key, nil), bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build put request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if err := s.signRequest(req, body); err != nil {
-		return err
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("put object: %w", err)
-	}
-	defer resp.Body.Close()
-	if !isS3WriteStatus(resp.StatusCode) {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("put object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	return nil
+	return s.conn.PutObject(ctx, key, body, "application/json")
 }
 
 func (s *s3StateStore) getObject(ctx context.Context, key string) ([]byte, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.objectURL(key, nil), nil)
-	if err != nil {
-		return nil, false, fmt.Errorf("build get request: %w", err)
-	}
-	if err := s.signRequest(req, nil); err != nil {
-		return nil, false, err
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, false, fmt.Errorf("get object: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, false, fmt.Errorf("get object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
-	if err != nil {
-		return nil, false, fmt.Errorf("read object: %w", err)
-	}
-	return body, true, nil
+	return s.conn.GetObject(ctx, key, 4*1024*1024, true)
 }
 
 func (s *s3StateStore) deleteObject(ctx context.Context, key string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.objectURL(key, nil), nil)
-	if err != nil {
-		return fmt.Errorf("build delete request: %w", err)
-	}
-	if err := s.signRequest(req, nil); err != nil {
-		return err
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("delete object: %w", err)
-	}
-	defer resp.Body.Close()
-	if !isS3WriteStatus(resp.StatusCode) {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil
-		}
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("delete object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	return nil
-}
-
-func (s *s3StateStore) objectURL(key string, query url.Values) string {
-	u, _ := url.Parse(s.endpoint)
-	if s.pathStyle {
-		p := path.Join("/", s.bucket)
-		if strings.TrimSpace(key) != "" {
-			p = path.Join(p, escapeS3Path(key))
-		}
-		u.Path = p
-	} else {
-		u.Path = path.Join("/", escapeS3Path(key))
-	}
-	if len(query) > 0 {
-		u.RawQuery = query.Encode()
-	}
-	return u.String()
-}
-
-func (s *s3StateStore) signRequest(req *http.Request, payload []byte) error {
-	if s.signer == nil {
-		return nil
-	}
-	if err := s.signer.Sign(req, payload, time.Now().UTC()); err != nil {
-		return fmt.Errorf("sign request: %w", err)
-	}
-	return nil
+	return s.conn.DeleteObject(ctx, key, true)
 }
 
 func (s *s3StateStore) prefixed(parts ...string) string {

@@ -1,16 +1,10 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"path"
 	"strings"
 	"sync"
 	"time"
@@ -28,22 +22,11 @@ const (
 )
 
 type s3QueueStore struct {
-	httpClient *http.Client
-	endpoint   string
-	bucket     string
-	region     string
-	prefix     string
-	pathStyle  bool
-	signer     *s3Signer
-	opTimeout  time.Duration
+	conn      *s3Connection
+	prefix    string
+	opTimeout time.Duration
 
 	dequeueMu sync.Mutex
-}
-
-type listBucketResult struct {
-	Contents []struct {
-		Key string `xml:"Key"`
-	} `xml:"Contents"`
 }
 
 func NewS3QueueStoreFromEnv() (MessageQueueStore, error) {
@@ -80,16 +63,23 @@ func NewS3QueueStoreFromEnv() (MessageQueueStore, error) {
 	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
 		return nil, fmt.Errorf("MOLTENHUB_QUEUE_S3_ENDPOINT must include http:// or https:// scheme")
 	}
+	conn, err := newS3Connection(s3ConnectionConfig{
+		HTTPClient:      newS3HTTPClient(10 * time.Second),
+		Endpoint:        endpoint,
+		Bucket:          bucket,
+		Region:          region,
+		PathStyle:       pathStyle,
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &s3QueueStore{
-		httpClient: newS3HTTPClient(10 * time.Second),
-		endpoint:   strings.TrimSuffix(endpoint, "/"),
-		bucket:     bucket,
-		region:     region,
-		prefix:     prefix,
-		pathStyle:  pathStyle,
-		signer:     newS3Signer(accessKeyID, secretAccessKey, region),
-		opTimeout:  defaultS3QueueOpTimeout,
+		conn:      conn,
+		prefix:    prefix,
+		opTimeout: defaultS3QueueOpTimeout,
 	}, nil
 }
 
@@ -102,26 +92,8 @@ func (s *s3QueueStore) StartupCheck(ctx context.Context) error {
 		ctx, cancel = context.WithTimeout(ctx, defaultS3QueueStartupCheckTimeout)
 		defer cancel()
 	}
-	query := url.Values{}
-	query.Set("list-type", "2")
-	query.Set("max-keys", "1")
-	query.Set("prefix", s.prefix+"/queues/")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.objectURL("", query), nil)
-	if err != nil {
-		return fmt.Errorf("build queue startup check request: %w", err)
-	}
-	if err := s.signRequest(req, nil); err != nil {
-		return err
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
+	if _, err := s.conn.ListObjects(ctx, s.prefix+"/queues/", 1, "", false); err != nil {
 		return fmt.Errorf("queue startup check request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("queue startup check status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
 	probeKey := fmt.Sprintf("%s/startup-check/%019d.json", s.prefix, time.Now().UTC().UnixNano())
@@ -205,147 +177,35 @@ func (s *s3QueueStore) queuePrefix(agentUUID string) string {
 }
 
 func (s *s3QueueStore) listOldestKey(ctx context.Context, agentUUID string) (string, bool, error) {
-	query := url.Values{}
-	query.Set("list-type", "2")
-	query.Set("max-keys", "1")
-	query.Set("prefix", s.queuePrefix(agentUUID))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.objectURL("", query), nil)
+	listed, err := s.conn.ListObjects(ctx, s.queuePrefix(agentUUID), 1, "", false)
 	if err != nil {
-		return "", false, fmt.Errorf("build list request: %w", err)
-	}
-	if err := s.signRequest(req, nil); err != nil {
 		return "", false, err
 	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return "", false, fmt.Errorf("list objects: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", false, fmt.Errorf("list objects status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-
-	var parsed listBucketResult
-	if err := xml.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", false, fmt.Errorf("decode list result: %w", err)
-	}
-	if len(parsed.Contents) == 0 || strings.TrimSpace(parsed.Contents[0].Key) == "" {
+	if len(listed.Keys) == 0 || strings.TrimSpace(listed.Keys[0]) == "" {
 		return "", false, nil
 	}
-	return strings.TrimSpace(parsed.Contents[0].Key), true, nil
+	return strings.TrimSpace(listed.Keys[0]), true, nil
 }
 
 func (s *s3QueueStore) readMessage(ctx context.Context, key string) (model.Message, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.objectURL(key, nil), nil)
+	body, found, err := s.conn.GetObject(ctx, key, 4*1024*1024, false)
 	if err != nil {
-		return model.Message{}, fmt.Errorf("build get request: %w", err)
-	}
-	if err := s.signRequest(req, nil); err != nil {
 		return model.Message{}, err
 	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return model.Message{}, fmt.Errorf("get object: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return model.Message{}, fmt.Errorf("get object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	if !found {
+		return model.Message{}, fmt.Errorf("get object status %d: not found", 404)
 	}
 	var msg model.Message
-	if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
+	if err := json.Unmarshal(body, &msg); err != nil {
 		return model.Message{}, fmt.Errorf("decode message: %w", err)
 	}
 	return msg, nil
 }
 
 func (s *s3QueueStore) deleteObject(ctx context.Context, key string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.objectURL(key, nil), nil)
-	if err != nil {
-		return fmt.Errorf("build delete request: %w", err)
-	}
-	if err := s.signRequest(req, nil); err != nil {
-		return err
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("delete object: %w", err)
-	}
-	defer resp.Body.Close()
-	if !isS3WriteStatus(resp.StatusCode) {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("delete object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	return nil
+	return s.conn.DeleteObject(ctx, key, false)
 }
 
 func (s *s3QueueStore) putObject(ctx context.Context, key string, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, s.objectURL(key, nil), bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build put request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if err := s.signRequest(req, body); err != nil {
-		return err
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("put object: %w", err)
-	}
-	defer resp.Body.Close()
-	if !isS3WriteStatus(resp.StatusCode) {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("put object status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	return nil
-}
-
-func (s *s3QueueStore) objectURL(key string, query url.Values) string {
-	u, _ := url.Parse(s.endpoint)
-	if s.pathStyle {
-		p := path.Join("/", s.bucket)
-		if strings.TrimSpace(key) != "" {
-			p = path.Join(p, escapeS3Path(key))
-		}
-		u.Path = p
-	} else {
-		u.Path = path.Join("/", escapeS3Path(key))
-	}
-	if len(query) > 0 {
-		u.RawQuery = query.Encode()
-	}
-	return u.String()
-}
-
-func (s *s3QueueStore) signRequest(req *http.Request, payload []byte) error {
-	if s.signer == nil {
-		return nil
-	}
-	if err := s.signer.Sign(req, payload, time.Now().UTC()); err != nil {
-		return fmt.Errorf("sign request: %w", err)
-	}
-	return nil
-}
-
-func escapeS3Path(key string) string {
-	parts := strings.Split(strings.Trim(key, "/"), "/")
-	escaped := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		escaped = append(escaped, url.PathEscape(p))
-	}
-	return strings.Join(escaped, "/")
-}
-
-func isS3WriteStatus(code int) bool {
-	switch code {
-	case http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent:
-		return true
-	default:
-		return false
-	}
+	return s.conn.PutObject(ctx, key, body, "application/json")
 }

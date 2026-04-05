@@ -155,15 +155,7 @@ func TestS3StateStore_ProfileAndPermissionsRoundTrip(t *testing.T) {
 	server := fake.server("state-bucket")
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 
 	if err := store.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
@@ -232,15 +224,7 @@ func TestS3StateStore_ProfileAndPermissionsRoundTrip(t *testing.T) {
 		t.Fatalf("UpdateAgentMetadata failed: %v", err)
 	}
 
-	reloaded := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	reloaded := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := reloaded.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("reload loadFromS3 failed: %v", err)
 	}
@@ -281,15 +265,7 @@ func TestS3StateStore_PersistsSecondaryIndexes(t *testing.T) {
 	server := fake.server("state-bucket")
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := store.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
 	}
@@ -334,15 +310,7 @@ func TestS3StateStore_ReloadRebuildsIndexesFromPrimaryState(t *testing.T) {
 	server := fake.server("state-bucket")
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := store.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
 	}
@@ -359,15 +327,7 @@ func TestS3StateStore_ReloadRebuildsIndexesFromPrimaryState(t *testing.T) {
 		fake.deleteKey(key)
 	}
 
-	reloaded := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	reloaded := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := reloaded.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("reload loadFromS3 failed: %v", err)
 	}
@@ -386,15 +346,7 @@ func TestS3StateStore_PersistsQueueRoundTripAndDeletePurge(t *testing.T) {
 	server := fake.server("state-bucket")
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := store.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
 	}
@@ -467,15 +419,7 @@ func TestS3StateStore_PersistsQueueRoundTripAndDeletePurge(t *testing.T) {
 		t.Fatalf("expected 2 persisted queue objects, got %d", len(queueKeys))
 	}
 
-	reloaded := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	reloaded := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := reloaded.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("reload loadFromS3 failed: %v", err)
 	}
@@ -495,15 +439,7 @@ func TestS3StateStore_PersistsQueueRoundTripAndDeletePurge(t *testing.T) {
 		t.Fatalf("DeleteAgent(agent-a) failed: %v", err)
 	}
 
-	reloadedAgain := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	reloadedAgain := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := reloadedAgain.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("reload after delete failed: %v", err)
 	}
@@ -524,15 +460,7 @@ func TestS3StateStore_PersistsMessageRecordsAndLeases(t *testing.T) {
 	server := fake.server("state-bucket")
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := store.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
 	}
@@ -626,15 +554,7 @@ func TestS3StateStore_PersistsMessageRecordsAndLeases(t *testing.T) {
 		t.Fatalf("expected persisted client message index objects")
 	}
 
-	reloaded := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	reloaded := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := reloaded.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("reload loadFromS3 failed: %v", err)
 	}
@@ -682,15 +602,7 @@ func TestS3StateStore_IncrementalPersistAvoidsFullResync(t *testing.T) {
 	server := fake.server("state-bucket")
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore: NewMemoryStore(),
-		httpClient:  server.Client(),
-		endpoint:    server.URL,
-		bucket:      "state-bucket",
-		region:      "us-east-1",
-		prefix:      "moltenhub-state",
-		pathStyle:   true,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
 	if err := store.loadFromS3(context.Background()); err != nil {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
 	}
@@ -747,16 +659,8 @@ func TestS3StateStore_PersistAllAppliesDeadlineWhenContextHasNone(t *testing.T) 
 	}))
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore:    NewMemoryStore(),
-		httpClient:     server.Client(),
-		endpoint:       server.URL,
-		bucket:         "state-bucket",
-		region:         "us-east-1",
-		prefix:         "moltenhub-state",
-		pathStyle:      true,
-		persistTimeout: 50 * time.Millisecond,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	store.persistTimeout = 50 * time.Millisecond
 
 	now := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
 	id := &idGen{}
@@ -805,16 +709,8 @@ func TestS3StateStore_PersistAllUsesPerOperationDeadlineWhenContextHasNone(t *te
 	}))
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore:    NewMemoryStore(),
-		httpClient:     server.Client(),
-		endpoint:       server.URL,
-		bucket:         "state-bucket",
-		region:         "us-east-1",
-		prefix:         "moltenhub-state",
-		pathStyle:      true,
-		persistTimeout: 300 * time.Millisecond,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	store.persistTimeout = 300 * time.Millisecond
 
 	now := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
 	id := &idGen{}
@@ -858,17 +754,9 @@ func TestS3StateStore_BestEffortPersistUsesShortTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	store := &s3StateStore{
-		MemoryStore:              NewMemoryStore(),
-		httpClient:               server.Client(),
-		endpoint:                 server.URL,
-		bucket:                   "state-bucket",
-		region:                   "us-east-1",
-		prefix:                   "moltenhub-state",
-		pathStyle:                true,
-		bestEffortPersistTimeout: 50 * time.Millisecond,
-		persistTimeout:           5 * time.Second,
-	}
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	store.bestEffortPersistTimeout = 50 * time.Millisecond
+	store.persistTimeout = 5 * time.Second
 
 	start := time.Now()
 	store.RecordMessageQueued("org-best-effort")

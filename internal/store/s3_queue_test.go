@@ -92,12 +92,8 @@ func TestS3QueueStore_EnqueueDequeueRoundTrip(t *testing.T) {
 	defer server.Close()
 
 	q := &s3QueueStore{
-		httpClient: server.Client(),
-		endpoint:   server.URL,
-		bucket:     "queue-bucket",
-		region:     "us-east-1",
-		prefix:     "moltenhub-queue",
-		pathStyle:  true,
+		conn:   newTestS3Connection(t, server.Client(), server.URL, "queue-bucket"),
+		prefix: "moltenhub-queue",
 	}
 
 	msg := model.Message{
@@ -150,13 +146,9 @@ func TestS3QueueStore_EnqueueAppliesDefaultTimeoutWithoutCallerDeadline(t *testi
 	defer server.Close()
 
 	q := &s3QueueStore{
-		httpClient: server.Client(),
-		endpoint:   server.URL,
-		bucket:     "queue-bucket",
-		region:     "us-east-1",
-		prefix:     "moltenhub-queue",
-		pathStyle:  true,
-		opTimeout:  50 * time.Millisecond,
+		conn:      newTestS3Connection(t, server.Client(), server.URL, "queue-bucket"),
+		prefix:    "moltenhub-queue",
+		opTimeout: 50 * time.Millisecond,
 	}
 
 	msg := model.Message{
@@ -201,13 +193,9 @@ func TestS3QueueStore_DequeueAppliesDefaultTimeoutWithoutCallerDeadline(t *testi
 	defer server.Close()
 
 	q := &s3QueueStore{
-		httpClient: server.Client(),
-		endpoint:   server.URL,
-		bucket:     "queue-bucket",
-		region:     "us-east-1",
-		prefix:     "moltenhub-queue",
-		pathStyle:  true,
-		opTimeout:  50 * time.Millisecond,
+		conn:      newTestS3Connection(t, server.Client(), server.URL, "queue-bucket"),
+		prefix:    "moltenhub-queue",
+		opTimeout: 50 * time.Millisecond,
 	}
 
 	start := time.Now()
