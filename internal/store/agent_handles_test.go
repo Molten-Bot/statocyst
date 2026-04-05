@@ -1079,7 +1079,7 @@ func TestMemoryStoreAdminSnapshotMessageMetricsArchivesAndRollups(t *testing.T) 
 	if _, err := mem.UpdateAgentMetadataSelf(agentB.AgentUUID, map[string]any{"agent_type": "claude"}, now.Add(11*time.Second)); err != nil {
 		t.Fatalf("set agent B type failed: %v", err)
 	}
-	if _, err := mem.UpdateAgentMetadataSelf(agentOrg.AgentUUID, map[string]any{"agent_type": "openclaw"}, now.Add(12*time.Second)); err != nil {
+	if _, err := mem.UpdateAgentMetadataSelf(agentOrg.AgentUUID, map[string]any{"agent_type": "assistant"}, now.Add(12*time.Second)); err != nil {
 		t.Fatalf("set org-owned agent type failed: %v", err)
 	}
 

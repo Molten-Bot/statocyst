@@ -16,8 +16,8 @@ func TestRecordAgentSystemActivity_AppendsAndDedupesByEventID(t *testing.T) {
 	_, _, agent := seedOrgAndAgent(t, mem, ids, now, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
 
 	entry := map[string]any{
-		"activity": "moltenhub openclaw plugin registered",
-		"category": "openclaw_plugin",
+		"activity": "agent plugin registered",
+		"category": "agent_plugin",
 		"action":   "register",
 		"event_id": "evt-register-1",
 	}
@@ -34,7 +34,7 @@ func TestRecordAgentSystemActivity_AppendsAndDedupesByEventID(t *testing.T) {
 	if got := stringValue(last["source"]); got != "system" {
 		t.Fatalf("expected source=system, got %q", got)
 	}
-	if got := stringValue(last["activity"]); got != "moltenhub openclaw plugin registered" {
+	if got := stringValue(last["activity"]); got != "agent plugin registered" {
 		t.Fatalf("unexpected activity text: %q", got)
 	}
 	if got := stringValue(last["event_id"]); got != "evt-register-1" {

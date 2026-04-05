@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
@@ -48,9 +49,20 @@ func TestPullForAgentRechecksQueueWithoutNotifierSignal(t *testing.T) {
 		t.Fatalf("expected pullForAgent to recheck queue at least 3 times, got %d", queue.dequeueCalls())
 	}
 
-	message, ok := extractMessage(result["message"])
-	if !ok {
-		t.Fatalf("expected result.message payload, got %v", result["message"])
+	var message model.Message
+	switch typed := result["message"].(type) {
+	case model.Message:
+		message = typed
+	case map[string]any:
+		body, err := json.Marshal(typed)
+		if err != nil {
+			t.Fatalf("marshal result.message: %v", err)
+		}
+		if err := json.Unmarshal(body, &message); err != nil {
+			t.Fatalf("decode result.message into model.Message: %v", err)
+		}
+	default:
+		t.Fatalf("expected result.message payload, got %T", result["message"])
 	}
 	if message.MessageID != queuedMessage.MessageID {
 		t.Fatalf("expected message_id %q, got %q", queuedMessage.MessageID, message.MessageID)

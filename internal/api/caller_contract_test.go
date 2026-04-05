@@ -37,25 +37,6 @@ func TestCallerContract_AgentRuntimeEndpointsRejectHumanHeaders(t *testing.T) {
 		"delivery_id": "delivery-1",
 	}, headers)
 	requireUnauthorized(t, ackResp)
-
-	openclawPublishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
-		"to_agent_uuid": "11111111-1111-1111-1111-111111111111",
-		"message":       map[string]any{"kind": "agent_message", "text": "hello"},
-	}, headers)
-	requireUnauthorized(t, openclawPublishResp)
-
-	openclawPullResp := doJSONRequest(t, router, http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", nil, headers)
-	requireUnauthorized(t, openclawPullResp)
-
-	openclawAckResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/ack", map[string]any{
-		"delivery_id": "delivery-1",
-	}, headers)
-	requireUnauthorized(t, openclawAckResp)
-
-	openclawOfflineResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
-		"session_key": "main",
-	}, headers)
-	requireUnauthorized(t, openclawOfflineResp)
 }
 
 func TestCallerContract_HumanControlPlaneEndpointsRejectAgentToken(t *testing.T) {
@@ -108,23 +89,17 @@ func TestCallerContract_BindRedeemBootstrapWorksWithoutAuth(t *testing.T) {
 func TestOpenAPICallerContractSecuritySchemes(t *testing.T) {
 	securityByOperation := parseOpenAPIOperationSecurity(t)
 	expected := map[openAPIOperation][]string{
-		{Method: http.MethodGet, Path: "/v1/me"}:                             {"humanAuth"},
-		{Method: http.MethodPost, Path: "/v1/agent-trusts"}:                  {"humanAuth"},
-		{Method: http.MethodPost, Path: "/v1/agents/bind"}:                   nil,
-		{Method: http.MethodPatch, Path: "/v1/agents/me/metadata"}:           {"agentAuth"},
-		{Method: http.MethodGet, Path: "/v1/agents/me/capabilities"}:         {"agentAuth"},
-		{Method: http.MethodGet, Path: "/v1/agents/me/skill"}:                {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/messages/publish"}:              {"agentAuth"},
-		{Method: http.MethodGet, Path: "/v1/messages/pull"}:                  {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/messages/ack"}:                  {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/messages/nack"}:                 {"agentAuth"},
-		{Method: http.MethodGet, Path: "/v1/messages/{message_id}"}:          {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/openclaw/messages/publish"}:     {"agentAuth"},
-		{Method: http.MethodGet, Path: "/v1/openclaw/messages/pull"}:         {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/openclaw/messages/ack"}:         {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/openclaw/messages/nack"}:        {"agentAuth"},
-		{Method: http.MethodGet, Path: "/v1/openclaw/messages/{message_id}"}: {"agentAuth"},
-		{Method: http.MethodPost, Path: "/v1/openclaw/messages/offline"}:     {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/me"}:                     {"humanAuth"},
+		{Method: http.MethodPost, Path: "/v1/agent-trusts"}:          {"humanAuth"},
+		{Method: http.MethodPost, Path: "/v1/agents/bind"}:           nil,
+		{Method: http.MethodPatch, Path: "/v1/agents/me/metadata"}:   {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/agents/me/capabilities"}: {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/agents/me/skill"}:        {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/messages/publish"}:      {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/messages/pull"}:          {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/messages/ack"}:          {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/messages/nack"}:         {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/messages/{message_id}"}:  {"agentAuth"},
 	}
 
 	for op, want := range expected {
@@ -138,7 +113,7 @@ func TestOpenAPICallerContractSecuritySchemes(t *testing.T) {
 	}
 
 	for op, schemes := range securityByOperation {
-		if strings.HasPrefix(op.Path, "/v1/messages/") || strings.HasPrefix(op.Path, "/v1/openclaw/messages/") || op.Path == "/v1/agents/me" || strings.HasPrefix(op.Path, "/v1/agents/me/") {
+		if strings.HasPrefix(op.Path, "/v1/messages/") || op.Path == "/v1/agents/me" || strings.HasPrefix(op.Path, "/v1/agents/me/") {
 			if !equalSecuritySchemes(schemes, []string{"agentAuth"}) {
 				t.Fatalf("runtime endpoint must require agentAuth: %s %s got=%v", op.Method, op.Path, schemes)
 			}

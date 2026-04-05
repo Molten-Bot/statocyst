@@ -643,7 +643,7 @@ func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.
 
 	updateResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
 		"metadata": map[string]any{
-			"agent_type":       "openclaw",
+			"agent_type":       "assistant",
 			"profile_markdown": "# Ready",
 		},
 	}, map[string]string{"Authorization": "Bearer " + tokenA})
@@ -654,8 +654,8 @@ func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.
 	result := requireAgentRuntimeSuccessEnvelope(t, updatePayload)
 	agent, _ := result["agent"].(map[string]any)
 	metadata, _ := agent["metadata"].(map[string]any)
-	if got := readStringPath(metadata, "agent_type"); got != "openclaw" {
-		t.Fatalf("expected metadata.agent_type=openclaw, got %q payload=%v", got, updatePayload)
+	if got, _ := metadata["agent_type"].(string); got != "assistant" {
+		t.Fatalf("expected metadata.agent_type=assistant, got %q payload=%v", got, updatePayload)
 	}
 
 	healthAfterFallback := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
@@ -663,7 +663,7 @@ func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.
 		t.Fatalf("expected /health 200, got %d %s", healthAfterFallback.Code, healthAfterFallback.Body.String())
 	}
 	fallbackPayload := decodeJSONMap(t, healthAfterFallback.Body.Bytes())
-	if got := readStringPath(fallbackPayload, "status"); got != "degraded" {
+	if got, _ := fallbackPayload["status"].(string); got != "degraded" {
 		t.Fatalf("expected health status degraded after runtime state failure, got %q payload=%v", got, fallbackPayload)
 	}
 	storageObj, _ := fallbackPayload["storage"].(map[string]any)
@@ -693,7 +693,7 @@ func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.
 		t.Fatalf("expected /health 200, got %d %s", healthAfterRecovery.Code, healthAfterRecovery.Body.String())
 	}
 	recoveryPayload := decodeJSONMap(t, healthAfterRecovery.Body.Bytes())
-	if got := readStringPath(recoveryPayload, "status"); got != "ok" {
+	if got, _ := recoveryPayload["status"].(string); got != "ok" {
 		t.Fatalf("expected health status ok after metadata state recovery, got %q payload=%v", got, recoveryPayload)
 	}
 	recoveryStorage, _ := recoveryPayload["storage"].(map[string]any)
@@ -706,98 +706,6 @@ func TestAgentMetadataPatchUsesBestEffortFallbackWhenStateWriteFails(t *testing.
 	}
 	if _, exists := recoveryState["runtime_error"]; exists {
 		t.Fatalf("expected state runtime details cleared after successful strict metadata write, got payload=%v", recoveryPayload)
-	}
-}
-
-func TestOpenClawRegisterPluginUsesBestEffortFallbackWhenStateWriteFails(t *testing.T) {
-	stateStore := &flakyStateWriteStore{
-		MemoryStore:           store.NewMemoryStore(),
-		failMetadataWriteLeft: 1,
-	}
-	waiters := longpoll.NewWaiters()
-	h := NewHandler(stateStore, stateStore, waiters, auth.NewDevHumanAuthProvider(), "https://hub.example.com", "", "", "", "", "example.com", true, 15*time.Minute, false)
-	h.SetStorageHealth(store.StorageHealthStatus{
-		StartupMode: store.StorageStartupModeDegraded,
-		State: store.StorageBackendHealth{
-			Backend: "s3",
-			Healthy: true,
-		},
-		Queue: store.StorageBackendHealth{
-			Backend: "memory",
-			Healthy: true,
-		},
-	})
-	router := NewRouter(h)
-
-	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
-
-	registerResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/register-plugin", map[string]any{
-		"plugin_id":    "moltenhub-openclaw",
-		"package":      "@moltenbot/openclaw-plugin-moltenhub",
-		"version":      "0.1.0-test",
-		"transport":    "websocket",
-		"session_key":  "dedicated-main",
-		"session_mode": "dedicated",
-	}, map[string]string{"Authorization": "Bearer " + tokenA})
-	if registerResp.Code != http.StatusOK {
-		t.Fatalf("expected register-plugin 200 with degraded fallback, got %d %s", registerResp.Code, registerResp.Body.String())
-	}
-	registerPayload := decodeJSONMap(t, registerResp.Body.Bytes())
-	registerResult := requireAgentRuntimeSuccessEnvelope(t, registerPayload)
-	agent, _ := registerResult["agent"].(map[string]any)
-	metadata, _ := agent["metadata"].(map[string]any)
-	if got := readStringPath(metadata, "agent_type"); got != "openclaw" {
-		t.Fatalf("expected metadata.agent_type=openclaw, got %q payload=%v", got, registerPayload)
-	}
-
-	healthAfterFallback := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
-	if healthAfterFallback.Code != http.StatusOK {
-		t.Fatalf("expected /health 200, got %d %s", healthAfterFallback.Code, healthAfterFallback.Body.String())
-	}
-	fallbackPayload := decodeJSONMap(t, healthAfterFallback.Body.Bytes())
-	if got := readStringPath(fallbackPayload, "status"); got != "degraded" {
-		t.Fatalf("expected health status degraded after register fallback, got %q payload=%v", got, fallbackPayload)
-	}
-	storageObj, _ := fallbackPayload["storage"].(map[string]any)
-	stateObj, _ := storageObj["state"].(map[string]any)
-	stateErr, _ := stateObj["error"].(string)
-	if stateErr != "request timed out" {
-		t.Fatalf("expected sanitized runtime state error after register fallback, got %q payload=%v", stateErr, fallbackPayload)
-	}
-	if stateRuntimeErr, _ := stateObj["runtime_error"].(string); stateRuntimeErr != "state agent metadata update failed: request timed out" {
-		t.Fatalf("expected state runtime error after register fallback, got %q payload=%v", stateRuntimeErr, fallbackPayload)
-	}
-
-	registerRetry := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/register-plugin", map[string]any{
-		"plugin_id":    "moltenhub-openclaw",
-		"package":      "@moltenbot/openclaw-plugin-moltenhub",
-		"version":      "0.1.1-test",
-		"transport":    "websocket",
-		"session_key":  "dedicated-main",
-		"session_mode": "dedicated",
-	}, map[string]string{"Authorization": "Bearer " + tokenA})
-	if registerRetry.Code != http.StatusOK {
-		t.Fatalf("expected register-plugin retry 200 after state write recovery, got %d %s", registerRetry.Code, registerRetry.Body.String())
-	}
-
-	healthAfterRecovery := doJSONRequest(t, router, http.MethodGet, "/health", nil, nil)
-	if healthAfterRecovery.Code != http.StatusOK {
-		t.Fatalf("expected /health 200, got %d %s", healthAfterRecovery.Code, healthAfterRecovery.Body.String())
-	}
-	recoveryPayload := decodeJSONMap(t, healthAfterRecovery.Body.Bytes())
-	if got := readStringPath(recoveryPayload, "status"); got != "ok" {
-		t.Fatalf("expected health status ok after register state recovery, got %q payload=%v", got, recoveryPayload)
-	}
-	recoveryStorage, _ := recoveryPayload["storage"].(map[string]any)
-	recoveryState, _ := recoveryStorage["state"].(map[string]any)
-	if healthy, _ := recoveryState["healthy"].(bool); !healthy {
-		t.Fatalf("expected state health true after register state recovery, got %v payload=%v", recoveryState["healthy"], recoveryPayload)
-	}
-	if _, exists := recoveryState["error"]; exists {
-		t.Fatalf("expected state runtime error cleared after successful strict register write, got payload=%v", recoveryPayload)
-	}
-	if _, exists := recoveryState["runtime_error"]; exists {
-		t.Fatalf("expected state runtime details cleared after successful strict register write, got payload=%v", recoveryPayload)
 	}
 }
 
@@ -2115,11 +2023,11 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	if !strings.Contains(connectPrompt, "control_plane.can_communicate=true") || !strings.Contains(connectPrompt, "POST {api_base}/messages/publish") {
 		t.Fatalf("expected connect prompt to include readiness + first publish guidance, got %q", connectPrompt)
 	}
-	if !strings.Contains(connectPrompt, "Optional OpenClaw-only hints (not required):") {
-		t.Fatalf("expected connect prompt to include optional OpenClaw hints heading, got %q", connectPrompt)
+	if !strings.Contains(connectPrompt, "Optional ") || !strings.Contains(connectPrompt, "hints (not required):") {
+		t.Fatalf("expected connect prompt to include optional runtime hints heading, got %q", connectPrompt)
 	}
-	if !strings.Contains(connectPrompt, "@moltenbot/openclaw-plugin-moltenhub") {
-		t.Fatalf("expected connect prompt to include OpenClaw plugin package hint, got %q", connectPrompt)
+	if !strings.Contains(connectPrompt, "Install plugin package") {
+		t.Fatalf("expected connect prompt to include plugin package hint, got %q", connectPrompt)
 	}
 	if !strings.Contains(connectPrompt, "workspace/.moltenhub/config.json") {
 		t.Fatalf("expected connect prompt to include optional workspace config path hint, got %q", connectPrompt)
@@ -3134,19 +3042,23 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if _, ok := capsPayload["skill_call_contract"].(map[string]any); !ok {
 		t.Fatalf("expected skill_call_contract in capabilities payload, got %v", capsPayload)
 	}
-	if _, ok := capsPayload["protocol_adapters"].(map[string]any); !ok {
-		t.Fatalf("expected protocol_adapters in capabilities payload, got %v", capsPayload)
+	if adaptersRaw, exists := capsPayload["protocol_adapters"]; exists {
+		adapters, ok := adaptersRaw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected protocol_adapters to be a map when present, got %T", adaptersRaw)
+		}
+		if len(adapters) != 0 {
+			t.Fatalf("expected empty protocol_adapters when present, got %v", adapters)
+		}
 	}
-	controlPlaneAdapters, ok := controlPlane["protocol_adapters"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected control_plane.protocol_adapters, got %v", controlPlane)
-	}
-	openClawAdapter, ok := controlPlaneAdapters["openclaw_http_v1"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected openclaw_http_v1 adapter in control_plane.protocol_adapters, got %v", controlPlaneAdapters)
-	}
-	if got, _ := openClawAdapter["protocol"].(string); got != "openclaw.http.v1" {
-		t.Fatalf("expected openclaw adapter protocol, got %q", got)
+	if controlPlaneAdaptersRaw, exists := controlPlane["protocol_adapters"]; exists {
+		controlPlaneAdapters, ok := controlPlaneAdaptersRaw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected control_plane.protocol_adapters to be a map when present, got %T", controlPlaneAdaptersRaw)
+		}
+		if len(controlPlaneAdapters) != 0 {
+			t.Fatalf("expected no protocol adapters in control_plane.protocol_adapters, got %v", controlPlaneAdapters)
+		}
 	}
 
 	skillJSONResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/skill", nil, map[string]string{
@@ -3182,10 +3094,6 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if !strings.Contains(skillContent, "\"agent_type\":\"<assistant-type>\"") || !strings.Contains(skillContent, "\"llm\":\"<provider>/<model>@<version>\"") || !strings.Contains(skillContent, "\"harness\":\"<runtime-or-framework>@<version>\"") {
 		t.Fatalf("expected onboarding skill to include minimal metadata setup guidance, got %q", skillContent)
 	}
-	if strings.Contains(skillContent, "## OpenClaw Node + Agent HTTP Path") {
-		t.Fatalf("did not expect OpenClaw-only section for non-OpenClaw profile, got %q", skillContent)
-	}
-
 	req := httptest.NewRequest(http.MethodGet, "/v1/agents/me/skill?format=markdown", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenA)
 	req.Header.Set("Accept", "text/markdown")
@@ -3242,46 +3150,6 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	notAcceptablePayload := decodeJSONMap(t, notAcceptableResp.Body.Bytes())
 	if notAcceptablePayload["error"] != "not_acceptable" {
 		t.Fatalf("expected not_acceptable error code, got %v", notAcceptablePayload["error"])
-	}
-}
-
-func TestAgentSkillOpenClawProfileIncludesAdapterSection(t *testing.T) {
-	router := newTestRouter()
-	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
-	headers := map[string]string{"Authorization": "Bearer " + tokenA}
-
-	patchResp := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
-		"metadata": map[string]any{
-			"agent_type": "openclaw",
-		},
-	}, headers)
-	if patchResp.Code != http.StatusOK {
-		t.Fatalf("expected metadata patch 200, got %d %s", patchResp.Code, patchResp.Body.String())
-	}
-
-	skillResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/skill", nil, headers)
-	if skillResp.Code != http.StatusOK {
-		t.Fatalf("agent skill json failed: %d %s", skillResp.Code, skillResp.Body.String())
-	}
-	skillPayload := decodeJSONMap(t, skillResp.Body.Bytes())
-	skillObj, _ := skillPayload["skill"].(map[string]any)
-	skillContent, _ := skillObj["content"].(string)
-	if !strings.Contains(skillContent, "## OpenClaw Node + Agent HTTP Path") {
-		t.Fatalf("expected OpenClaw skill section, got %q", skillContent)
-	}
-	if !strings.Contains(skillContent, "POST http://example.com/v1/openclaw/messages/publish") {
-		t.Fatalf("expected OpenClaw publish endpoint in skill content, got %q", skillContent)
-	}
-
-	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, headers)
-	if capsResp.Code != http.StatusOK {
-		t.Fatalf("agent capabilities failed: %d %s", capsResp.Code, capsResp.Body.String())
-	}
-	capsPayload := decodeJSONMap(t, capsResp.Body.Bytes())
-	adapters, _ := capsPayload["protocol_adapters"].(map[string]any)
-	openClawAdapter, _ := adapters["openclaw_http_v1"].(map[string]any)
-	if got, _ := openClawAdapter["protocol"].(string); got != "openclaw.http.v1" {
-		t.Fatalf("expected openclaw adapter protocol, got %q", got)
 	}
 }
 
@@ -3452,7 +3320,7 @@ func TestAgentSystemActivityLogIsAppendOnlyAndReadOnly(t *testing.T) {
 	readAResult := requireAgentRuntimeSuccessEnvelope(t, readAPayload)
 	readAAgent, _ := readAResult["agent"].(map[string]any)
 	readALog, _ := readAAgent["activity_log"].([]any)
-	if hasActivityText(readALog, "forged activity should not persist") {
+	if hasSystemActivityContaining(readALog, "forged activity should not persist") {
 		t.Fatalf("expected forged system activity to be ignored, got activity_log=%v", readALog)
 	}
 
@@ -4330,7 +4198,7 @@ func TestPublicSnapshotIncludesSanitizedAgentActivityLog(t *testing.T) {
 	if len(log) == 0 {
 		t.Fatalf("expected public snapshot sender activity_log entries, got sender=%v", senderAgent)
 	}
-	if !hasActivityText(log, "sent first message to agent-b") && !hasActivityText(log, "sent message to agent-b") {
+	if !hasSystemActivityContaining(log, "sent first message to agent-b") && !hasSystemActivityContaining(log, "sent message to agent-b") {
 		t.Fatalf("expected sender public activity_log to include receiver handle when public, got %v", log)
 	}
 	for _, raw := range log {
