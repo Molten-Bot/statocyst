@@ -2142,35 +2142,6 @@ func normalizeAgentSkillName(raw string) (string, bool) {
 	return normalized, true
 }
 
-func containsLikelySecret(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "" {
-		return false
-	}
-	if containsSecretProhibition(normalized) {
-		return false
-	}
-	secretMarkers := []string{
-		"api key",
-		"api_key",
-		"apikey",
-		"access key",
-		"secret",
-		"password",
-		"passwd",
-		"private key",
-		"bearer ",
-		"token=",
-		"token:",
-	}
-	for _, marker := range secretMarkers {
-		if strings.Contains(normalized, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func agentTypeFromMetadata(metadata map[string]any) string {
 	rawType, ok := metadata[model.AgentMetadataKeyType]
 	if !ok {

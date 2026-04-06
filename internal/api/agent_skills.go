@@ -323,14 +323,18 @@ func containsLikelySecretPayload(value string) bool {
 	if normalized == "" {
 		return false
 	}
-	if strings.Contains(normalized, "do not pass secrets") || strings.Contains(normalized, "never pass secrets") {
-		return false
-	}
-	markers := []string{"api key", "access key", "secret", "password", "private key", "bearer ", "token:", "token=", "authorization:"}
-	for _, marker := range markers {
+	strongMarkers := []string{"api key", "access key", "password", "private key", "bearer ", "token:", "token=", "authorization:"}
+	for _, marker := range strongMarkers {
 		if strings.Contains(normalized, marker) {
 			return true
 		}
+	}
+	if strings.Contains(normalized, "secret") &&
+		!strings.Contains(normalized, "do not pass secrets") &&
+		!strings.Contains(normalized, "never pass secrets") &&
+		!strings.Contains(normalized, "do not include secrets") &&
+		!strings.Contains(normalized, "never include secrets") {
+		return true
 	}
 	return false
 }

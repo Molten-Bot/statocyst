@@ -18,7 +18,7 @@ func normalizeSkillParameters(raw any) (map[string]any, error) {
 	case map[string]any:
 		format := strings.ToLower(strings.TrimSpace(stringValue(typed["format"])))
 		if format == "markdown" || format == "json" {
-			return normalizeFormattedSkillParameters(format, typed["schema"])
+			return normalizeFormattedSkillParameters(format, typed)
 		}
 		return normalizeJSONSkillParameters(typed)
 	default:
@@ -26,23 +26,136 @@ func normalizeSkillParameters(raw any) (map[string]any, error) {
 	}
 }
 
-func normalizeFormattedSkillParameters(format string, schema any) (map[string]any, error) {
+func normalizeFormattedSkillParameters(format string, raw map[string]any) (map[string]any, error) {
 	switch format {
 	case "markdown":
-		body, ok := schema.(string)
-		if !ok {
-			return nil, ErrInvalidAgentSkills
+		if schema, ok := raw["schema"]; ok {
+			body, ok := schema.(string)
+			if !ok {
+				return nil, ErrInvalidAgentSkills
+			}
+			return normalizeMarkdownSkillParameters(strings.TrimSpace(body))
 		}
-		return normalizeMarkdownSkillParameters(strings.TrimSpace(body))
+		if body := strings.TrimSpace(stringValue(raw["body"])); body != "" {
+			return normalizeMarkdownSkillParameters(body)
+		}
+		return nil, ErrInvalidAgentSkills
 	case "json":
-		obj, ok := schema.(map[string]any)
-		if !ok {
-			return nil, ErrInvalidAgentSkills
+		if schema, ok := raw["schema"]; ok {
+			obj, ok := schema.(map[string]any)
+			if !ok {
+				return nil, ErrInvalidAgentSkills
+			}
+			return normalizeJSONSkillParameters(obj)
 		}
-		return normalizeJSONSkillParameters(obj)
+		if _, hasRequired := raw["required"]; hasRequired {
+			return normalizeJSONSkillParameters(raw)
+		}
+		if _, hasOptional := raw["optional"]; hasOptional {
+			return normalizeJSONSkillParameters(raw)
+		}
+		if _, hasSecretPolicy := raw["secret_policy"]; hasSecretPolicy {
+			return normalizeJSONSkillParameters(raw)
+		}
+		if _, hasSecretsForbidden := raw["secrets_forbidden"]; hasSecretsForbidden {
+			return normalizeJSONSkillParameters(raw)
+		}
+		return nil, ErrInvalidAgentSkills
 	default:
 		return nil, ErrInvalidAgentSkills
 	}
+}
+
+func containsSecretProhibition(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	phrases := []string{
+		"never pass secrets",
+		"never include secrets",
+		"do not pass secrets",
+		"do not include secrets",
+		"don't pass secrets",
+		"don't include secrets",
+		"secrets are forbidden",
+		"secret values are forbidden",
+		"passing secrets is forbidden",
+		"never pass tokens",
+		"do not pass tokens",
+		"never pass api keys",
+		"do not pass api keys",
+	}
+	for _, phrase := range phrases {
+		if strings.Contains(normalized, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsStrongSecretMarker(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	markers := []string{
+		"api key",
+		"api_key",
+		"apikey",
+		"access key",
+		"password",
+		"passwd",
+		"private key",
+		"bearer ",
+		"token=",
+		"token:",
+		"authorization:",
+	}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsGenericSecretMarker(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "secret")
+}
+
+func containsLikelySecret(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	if containsStrongSecretMarker(normalized) {
+		return true
+	}
+	if containsGenericSecretMarker(normalized) && !containsSecretProhibition(normalized) {
+		return true
+	}
+	return false
+}
+
+func validateSkillParameterPayloadKeys(provided map[string]string, required []string, allowed map[string]struct{}) []string {
+	errors := []string{}
+	for _, name := range required {
+		if strings.TrimSpace(provided[name]) == "" {
+			errors = append(errors, fmt.Sprintf("missing required parameter %q", name))
+		}
+	}
+	for name := range provided {
+		if _, ok := allowed[name]; !ok {
+			errors = append(errors, fmt.Sprintf("unknown parameter %q", name))
+		}
+	}
+	sort.Strings(errors)
+	return errors
 }
 
 func normalizeMarkdownSkillParameters(markdown string) (map[string]any, error) {
@@ -234,48 +347,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func containsSecretProhibition(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "" {
-		return false
-	}
-	phrases := []string{
-		"never pass secrets",
-		"never include secrets",
-		"do not pass secrets",
-		"do not include secrets",
-		"don't pass secrets",
-		"don't include secrets",
-		"secrets are forbidden",
-		"secret values are forbidden",
-		"passing secrets is forbidden",
-		"never pass tokens",
-		"do not pass tokens",
-		"never pass api keys",
-		"do not pass api keys",
-	}
-	for _, phrase := range phrases {
-		if strings.Contains(normalized, phrase) {
-			return true
-		}
-	}
-	return false
-}
-
-func validateSkillParameterPayloadKeys(provided map[string]string, required []string, allowed map[string]struct{}) []string {
-	errors := []string{}
-	for _, name := range required {
-		if strings.TrimSpace(provided[name]) == "" {
-			errors = append(errors, fmt.Sprintf("missing required parameter %q", name))
-		}
-	}
-	for name := range provided {
-		if _, ok := allowed[name]; !ok {
-			errors = append(errors, fmt.Sprintf("unknown parameter %q", name))
-		}
-	}
-	sort.Strings(errors)
-	return errors
 }

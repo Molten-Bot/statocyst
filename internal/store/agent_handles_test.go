@@ -1066,6 +1066,35 @@ func TestMemoryStoreAgentMetadataNormalizesAgentType(t *testing.T) {
 	if got := stringValue(mathParameters["format"]); got != "markdown" {
 		t.Fatalf("expected math.add parameters format=markdown, got %q payload=%v", got, mathParameters)
 	}
+	withExplicitFormat, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"skills": []map[string]any{
+			{
+				"name":        "calendar.lookup",
+				"description": "Look up availability by day.",
+				"parameters": map[string]any{
+					"format": "json",
+					"required": []map[string]any{
+						{"name": "date", "description": "ISO date."},
+					},
+					"optional": []map[string]any{
+						{"name": "timezone", "description": "IANA timezone."},
+					},
+					"secret_policy": "forbidden",
+				},
+			},
+		},
+	}, now.Add(257*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateAgentMetadataSelf explicit format parameters failed: %v", err)
+	}
+	explicitSkills, _ := withExplicitFormat.Metadata[model.AgentMetadataKeySkills].([]map[string]any)
+	if len(explicitSkills) != 1 {
+		t.Fatalf("expected 1 explicit-format skill after normalization, got %v", explicitSkills)
+	}
+	explicitParameters, _ := explicitSkills[0]["parameters"].(map[string]any)
+	if got := stringValue(explicitParameters["format"]); got != "json" {
+		t.Fatalf("expected explicit-format parameters format=json, got %q payload=%v", got, explicitParameters)
+	}
 
 	if _, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
 		"skills": []map[string]any{
@@ -1081,6 +1110,13 @@ func TestMemoryStoreAgentMetadataNormalizesAgentType(t *testing.T) {
 		},
 	}, now.Add(270*time.Second)); !errors.Is(err, ErrInvalidAgentSkills) {
 		t.Fatalf("expected invalid skills shape/name to fail with ErrInvalidAgentSkills, got %v", err)
+	}
+	if _, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"skills": []map[string]any{
+			{"name": "weather_lookup", "description": "Use API key ABC123 to query upstream. Never pass secrets."},
+		},
+	}, now.Add(272*time.Second)); !errors.Is(err, ErrInvalidSkillDescription) {
+		t.Fatalf("expected explicit secret leak in skill description to fail with ErrInvalidSkillDescription, got %v", err)
 	}
 	if _, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
 		"skills": []map[string]any{
