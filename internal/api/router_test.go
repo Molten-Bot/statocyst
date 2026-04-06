@@ -4706,6 +4706,31 @@ func TestUIRoutes_AllAppPagesIncludeAgentIdentityBadge(t *testing.T) {
 		if !strings.Contains(body, `id="agentIdentityUUID"`) {
 			t.Fatalf("%s missing agent identity uuid", path)
 		}
+		if !strings.Contains(body, `ID: uuid`) {
+			t.Fatalf("%s missing explicit agent identity id label", path)
+		}
+	}
+}
+
+func TestUIRoutes_CommonJSIncludesAgentIdentityBadgeFields(t *testing.T) {
+	router := newTestRouter()
+	req := httptest.NewRequest(http.MethodGet, "/common.js", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("/common.js expected 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	body := resp.Body.String()
+	for _, fragment := range []string{
+		`metadata.display_name`,
+		`metadata.emoji`,
+		`agent.agent_uuid`,
+		"`ID: ${uuid}`",
+	} {
+		if !strings.Contains(body, fragment) {
+			t.Fatalf("/common.js missing agent identity fragment %q", fragment)
+		}
 	}
 }
 

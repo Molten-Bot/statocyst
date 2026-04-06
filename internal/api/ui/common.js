@@ -129,7 +129,7 @@ const MoltenHubUI = (() => {
 
     emojiEl.textContent = emoji;
     nameEl.textContent = displayName;
-    uuidEl.textContent = uuid || "uuid unavailable";
+    uuidEl.textContent = uuid ? `ID: ${uuid}` : "ID unavailable";
     root.hidden = false;
   }
 

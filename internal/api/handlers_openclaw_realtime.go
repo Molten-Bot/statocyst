@@ -61,6 +61,9 @@ type openClawWSRequest struct {
 	DeliveryID  string         `json:"delivery_id,omitempty"`
 	MessageID   string         `json:"message_id,omitempty"`
 	TimeoutMS   *int           `json:"timeout_ms,omitempty"`
+	Reason      string         `json:"reason,omitempty"`
+	ErrorDetail string         `json:"error_detail,omitempty"`
+	LogPaths    []string       `json:"log_paths,omitempty"`
 }
 
 // openClawWSResponseWriter bridges websocket upgrades through wrappers that may
@@ -400,7 +403,12 @@ func (h *Handler) handleOpenClawWSCommand(
 		if deliveryID == "" {
 			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_delivery_id", "delivery_id is required"))
 		}
-		record, handlerErr := h.nackDeliveryForAgent(ctx, agentUUID, deliveryID)
+		record, handlerErr := h.nackDeliveryForAgent(ctx, agentUUID, deliveryActionRequest{
+			DeliveryID:  deliveryID,
+			Reason:      req.Reason,
+			ErrorDetail: req.ErrorDetail,
+			LogPaths:    req.LogPaths,
+		})
 		if handlerErr != nil {
 			return writeEvent(openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message))
 		}
