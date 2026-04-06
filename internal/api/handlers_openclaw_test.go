@@ -139,6 +139,20 @@ func TestOpenClawPublishSkillActivationAllowsMissingPayload(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
+	metadataPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"skills": []map[string]any{
+				{
+					"name":        "weather_lookup",
+					"description": "Get current weather for a location.",
+				},
+			},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if metadataPatch.Code != http.StatusOK {
+		t.Fatalf("metadata patch failed: %d %s", metadataPatch.Code, metadataPatch.Body.String())
+	}
+
 	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
 		"to_agent_uuid": agentUUIDB,
 		"message": map[string]any{
@@ -421,6 +435,20 @@ func TestOpenClawWebSocketPresenceOnlineThenOffline(t *testing.T) {
 func TestOpenClawWebSocketSkillActivationPublishAllowsMissingPayload(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	metadataPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"skills": []map[string]any{
+				{
+					"name":        "weather_lookup",
+					"description": "Get current weather for a location.",
+				},
+			},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if metadataPatch.Code != http.StatusOK {
+		t.Fatalf("metadata patch failed: %d %s", metadataPatch.Code, metadataPatch.Body.String())
+	}
 
 	server := httptest.NewServer(router)
 	defer server.Close()
