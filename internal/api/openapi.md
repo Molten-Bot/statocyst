@@ -578,6 +578,30 @@ paths:
       responses:
         '201':
           description: Bind token created with server-generated connect prompt
+  /v1/me/agents/bind-token:
+    post:
+      summary: Create short-lived one-time agent bind token without onboarding markdown
+      description: |
+        Human-auth route to mint a bind token for agent onboarding.
+        If `org_id` is provided, the token is scoped to that organization.
+        If `org_id` is omitted/empty, the token is for a human-owned (no-org) agent.
+        The token is then redeemed by the agent at `POST /v1/agents/bind`.
+        Unlike `/v1/me/agents/bind-tokens`, this response omits `connect_prompt` and
+        only returns the token metadata needed by the caller.
+      security:
+        - humanAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                org_id:
+                  type: string
+      responses:
+        '201':
+          description: Bind token created without connect prompt
   /v1/me/agent-trusts:
     get:
       summary: List agent trust edges manageable by current human
@@ -1078,6 +1102,30 @@ paths:
       responses:
         '201':
           description: Bind token created with server-generated connect prompt
+  /v1/agents/bind-token:
+    post:
+      summary: Create single-use bind token without onboarding markdown (human control-plane)
+      description: |
+        Human-auth route used to mint one-time bind tokens for agent bootstrap.
+        Unlike `/v1/agents/bind-tokens`, this response omits the server-generated
+        `connect_prompt` and only returns bind token fields and expiry metadata.
+      security:
+        - humanAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [org_id]
+              properties:
+                org_id:
+                  type: string
+                owner_human_id:
+                  type: string
+      responses:
+        '201':
+          description: Bind token created without connect prompt
   /v1/agents/bind:
     post:
       summary: Agent self-onboarding (bind token -> bearer token)

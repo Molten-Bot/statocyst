@@ -554,6 +554,14 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request) {
+	h.handleMyAgentBindTokenCreate(w, r, true)
+}
+
+func (h *Handler) handleMyAgentBindToken(w http.ResponseWriter, r *http.Request) {
+	h.handleMyAgentBindTokenCreate(w, r, false)
+}
+
+func (h *Handler) handleMyAgentBindTokenCreate(w http.ResponseWriter, r *http.Request, includeConnectPrompt bool) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -594,14 +602,7 @@ func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"bind_id":        bind.BindID,
-		"bind_token":     bindSecret,
-		"connect_prompt": h.buildAgentConnectPrompt(r, bind, bindSecret),
-		"org_id":         bind.OrgID,
-		"owner_human_id": bind.OwnerHumanID,
-		"expires_at":     bind.ExpiresAt,
-	})
+	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, includeConnectPrompt))
 }
 
 func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
@@ -2466,6 +2467,14 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) {
+	h.handleCreateBindTokenCreate(w, r, true)
+}
+
+func (h *Handler) handleCreateBindTokenWithoutPrompt(w http.ResponseWriter, r *http.Request) {
+	h.handleCreateBindTokenCreate(w, r, false)
+}
+
+func (h *Handler) handleCreateBindTokenCreate(w http.ResponseWriter, r *http.Request, includeConnectPrompt bool) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -2518,14 +2527,21 @@ func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
+	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, includeConnectPrompt))
+}
+
+func (h *Handler) bindTokenCreateResponse(r *http.Request, bind model.BindToken, bindSecret string, includeConnectPrompt bool) map[string]any {
+	payload := map[string]any{
 		"bind_id":        bind.BindID,
 		"bind_token":     bindSecret,
-		"connect_prompt": h.buildAgentConnectPrompt(r, bind, bindSecret),
 		"org_id":         bind.OrgID,
 		"owner_human_id": bind.OwnerHumanID,
 		"expires_at":     bind.ExpiresAt,
-	})
+	}
+	if includeConnectPrompt {
+		payload["connect_prompt"] = h.buildAgentConnectPrompt(r, bind, bindSecret)
+	}
+	return payload
 }
 
 func (h *Handler) createBindTokenWithRetry(orgID string, ownerHumanID *string, actorHumanID string, isSuperAdmin bool) (model.BindToken, string, error) {

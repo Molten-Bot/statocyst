@@ -2135,6 +2135,45 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	}
 }
 
+func TestMyAgentBindTokenCreateWithoutPromptOmitsConnectPrompt(t *testing.T) {
+	router := newTestRouter()
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-token", map[string]any{}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create my bind token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	createPayload := decodeJSONMap(t, createResp.Body.Bytes())
+	if bindToken, _ := createPayload["bind_token"].(string); strings.TrimSpace(bindToken) == "" {
+		t.Fatalf("bind_token missing")
+	}
+	if _, ok := createPayload["connect_prompt"]; ok {
+		t.Fatalf("expected connect_prompt to be omitted, payload=%v", createPayload)
+	}
+}
+
+func TestCreateBindTokenWithoutPromptOmitsConnectPrompt(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Alpha Org")
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-token", map[string]any{
+		"org_id": orgID,
+	}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create bind token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	createPayload := decodeJSONMap(t, createResp.Body.Bytes())
+	if bindToken, _ := createPayload["bind_token"].(string); strings.TrimSpace(bindToken) == "" {
+		t.Fatalf("bind_token missing")
+	}
+	if got, _ := createPayload["org_id"].(string); got != orgID {
+		t.Fatalf("expected org_id %q, got %q", orgID, got)
+	}
+	if _, ok := createPayload["connect_prompt"]; ok {
+		t.Fatalf("expected connect_prompt to be omitted, payload=%v", createPayload)
+	}
+}
+
 func TestMyAgentBindTokenCreateRetriesTransientStoreError(t *testing.T) {
 	mem := &flakyBindTokenStore{
 		MemoryStore:        store.NewMemoryStore(),
