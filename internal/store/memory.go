@@ -2081,7 +2081,7 @@ func normalizeAndValidateAgentSkillsMetadata(metadata map[string]any, key string
 		return nil, true, ErrInvalidAgentSkills
 	}
 
-	byName := map[string]string{}
+	entriesByName := map[string]map[string]any{}
 	for _, entry := range entries {
 		rawName, _ := entry["name"].(string)
 		name, ok := normalizeAgentSkillName(rawName)
@@ -2096,21 +2096,31 @@ func normalizeAndValidateAgentSkillsMetadata(metadata map[string]any, key string
 		if containsLikelySecret(description) {
 			return nil, true, ErrInvalidSkillDescription
 		}
-		byName[name] = description
+		normalizedEntry := map[string]any{
+			"name":        name,
+			"description": description,
+		}
+		if rawParameters, exists := entry["parameters"]; exists {
+			parameters, err := normalizeSkillParameters(rawParameters)
+			if err != nil {
+				return nil, true, err
+			}
+			if parameters != nil {
+				normalizedEntry["parameters"] = parameters
+			}
+		}
+		entriesByName[name] = normalizedEntry
 	}
 
-	names := make([]string, 0, len(byName))
-	for name := range byName {
+	names := make([]string, 0, len(entriesByName))
+	for name := range entriesByName {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
 	normalized := make([]map[string]any, 0, len(names))
 	for _, name := range names {
-		normalized = append(normalized, map[string]any{
-			"name":        name,
-			"description": byName[name],
-		})
+		normalized = append(normalized, entriesByName[name])
 	}
 	return normalized, true, nil
 }
@@ -2135,6 +2145,9 @@ func normalizeAgentSkillName(raw string) (string, bool) {
 func containsLikelySecret(value string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {
+		return false
+	}
+	if containsSecretProhibition(normalized) {
 		return false
 	}
 	secretMarkers := []string{

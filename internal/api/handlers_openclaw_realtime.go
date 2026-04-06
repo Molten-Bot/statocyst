@@ -285,7 +285,7 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 				return
 			}
 			if handlerErr != nil {
-				if !writeEvent(openClawWSError("", handlerErr.status, handlerErr.code, handlerErr.message)) {
+				if !writeEvent(openClawWSErrorFromRuntime("", handlerErr)) {
 					cancel()
 					return
 				}
@@ -369,7 +369,7 @@ func (h *Handler) handleOpenClawWSCommand(
 			ClientMsgID: req.ClientMsgID,
 		})
 		if handlerErr != nil {
-			return writeEvent(openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message))
+			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
 		out := cloneStringAnyMap(result)
 		out["transport"] = openClawTransportMetadataForAdapter("websocket")
@@ -386,7 +386,7 @@ func (h *Handler) handleOpenClawWSCommand(
 		}
 		record, handlerErr := h.ackDeliveryForAgent(agentUUID, deliveryID)
 		if handlerErr != nil {
-			return writeEvent(openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message))
+			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
 		result := withOpenClawProjection(messageStatusResponse(record))
 		result["transport"] = openClawTransportMetadataForAdapter("websocket")
@@ -402,7 +402,7 @@ func (h *Handler) handleOpenClawWSCommand(
 		}
 		record, handlerErr := h.nackDeliveryForAgent(ctx, agentUUID, deliveryID)
 		if handlerErr != nil {
-			return writeEvent(openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message))
+			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
 		result := withOpenClawProjection(messageStatusResponse(record))
 		result["transport"] = openClawTransportMetadataForAdapter("websocket")
@@ -418,7 +418,7 @@ func (h *Handler) handleOpenClawWSCommand(
 		}
 		record, handlerErr := h.messageStatusForAgent(agentUUID, messageID)
 		if handlerErr != nil {
-			return writeEvent(openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message))
+			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
 		result := withOpenClawProjection(messageStatusResponse(record))
 		result["transport"] = openClawTransportMetadataForAdapter("websocket")
@@ -469,9 +469,10 @@ func openClawWSResponse(requestID string, status int, result map[string]any) map
 
 func openClawWSError(requestID string, status int, code, message string) map[string]any {
 	payload := map[string]any{
-		"type":   "response",
-		"ok":     false,
-		"status": status,
+		"type":    "response",
+		"ok":      false,
+		"failure": true,
+		"status":  status,
 		"error": map[string]any{
 			"code":    strings.TrimSpace(code),
 			"message": strings.TrimSpace(message),
@@ -479,6 +480,23 @@ func openClawWSError(requestID string, status int, code, message string) map[str
 	}
 	if requestID != "" {
 		payload["request_id"] = requestID
+	}
+	return payload
+}
+
+func openClawWSErrorFromRuntime(requestID string, handlerErr *runtimeHandlerError) map[string]any {
+	if handlerErr == nil {
+		return openClawWSError(requestID, http.StatusInternalServerError, "unknown_error", "unknown runtime error")
+	}
+	payload := openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message)
+	errorPayload, _ := payload["error"].(map[string]any)
+	if errorPayload == nil {
+		errorPayload = map[string]any{}
+		payload["error"] = errorPayload
+	}
+	for key, value := range handlerErr.extras {
+		payload[key] = value
+		errorPayload[key] = value
 	}
 	return payload
 }

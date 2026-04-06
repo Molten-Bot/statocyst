@@ -3666,6 +3666,122 @@ func TestAgentMeMetadataRejectsSecretLikeSkillDescriptions(t *testing.T) {
 	}
 }
 
+func TestPublishSkillActivationValidatesJSONParameters(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	metadataPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"skills": []map[string]any{
+				{
+					"name":        "weather_lookup",
+					"description": "Get current weather for a location.",
+					"parameters": map[string]any{
+						"required": []map[string]any{
+							{"name": "location", "description": "City or postal code."},
+						},
+						"optional": []map[string]any{
+							{"name": "units", "description": "metric or imperial."},
+						},
+						"secret_policy": "forbidden",
+					},
+				},
+			},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if metadataPatch.Code != http.StatusOK {
+		t.Fatalf("metadata patch failed: %d %s", metadataPatch.Code, metadataPatch.Body.String())
+	}
+
+	payloadBytes, err := json.Marshal(map[string]any{
+		"type":           "skill_request",
+		"request_id":     "req-json-skill",
+		"skill_name":     "weather_lookup",
+		"reply_required": true,
+		"payload": map[string]any{
+			"units": "metric",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal skill payload failed: %v", err)
+	}
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/messages/publish", map[string]any{
+		"to_agent_uuid": agentUUIDB,
+		"content_type":  "application/json",
+		"payload":       string(payloadBytes),
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected publish validation failure 400, got %d %s", resp.Code, resp.Body.String())
+	}
+	body := decodeJSONMap(t, resp.Body.Bytes())
+	if got, _ := body["error"].(string); got != "invalid_skill_request" {
+		t.Fatalf("expected invalid_skill_request, got %q payload=%v", got, body)
+	}
+	if failure, _ := body["failure"].(bool); !failure {
+		t.Fatalf("expected failure=true, got payload=%v", body)
+	}
+	validationErrors, _ := body["validation_errors"].([]any)
+	if len(validationErrors) == 0 || !strings.Contains(fmt.Sprint(validationErrors[0]), "missing required parameter") {
+		t.Fatalf("expected missing required parameter detail, got %v", validationErrors)
+	}
+}
+
+func TestPublishSkillActivationValidatesMarkdownParameters(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	metadataPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"skills": []map[string]any{
+				{
+					"name":        "weather_lookup",
+					"description": "Get current weather for a location.",
+					"parameters": strings.Join([]string{
+						"Required Parameters:",
+						"- `location`: City or postal code.",
+						"Optional Parameters:",
+						"- `units`: metric or imperial.",
+						"Never pass secrets.",
+					}, "\n"),
+				},
+			},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if metadataPatch.Code != http.StatusOK {
+		t.Fatalf("metadata patch failed: %d %s", metadataPatch.Code, metadataPatch.Body.String())
+	}
+
+	payloadBytes, err := json.Marshal(map[string]any{
+		"type":           "skill_request",
+		"request_id":     "req-markdown-skill",
+		"skill_name":     "weather_lookup",
+		"reply_required": true,
+		"payload":        "units: metric",
+		"payload_format": "markdown",
+	})
+	if err != nil {
+		t.Fatalf("marshal skill payload failed: %v", err)
+	}
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/messages/publish", map[string]any{
+		"to_agent_uuid": agentUUIDB,
+		"content_type":  "application/json",
+		"payload":       string(payloadBytes),
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected publish validation failure 400, got %d %s", resp.Code, resp.Body.String())
+	}
+	body := decodeJSONMap(t, resp.Body.Bytes())
+	if got, _ := body["error"].(string); got != "invalid_skill_request" {
+		t.Fatalf("expected invalid_skill_request, got %q payload=%v", got, body)
+	}
+	validationErrors, _ := body["validation_errors"].([]any)
+	if len(validationErrors) == 0 || !strings.Contains(fmt.Sprint(validationErrors[0]), "missing required parameter") {
+		t.Fatalf("expected missing required parameter detail, got %v", validationErrors)
+	}
+}
+
 func TestAgentMeReadIncludesBoundHumanAndOrganization(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Runtime Context Org")

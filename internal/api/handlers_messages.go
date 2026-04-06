@@ -38,6 +38,7 @@ type runtimeHandlerError struct {
 	status  int
 	code    string
 	message string
+	extras  map[string]any
 }
 
 func publishResponse(record model.MessageRecord, idempotent bool) map[string]any {
@@ -89,7 +90,7 @@ func writeRuntimeHandlerError(w http.ResponseWriter, err *runtimeHandlerError) {
 	if err == nil {
 		return
 	}
-	writeError(w, err.status, err.code, err.message)
+	writeErrorWithHintAndExtras(w, err.status, err.code, err.message, nil, err.extras)
 }
 
 func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
@@ -294,6 +295,9 @@ func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, 
 			code:    "agent_ref_mismatch",
 			message: "to_agent_uuid and to_agent_uri refer to different agents",
 		}
+	}
+	if validationErr := validateSkillActivationRequest(targetAgent, req.ContentType, req.Payload); validationErr != nil {
+		return nil, validationErr
 	}
 
 	senderOrgID, receiverOrgID, err := h.control.CanPublish(senderAgentUUID, targetAgent.AgentUUID)

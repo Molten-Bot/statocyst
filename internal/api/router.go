@@ -953,12 +953,17 @@ func defaultErrorHint(code string) (errorHint, bool) {
 	case "invalid_agent_skills":
 		return errorHint{
 			Retryable:  false,
-			NextAction: "set metadata.skills as [{name,description}] with short non-sensitive descriptions; do not include secrets",
+			NextAction: "set metadata.skills as [{name,description,parameters?}] and mark parameters as required/optional with secrets forbidden",
 		}, true
 	case "invalid_skill_description":
 		return errorHint{
 			Retryable:  false,
 			NextAction: "remove secret-like content from metadata.skills[].description; never include keys, tokens, or passwords",
+		}, true
+	case "invalid_skill_request":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "read the receiver skill parameters, send required fields only, and never pass secrets",
 		}, true
 	case "agent_handle_locked":
 		return errorHint{

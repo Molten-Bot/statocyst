@@ -16,15 +16,24 @@ func TestBuildAgentDiscoveryMarkdownRendersTemplateTokens(t *testing.T) {
 		OrgID:     "org-alpha",
 	}
 	cp := agentControlPlaneView{
-		APIBase:          "https://hub.example/v1",
-		AgentUUID:        agent.AgentUUID,
-		AgentID:          agent.AgentID,
-		OrgID:            agent.OrgID,
-		OwnerHumanID:     "human-alice",
-		CanTalkTo:        []string{"22222222-2222-2222-2222-222222222222"},
-		CanTalkToURIs:    []string{"https://hub.example/org-bob/agent-b"},
-		Capabilities:     []string{"publish_messages", "pull_messages"},
-		AdvertisedSkills: []agentSkillSummary{{Name: "weather_lookup", Description: "Get current weather for a location."}},
+		APIBase:       "https://hub.example/v1",
+		AgentUUID:     agent.AgentUUID,
+		AgentID:       agent.AgentID,
+		OrgID:         agent.OrgID,
+		OwnerHumanID:  "human-alice",
+		CanTalkTo:     []string{"22222222-2222-2222-2222-222222222222"},
+		CanTalkToURIs: []string{"https://hub.example/org-bob/agent-b"},
+		Capabilities:  []string{"publish_messages", "pull_messages"},
+		AdvertisedSkills: []agentSkillSummary{{
+			Name:        "weather_lookup",
+			Description: "Get current weather for a location.",
+			Parameters: &agentSkillParameters{
+				Format:       "json",
+				SecretPolicy: "forbidden",
+				Required:     []agentSkillParameter{{Name: "location", Description: "City or postal code."}},
+				Optional:     []agentSkillParameter{{Name: "units", Description: "metric or imperial."}},
+			},
+		}},
 		PeerSkillCatalog: []agentPeerSkillSummary{{AgentID: "org-bob/agent-b", AgentURI: "https://hub.example/org-bob/agent-b", Skills: []agentSkillSummary{{Name: "math.add", Description: "Add two numbers."}}}},
 	}
 	manifest := buildAgentManifest(agent, cp, time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC))
@@ -61,6 +70,9 @@ func TestBuildAgentDiscoveryMarkdownRendersTemplateTokens(t *testing.T) {
 	if !strings.Contains(markdown, "## Advertised Skills") || !strings.Contains(markdown, "`weather_lookup`: Get current weather for a location.") {
 		t.Fatalf("expected advertised skills section in markdown, got markdown=%q", markdown)
 	}
+	if !strings.Contains(markdown, "Parameters (json; secrets forbidden)") || !strings.Contains(markdown, "`location`: City or postal code.") {
+		t.Fatalf("expected parameter guidance in markdown, got markdown=%q", markdown)
+	}
 	if !strings.Contains(markdown, "## Talkable Peer Skills") || !strings.Contains(markdown, "org-bob/agent-b") {
 		t.Fatalf("expected peer skill catalog section in markdown, got markdown=%q", markdown)
 	}
@@ -77,15 +89,23 @@ func TestBuildAgentSkillMarkdownRendersTemplateTokens(t *testing.T) {
 		OrgID:     "org-alpha",
 	}
 	cp := agentControlPlaneView{
-		APIBase:          "https://hub.example/v1",
-		AgentUUID:        agent.AgentUUID,
-		AgentID:          agent.AgentID,
-		OrgID:            agent.OrgID,
-		OwnerHumanID:     "human-alice",
-		CanTalkTo:        []string{"22222222-2222-2222-2222-222222222222"},
-		CanTalkToURIs:    []string{"https://hub.example/org-bob/agent-b"},
-		Capabilities:     []string{"publish_messages", "pull_messages"},
-		AdvertisedSkills: []agentSkillSummary{{Name: "weather_lookup", Description: "Get current weather for a location."}},
+		APIBase:       "https://hub.example/v1",
+		AgentUUID:     agent.AgentUUID,
+		AgentID:       agent.AgentID,
+		OrgID:         agent.OrgID,
+		OwnerHumanID:  "human-alice",
+		CanTalkTo:     []string{"22222222-2222-2222-2222-222222222222"},
+		CanTalkToURIs: []string{"https://hub.example/org-bob/agent-b"},
+		Capabilities:  []string{"publish_messages", "pull_messages"},
+		AdvertisedSkills: []agentSkillSummary{{
+			Name:        "weather_lookup",
+			Description: "Get current weather for a location.",
+			Parameters: &agentSkillParameters{
+				Format:       "markdown",
+				SecretPolicy: "forbidden",
+				Required:     []agentSkillParameter{{Name: "location", Description: "City or postal code."}},
+			},
+		}},
 		PeerSkillCatalog: []agentPeerSkillSummary{{AgentID: "org-bob/agent-b", AgentURI: "https://hub.example/org-bob/agent-b", Skills: []agentSkillSummary{{Name: "math.add", Description: "Add two numbers."}}}},
 	}
 	manifest := buildAgentManifest(agent, cp, time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC))
@@ -121,6 +141,9 @@ func TestBuildAgentSkillMarkdownRendersTemplateTokens(t *testing.T) {
 	}
 	if !strings.Contains(markdown, "## Advertised Skills") || !strings.Contains(markdown, "`weather_lookup`: Get current weather for a location.") {
 		t.Fatalf("expected advertised skills in skill markdown, got markdown=%q", markdown)
+	}
+	if !strings.Contains(markdown, "Parameters (markdown; secrets forbidden)") || !strings.Contains(markdown, "`location`: City or postal code.") {
+		t.Fatalf("expected parameter guidance in skill markdown, got markdown=%q", markdown)
 	}
 	if !strings.Contains(markdown, "## Talkable Peer Skills") || !strings.Contains(markdown, "`math.add`: Add two numbers.") {
 		t.Fatalf("expected peer skills in skill markdown, got markdown=%q", markdown)

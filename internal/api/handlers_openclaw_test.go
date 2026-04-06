@@ -519,6 +519,75 @@ func TestOpenClawWebSocketSkillActivationRejectsInvalidPayloadType(t *testing.T)
 	}
 }
 
+func TestOpenClawWebSocketSkillActivationIncludesValidationErrors(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	metadataPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"skills": []map[string]any{
+				{
+					"name":        "weather_lookup",
+					"description": "Get current weather for a location.",
+					"parameters": map[string]any{
+						"required": []map[string]any{
+							{"name": "location", "description": "City or postal code."},
+						},
+						"secret_policy": "forbidden",
+					},
+				},
+			},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if metadataPatch.Code != http.StatusOK {
+		t.Fatalf("metadata patch failed: %d %s", metadataPatch.Code, metadataPatch.Body.String())
+	}
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=skill-validation"
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+tokenA)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected websocket dial to succeed, got err=%v", err)
+	}
+	defer conn.Close()
+
+	_ = readWSMessage(t, conn, 5*time.Second)
+
+	if err := conn.WriteJSON(map[string]any{
+		"type":          "publish",
+		"request_id":    "skill-validation-errors",
+		"to_agent_uuid": agentUUIDB,
+		"message": map[string]any{
+			"type":           "skill_request",
+			"skill_name":     "weather_lookup",
+			"reply_required": true,
+			"payload": map[string]any{
+				"units": "metric",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("expected websocket publish write to succeed, got err=%v", err)
+	}
+
+	resp := waitForWSResponseRequestID(t, conn, "skill-validation-errors", 5*time.Second)
+	if ok, _ := resp["ok"].(bool); ok {
+		t.Fatalf("expected ws publish response ok=false, got payload=%v", resp)
+	}
+	if failure, _ := resp["failure"].(bool); !failure {
+		t.Fatalf("expected ws publish response failure=true, got payload=%v", resp)
+	}
+	errorObj, _ := resp["error"].(map[string]any)
+	validationErrors, _ := errorObj["validation_errors"].([]any)
+	if len(validationErrors) == 0 || !strings.Contains(validationErrors[0].(string), "missing required parameter") {
+		t.Fatalf("expected validation errors in websocket response, got %v", resp)
+	}
+}
+
 func TestOpenClawWebSocketUpgradeWithWrappedWriter(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)

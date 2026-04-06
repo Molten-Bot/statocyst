@@ -894,9 +894,9 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 			case errors.Is(err, store.ErrInvalidAgentType):
 				writeError(w, http.StatusBadRequest, "invalid_agent_type", "metadata.agent_type must be 2-64 chars: a-z, 0-9, ., _, -")
 			case errors.Is(err, store.ErrInvalidAgentSkills):
-				writeError(w, http.StatusBadRequest, "invalid_agent_skills", "metadata.skills must be an array of {name, description}; name must be 2-64 chars: a-z, 0-9, ., _, -; description must be 1-240 chars")
+				writeError(w, http.StatusBadRequest, "invalid_agent_skills", "metadata.skills must be an array of {name, description, parameters?}; parameters may be markdown or json, must mark required/optional values, and must keep secrets forbidden")
 			case errors.Is(err, store.ErrInvalidSkillDescription):
-				writeError(w, http.StatusBadRequest, "invalid_skill_description", "metadata.skills[].description must not include secrets, tokens, passwords, or keys")
+				writeError(w, http.StatusBadRequest, "invalid_skill_description", "metadata.skills and metadata.skills[].parameters must not include secret values; parameter docs must clearly forbid passing secrets")
 			default:
 				writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
 			}

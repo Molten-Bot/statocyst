@@ -1022,6 +1022,50 @@ func TestMemoryStoreAgentMetadataNormalizesAgentType(t *testing.T) {
 	if rawSkills[0]["name"] != "math.add" || rawSkills[1]["name"] != "weather.lookup" {
 		t.Fatalf("expected normalized sorted skill names [math.add weather.lookup], got %v", rawSkills)
 	}
+	withParameters, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"skills": []map[string]any{
+			{
+				"name":        "weather.lookup",
+				"description": "Get current weather for a location.",
+				"parameters": map[string]any{
+					"required": []map[string]any{
+						{"name": "location", "description": "City, region, or postal code."},
+					},
+					"optional": []map[string]any{
+						{"name": "units", "description": "metric or imperial."},
+					},
+					"secret_policy": "forbidden",
+				},
+			},
+			{
+				"name":        "math.add",
+				"description": "Add two numbers.",
+				"parameters": strings.Join([]string{
+					"Required Parameters:",
+					"- `a`: First number.",
+					"- `b`: Second number.",
+					"Optional Parameters:",
+					"- `round`: Digits to round to.",
+					"Never pass secrets.",
+				}, "\n"),
+			},
+		},
+	}, now.Add(255*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateAgentMetadataSelf skill parameters failed: %v", err)
+	}
+	normalizedWithParameters, _ := withParameters.Metadata[model.AgentMetadataKeySkills].([]map[string]any)
+	if len(normalizedWithParameters) != 2 {
+		t.Fatalf("expected 2 skills after parameter normalization, got %v", normalizedWithParameters)
+	}
+	weatherParameters, _ := normalizedWithParameters[1]["parameters"].(map[string]any)
+	if got := stringValue(weatherParameters["format"]); got != "json" {
+		t.Fatalf("expected weather.lookup parameters format=json, got %q payload=%v", got, weatherParameters)
+	}
+	mathParameters, _ := normalizedWithParameters[0]["parameters"].(map[string]any)
+	if got := stringValue(mathParameters["format"]); got != "markdown" {
+		t.Fatalf("expected math.add parameters format=markdown, got %q payload=%v", got, mathParameters)
+	}
 
 	if _, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
 		"skills": []map[string]any{
@@ -1037,6 +1081,21 @@ func TestMemoryStoreAgentMetadataNormalizesAgentType(t *testing.T) {
 		},
 	}, now.Add(270*time.Second)); !errors.Is(err, ErrInvalidAgentSkills) {
 		t.Fatalf("expected invalid skills shape/name to fail with ErrInvalidAgentSkills, got %v", err)
+	}
+	if _, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"skills": []map[string]any{
+			{
+				"name":        "weather_lookup",
+				"description": "Get weather.",
+				"parameters": map[string]any{
+					"required": []map[string]any{
+						{"name": "location", "description": "City."},
+					},
+				},
+			},
+		},
+	}, now.Add(275*time.Second)); !errors.Is(err, ErrInvalidSkillDescription) {
+		t.Fatalf("expected missing secret prohibition in parameters to fail with ErrInvalidSkillDescription, got %v", err)
 	}
 
 	if _, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{

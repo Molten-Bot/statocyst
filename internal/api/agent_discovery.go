@@ -561,6 +561,9 @@ func renderSkillListMarkdown(skills []agentSkillSummary, lineTemplate string, fa
 			"{{SKILL_NAME}}", skill.Name,
 			"{{SKILL_DESCRIPTION}}", skill.Description,
 		))
+		if block := renderSkillParametersMarkdown(skill.Parameters, "  "); block != "" {
+			lines = append(lines, block)
+		}
 	}
 	if len(lines) == 0 {
 		return fallback
@@ -595,10 +598,33 @@ func renderPeerSkillCatalogMarkdown(peers []agentPeerSkillSummary, peerHeaderTem
 				"{{SKILL_NAME}}", skill.Name,
 				"{{SKILL_DESCRIPTION}}", skill.Description,
 			))
+			if block := renderSkillParametersMarkdown(skill.Parameters, "    "); block != "" {
+				lines = append(lines, block)
+			}
 		}
 	}
 	if len(lines) == 0 {
 		return noPeersFallback
+	}
+	return strings.Join(lines, "")
+}
+
+func renderSkillParametersMarkdown(params *agentSkillParameters, indent string) string {
+	if params == nil {
+		return ""
+	}
+	lines := []string{indent + "- Parameters (" + params.Format + "; secrets forbidden)\n"}
+	if len(params.Required) > 0 {
+		lines = append(lines, indent+"  - Required:\n")
+		for _, item := range params.Required {
+			lines = append(lines, indent+"    - `"+item.Name+"`: "+item.Description+"\n")
+		}
+	}
+	if len(params.Optional) > 0 {
+		lines = append(lines, indent+"  - Optional:\n")
+		for _, item := range params.Optional {
+			lines = append(lines, indent+"    - `"+item.Name+"`: "+item.Description+"\n")
+		}
 	}
 	return strings.Join(lines, "")
 }
