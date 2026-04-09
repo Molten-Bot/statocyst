@@ -2,10 +2,11 @@ package auth
 
 import (
 	"encoding/base64"
+	"errors"
 	"testing"
 )
 
-func TestGenerateToken(t *testing.T) {
+func TestGenerateTokenProducesURLSafeEntropy(t *testing.T) {
 	token, err := GenerateToken()
 	if err != nil {
 		t.Fatalf("GenerateToken() error = %v", err)
@@ -13,6 +14,7 @@ func TestGenerateToken(t *testing.T) {
 	if token == "" {
 		t.Fatal("expected non-empty token")
 	}
+
 	decoded, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
 		t.Fatalf("token is not valid base64url: %v", err)
@@ -22,19 +24,27 @@ func TestGenerateToken(t *testing.T) {
 	}
 }
 
-func TestHashToken(t *testing.T) {
-	hashA := HashToken("abc")
-	hashB := HashToken("abc")
-	hashC := HashToken("def")
+func TestHashTokenIsStableAndSHA256Length(t *testing.T) {
+	hashA := HashToken("same-token")
+	hashB := HashToken("same-token")
+	hashC := HashToken("different-token")
 
 	if hashA == "" {
 		t.Fatal("expected non-empty hash")
 	}
 	if hashA != hashB {
-		t.Fatalf("expected deterministic hash, got %q vs %q", hashA, hashB)
+		t.Fatalf("expected stable hash for same input, got %q vs %q", hashA, hashB)
 	}
 	if hashA == hashC {
-		t.Fatalf("expected different inputs to produce different hashes")
+		t.Fatalf("expected different hashes for different inputs")
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(hashA)
+	if err != nil {
+		t.Fatalf("hash was not RawURLEncoding: %v", err)
+	}
+	if len(decoded) != 32 {
+		t.Fatalf("expected 32-byte sha256 hash, got %d", len(decoded))
 	}
 }
 
@@ -48,6 +58,7 @@ func TestExtractBearerToken(t *testing.T) {
 		{name: "valid", header: "Bearer abc123", want: "abc123"},
 		{name: "trim spaces", header: "Bearer   abc123   ", want: "abc123"},
 		{name: "missing prefix", header: "Token abc", wantErr: true},
+		{name: "basic scheme", header: "Basic abc123", wantErr: true},
 		{name: "empty token", header: "Bearer   ", wantErr: true},
 	}
 
@@ -55,10 +66,7 @@ func TestExtractBearerToken(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ExtractBearerToken(tc.header)
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected error")
-				}
-				if err != ErrMissingBearer {
+				if !errors.Is(err, ErrMissingBearer) {
 					t.Fatalf("expected ErrMissingBearer, got %v", err)
 				}
 				return

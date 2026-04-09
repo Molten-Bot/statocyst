@@ -9,6 +9,7 @@ func TestWaitersRegisterNotifyAndCancel(t *testing.T) {
 	w := NewWaiters()
 	chA, cancelA := w.Register("agent-a")
 	chB, cancelB := w.Register("agent-a")
+	chOther, _ := w.Register("agent-b")
 
 	w.Notify("agent-a")
 
@@ -22,6 +23,11 @@ func TestWaitersRegisterNotifyAndCancel(t *testing.T) {
 	default:
 		t.Fatal("expected signal for second waiter")
 	}
+	select {
+	case <-chOther:
+		t.Fatal("did not expect other agent waiter to be notified")
+	default:
+	}
 
 	cancelA()
 	if got := len(w.byAgent["agent-a"]); got != 1 {
@@ -33,7 +39,6 @@ func TestWaitersRegisterNotifyAndCancel(t *testing.T) {
 		t.Fatal("expected all waiters removed after final cancel")
 	}
 
-	// Idempotent cancel should not panic.
 	cancelB()
 }
 
@@ -59,6 +64,12 @@ func TestWaitersNotifyDoesNotBlockWhenChannelIsFull(t *testing.T) {
 	case <-ch:
 	default:
 		t.Fatal("expected buffered waiter signal")
+	}
+
+	select {
+	case <-ch:
+		t.Fatal("expected second notify to be dropped while buffer remained full")
+	default:
 	}
 }
 

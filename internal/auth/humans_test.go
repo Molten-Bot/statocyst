@@ -51,28 +51,31 @@ func TestDevHumanAuthProviderAuthenticate(t *testing.T) {
 		t.Fatalf("expected unauthorized error, got %v", err)
 	}
 
-	req.Header.Set("X-Human-Id", " Alice ")
+	req.Header.Set("X-Human-Id", "alice")
 	identity, err := provider.Authenticate(req)
 	if err != nil {
 		t.Fatalf("unexpected auth error: %v", err)
 	}
-	if identity.Subject != "Alice" {
-		t.Fatalf("unexpected subject: %q", identity.Subject)
-	}
-	if identity.Email != "Alice@local.dev" {
-		t.Fatalf("unexpected fallback email: %q", identity.Email)
-	}
-	if !identity.EmailVerified {
-		t.Fatal("expected fallback dev auth to mark email verified")
+	if identity.Subject != "alice" || identity.Email != "alice@local.dev" || !identity.EmailVerified {
+		t.Fatalf("unexpected identity from implicit email: %+v", identity)
 	}
 
-	req.Header.Set("X-Human-Email", " USER@Example.COM ")
+	req.Header.Set("X-Human-Id", " Alice ")
+	identity, err = provider.Authenticate(req)
+	if err != nil {
+		t.Fatalf("unexpected auth error with spaced handle: %v", err)
+	}
+	if identity.Subject != "Alice" || identity.Email != "Alice@local.dev" {
+		t.Fatalf("expected trimmed dev identity, got %+v", identity)
+	}
+
+	req.Header.Set("X-Human-Email", "  BOB@Example.COM  ")
 	identity, err = provider.Authenticate(req)
 	if err != nil {
 		t.Fatalf("unexpected auth error with explicit email: %v", err)
 	}
-	if identity.Email != "user@example.com" {
-		t.Fatalf("expected normalized explicit email, got %q", identity.Email)
+	if identity.Email != "bob@example.com" {
+		t.Fatalf("expected lower-cased explicit email, got %+v", identity)
 	}
 }
 
@@ -129,6 +132,13 @@ func TestSupabaseAuthProviderAuthenticateErrors(t *testing.T) {
 	}
 
 	provider.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":""}`))}, nil
+	})}
+	if _, err := provider.Authenticate(request()); !errors.Is(err, ErrUnauthorizedHuman) {
+		t.Fatalf("expected unauthorized for empty id, got %v", err)
+	}
+
+	provider.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"email":"a@b.test"}`))}, nil
 	})}
 	if _, err := provider.Authenticate(request()); !errors.Is(err, ErrUnauthorizedHuman) {
@@ -142,52 +152,42 @@ func TestSupabaseAuthProviderAuthenticateSuccess(t *testing.T) {
 		if req.URL.String() != "https://example.supabase.co/auth/v1/user" {
 			t.Fatalf("unexpected supabase URL: %s", req.URL.String())
 		}
-		if got := req.Header.Get("Authorization"); got != "Bearer token-a" {
-			t.Fatalf("unexpected auth header: %q", got)
+		if got := req.Header.Get("Authorization"); got != "Bearer valid-token" {
+			t.Fatalf("expected forwarded bearer token, got %q", got)
 		}
 		if got := req.Header.Get("apikey"); got != "anon" {
-			t.Fatalf("unexpected apikey header: %q", got)
+			t.Fatalf("expected apikey header, got %q", got)
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body: io.NopCloser(strings.NewReader(`{
-				"id": " user-1 ",
-				"email": " USER@Example.COM ",
-				"email_confirmed_at": "2026-01-01T00:00:00Z"
+				"id": " user-123 ",
+				"email": " USER@EXAMPLE.COM ",
+				"email_confirmed_at": "2026-04-08T00:00:00Z"
 			}`)),
 		}, nil
 	})}
 
 	req, _ := http.NewRequest(http.MethodGet, "http://example.test", nil)
-	req.Header.Set("Authorization", "Bearer token-a")
+	req.Header.Set("Authorization", "Bearer valid-token")
+
 	identity, err := provider.Authenticate(req)
 	if err != nil {
 		t.Fatalf("unexpected auth error: %v", err)
 	}
-	if identity.Provider != "supabase" {
-		t.Fatalf("expected provider supabase, got %q", identity.Provider)
-	}
-	if identity.Subject != "user-1" {
-		t.Fatalf("expected normalized subject, got %q", identity.Subject)
-	}
-	if identity.Email != "user@example.com" {
-		t.Fatalf("expected normalized email, got %q", identity.Email)
-	}
-	if !identity.EmailVerified {
-		t.Fatal("expected email verified true")
+	if identity.Provider != "supabase" || identity.Subject != "user-123" || identity.Email != "user@example.com" || !identity.EmailVerified {
+		t.Fatalf("unexpected identity: %+v", identity)
 	}
 
 	provider.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`{"id":"user-2","email":"user2@example.com","email_confirmed_at":""}`)),
-		}, nil
+		body := `{"id":"user-456","email":"new@example.com","email_confirmed_at":""}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	identity, err = provider.Authenticate(req)
 	if err != nil {
 		t.Fatalf("unexpected auth error on unverified email case: %v", err)
 	}
 	if identity.EmailVerified {
-		t.Fatal("expected email verified false when email_confirmed_at is empty")
+		t.Fatalf("expected unverified email when email_confirmed_at is empty, got %+v", identity)
 	}
 }

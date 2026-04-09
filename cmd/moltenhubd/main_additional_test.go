@@ -7,31 +7,34 @@ import (
 	"testing"
 )
 
-func TestEnvBool(t *testing.T) {
-	t.Setenv("TEST_BOOL", "")
-	if got := envBool("TEST_BOOL", true); !got {
-		t.Fatal("expected fallback=true when env var unset")
+func TestEnvBoolParsesAndFallsBack(t *testing.T) {
+	const key = "MOLTENHUB_TEST_ENV_BOOL"
+
+	t.Setenv(key, "")
+	if got := envBool(key, true); !got {
+		t.Fatal("expected fallback=true for empty env var")
 	}
 
-	t.Setenv("TEST_BOOL", "not-bool")
-	if got := envBool("TEST_BOOL", false); got {
-		t.Fatal("expected fallback=false when env var is invalid")
-	}
-
-	t.Setenv("TEST_BOOL", "true")
-	if got := envBool("TEST_BOOL", false); !got {
+	t.Setenv(key, "TRUE")
+	if got := envBool(key, false); !got {
 		t.Fatal("expected parsed bool true")
+	}
+
+	t.Setenv(key, "definitely-not-a-bool")
+	if got := envBool(key, false); got {
+		t.Fatal("expected fallback=false when env var is invalid")
 	}
 }
 
-func TestLoadDotEnv(t *testing.T) {
+func TestLoadDotEnvParsesSupportedFormsAndPreservesExistingValues(t *testing.T) {
 	const (
-		keepExistingKey = "MOLTENHUB_DOTENV_KEEP_EXISTING_TEST"
+		existingKey     = "MOLTENHUB_DOTENV_KEEP_EXISTING_TEST"
 		fromExportKey   = "MOLTENHUB_DOTENV_FROM_EXPORT_TEST"
 		quotedKey       = "MOLTENHUB_DOTENV_QUOTED_TEST"
 		singleQuotedKey = "MOLTENHUB_DOTENV_SINGLE_QUOTED_TEST"
 	)
-	t.Setenv(keepExistingKey, "already-set")
+
+	t.Setenv(existingKey, "already-set")
 
 	dir := t.TempDir()
 	dotEnvPath := filepath.Join(dir, ".env")
@@ -43,7 +46,7 @@ export %s=exported
 %s=should-not-overwrite
 INVALID_LINE
 =value-without-key
-`, fromExportKey, quotedKey, singleQuotedKey, keepExistingKey)
+`, fromExportKey, quotedKey, singleQuotedKey, existingKey)
 	if err := os.WriteFile(dotEnvPath, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write temp .env: %v", err)
 	}
@@ -59,7 +62,7 @@ INVALID_LINE
 	if got := os.Getenv(singleQuotedKey); got != "three words" {
 		t.Fatalf("expected %s with quotes stripped, got %q", singleQuotedKey, got)
 	}
-	if got := os.Getenv(keepExistingKey); got != "already-set" {
+	if got := os.Getenv(existingKey); got != "already-set" {
 		t.Fatalf("expected existing env var to be preserved, got %q", got)
 	}
 
