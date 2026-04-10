@@ -553,6 +553,84 @@ paths:
       responses:
         '410':
           description: Gone (`agent_create_disabled`)
+  /v1/me/agents/{agent_uuid}:
+    patch:
+      summary: Update a manageable agent profile from the human control plane
+      description: |
+        Human-auth route for agent owners/admins to update a manageable agent profile.
+        Supports one-time handle finalization (`handle`) plus partial metadata merge updates (`metadata`).
+        Management access matches `/v1/me/agents`: org owner/admin for org-scoped agents,
+        personal owner for human-owned agents, and super-admins.
+        Typical UI fields map to metadata such as `display_name`, `emoji`, and `profile_markdown`.
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: agent_uuid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                handle:
+                  type: string
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Agent updated
+        '400':
+          description: Invalid handle/metadata
+        '401':
+          description: Unauthorized
+        '403':
+          description: Admin/owner required
+        '404':
+          description: Unknown agent
+  /v1/me/agents/{agent_uuid}/disconnect:
+    post:
+      summary: Mark a manageable agent runtime offline from the human control plane
+      description: |
+        Human-auth route for agent owners/admins to force an OpenClaw-style offline presence update
+        for a manageable agent. This mirrors the runtime `POST /v1/openclaw/messages/offline`
+        behavior by setting `metadata.presence.status=offline`, `ready=false`, and recording
+        `agent_presence` activity without revoking the agent token.
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: agent_uuid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                session_key:
+                  type: string
+                  description: Optional websocket session partition key; defaults to `main`.
+                reason:
+                  type: string
+                  description: Optional operator reason for forcing the runtime offline.
+      responses:
+        '200':
+          description: Presence updated to offline
+        '401':
+          description: Unauthorized
+        '403':
+          description: Admin/owner required
+        '404':
+          description: Unknown agent
   /v1/me/agents/bind-tokens:
     post:
       summary: Create short-lived one-time agent bind token with copy-ready self-signup prompt

@@ -3414,6 +3414,93 @@ func TestAgentMeMetadataPatchMergesAndNullDeletes(t *testing.T) {
 	}
 }
 
+func TestHumanManagedAgentProfilePatchUpdatesMetadataAndHandle(t *testing.T) {
+	router := newTestRouter()
+	_, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-editable")
+
+	resp := doJSONRequest(t, router, http.MethodPatch, "/v1/me/agents/"+agentUUID, map[string]any{
+		"handle": "alice-agent-updated",
+		"metadata": map[string]any{
+			"display_name":     "Alice Agent",
+			"emoji":            "😄",
+			"profile_markdown": "Builds release pipelines.",
+		},
+	}, humanHeaders("alice", "alice@a.test"))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected owner profile patch 200, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	agent, _ := payload["agent"].(map[string]any)
+	if got, _ := agent["agent_uuid"].(string); got != agentUUID {
+		t.Fatalf("expected agent_uuid=%q, got %q payload=%v", agentUUID, got, payload)
+	}
+	if got, _ := agent["handle"].(string); got != "alice-agent-updated" {
+		t.Fatalf("expected updated handle, got %q payload=%v", got, payload)
+	}
+
+	metadata, _ := agent["metadata"].(map[string]any)
+	if got, _ := metadata["display_name"].(string); got != "Alice Agent" {
+		t.Fatalf("expected display_name metadata, got %q payload=%v", got, payload)
+	}
+	if got, _ := metadata["emoji"].(string); got != "😄" {
+		t.Fatalf("expected emoji metadata, got %q payload=%v", got, payload)
+	}
+	if got, _ := metadata["profile_markdown"].(string); got != "Builds release pipelines." {
+		t.Fatalf("expected profile_markdown metadata, got %q payload=%v", got, payload)
+	}
+}
+
+func TestHumanManagedAgentDisconnectMarksPresenceOffline(t *testing.T) {
+	router := newTestRouter()
+	_, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-disconnect")
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/"+agentUUID+"/disconnect", map[string]any{
+		"session_key": "main",
+		"reason":      "owner_disconnect",
+	}, humanHeaders("alice", "alice@a.test"))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected owner disconnect 200, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	agent, _ := payload["agent"].(map[string]any)
+	metadata, _ := agent["metadata"].(map[string]any)
+	presence, _ := metadata["presence"].(map[string]any)
+	if got, _ := presence["status"].(string); got != "offline" {
+		t.Fatalf("expected presence.status=offline, got %q payload=%v", got, payload)
+	}
+	if ready, ok := presence["ready"].(bool); !ok || ready {
+		t.Fatalf("expected presence.ready=false, got %v payload=%v", presence["ready"], payload)
+	}
+	if got, _ := presence["session_key"].(string); got != "main" {
+		t.Fatalf("expected presence.session_key=main, got %q payload=%v", got, payload)
+	}
+}
+
+func TestHumanManagedAgentRoutesRejectUnmanageableAgent(t *testing.T) {
+	router := newTestRouter()
+	_, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-owned")
+
+	resp := doJSONRequest(t, router, http.MethodPatch, "/v1/me/agents/"+agentUUID, map[string]any{
+		"metadata": map[string]any{
+			"profile_markdown": "nope",
+		},
+	}, humanHeaders("bob", "bob@b.test"))
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("expected non-manager profile patch 403, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	if got, _ := payload["error"].(string); got != "forbidden" {
+		t.Fatalf("expected forbidden error, got %q payload=%v", got, payload)
+	}
+	detail, _ := payload["error_detail"].(map[string]any)
+	if got, _ := detail["code"].(string); got != "forbidden" {
+		t.Fatalf("expected forbidden error_detail.code, got %q payload=%v", got, payload)
+	}
+}
+
 func hasSystemActivity(log []any, target string) bool {
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -4719,6 +4806,9 @@ func TestUIRoutes_AgentsPageIncludesSelfSignupMetadataControls(t *testing.T) {
 	}
 	if !strings.Contains(body, "profile_markdown") || !strings.Contains(body, "activities") || !strings.Contains(body, "hire_me") {
 		t.Fatalf("expected metadata field hints in /agents page, got %q", body)
+	}
+	if !strings.Contains(body, "Agent Profile") || !strings.Contains(body, "Disconnect") || !strings.Contains(body, "emoji-picker-element") {
+		t.Fatalf("expected agent profile modal controls and emoji picker library in /agents page, got %q", body)
 	}
 }
 

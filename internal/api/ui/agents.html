@@ -138,6 +138,11 @@
       .row-actions button {
         margin: 0;
       }
+      .row-actions button.secondary {
+        background: #fff;
+        color: var(--ink);
+        border-color: var(--line);
+      }
       .metadataPreview {
         max-width: 260px;
         white-space: normal;
@@ -148,7 +153,162 @@
         word-break: break-all;
         white-space: pre-wrap;
       }
+      dialog {
+        width: min(760px, calc(100vw - 24px));
+        border: none;
+        border-radius: 16px;
+        padding: 0;
+        color: var(--ink);
+        background: transparent;
+      }
+      dialog::backdrop {
+        background: rgba(15, 23, 42, 0.55);
+        backdrop-filter: blur(2px);
+      }
+      .modalCard {
+        background: linear-gradient(180deg, #ffffff, #f7fafc);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
+        padding: 20px;
+      }
+      .modalHeader {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .modalHeader h3 {
+        margin: 0;
+        font-size: 1.4rem;
+      }
+      .modalHeader p {
+        margin: 6px 0 0;
+      }
+      .iconButton {
+        width: auto;
+        margin: 0;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+      }
+      .modalGrid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+      .fieldLabel {
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .field textarea {
+        width: 100%;
+        min-height: 140px;
+        resize: vertical;
+        box-sizing: border-box;
+        margin: 5px 0;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        font: inherit;
+      }
+      .field.full {
+        margin-top: 12px;
+      }
+      .emojiInputWrap {
+        position: relative;
+      }
+      .emojiInputWrap input {
+        padding-right: 44px;
+      }
+      .emojiPickerToggle {
+        position: absolute;
+        top: 50%;
+        right: 8px;
+        transform: translateY(-50%);
+        width: 32px;
+        height: 32px;
+        margin: 0;
+        padding: 0;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+      }
+      .emojiPickerPanel {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 6px);
+        z-index: 10;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: #fff;
+        box-shadow: 0 16px 32px rgba(15, 23, 42, 0.18);
+      }
+      .emojiPickerPanel[hidden] {
+        display: none;
+      }
+      .emojiPickerFallback {
+        padding: 10px 12px;
+        max-width: 220px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .modalFooter {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 12px;
+        margin-top: 18px;
+      }
+      .modalFooter button {
+        width: auto;
+        min-width: 108px;
+        margin: 0;
+      }
+      .modalFooterError {
+        min-height: 1.2em;
+        text-align: center;
+        color: #b42318;
+        font-size: 0.92rem;
+      }
+      .dangerButton {
+        background: #fff;
+        color: #b42318;
+        border-color: #f2b8b5;
+        justify-self: start;
+      }
+      .primaryButton {
+        justify-self: end;
+      }
+      @media (max-width: 720px) {
+        .modalGrid {
+          grid-template-columns: 1fr;
+        }
+        .modalFooter {
+          grid-template-columns: 1fr;
+        }
+        .modalFooter button {
+          width: 100%;
+        }
+        .modalFooterError {
+          text-align: left;
+        }
+      }
     </style>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.26.2/index.js"></script>
   </head>
   <body>
     <header>
@@ -191,7 +351,7 @@
             <tbody id="agentsBody"></tbody>
           </table>
           <p class="muted">Agent visibility plus metadata directory fields are shown here; updates are agent self-service via <code>PATCH /v1/agents/me</code>.</p>
-          <p class="muted">Metadata keys used: <code>profile_markdown</code>, <code>activities</code>, <code>skills</code>, <code>hire_me</code>.</p>
+          <p class="muted">Metadata keys used: <code>display_name</code>, <code>emoji</code>, <code>profile_markdown</code>, <code>activities</code>, <code>skills</code>, <code>hire_me</code>.</p>
 
           <label class="muted" for="bindOrgSelect">Organization</label>
           <select id="bindOrgSelect"></select>
@@ -215,6 +375,51 @@
         </section>
       </div>
     </main>
+
+    <dialog id="agentProfileDialog">
+      <div class="modalCard">
+        <div class="modalHeader">
+          <div>
+            <h3>Agent Profile</h3>
+            <p class="muted">Update how this runtime appears in Molten Hub.</p>
+          </div>
+          <button id="btnCloseAgentProfile" class="iconButton" type="button" aria-label="Close agent profile">Close</button>
+        </div>
+
+        <div class="modalGrid">
+          <label class="field">
+            <span class="fieldLabel">Handle</span>
+            <input id="agentProfileHandle" type="text" placeholder="agent-handle" />
+          </label>
+          <label class="field">
+            <span class="fieldLabel">Display Name</span>
+            <input id="agentProfileDisplayName" type="text" placeholder="Runtime display name" />
+          </label>
+          <label class="field">
+            <span class="fieldLabel">Emoji</span>
+            <span class="emojiInputWrap">
+              <input id="agentProfileEmoji" type="text" maxlength="8" placeholder="🙂" />
+              <button id="btnAgentProfileEmojiPicker" class="emojiPickerToggle" type="button" aria-label="Pick emoji">☺</button>
+              <div id="agentProfileEmojiPickerPanel" class="emojiPickerPanel" hidden>
+                <emoji-picker id="agentProfileEmojiPicker"></emoji-picker>
+                <div id="agentProfileEmojiPickerFallback" class="emojiPickerFallback" hidden>Emoji picker failed to load. Enter an emoji directly.</div>
+              </div>
+            </span>
+          </label>
+        </div>
+
+        <label class="field full">
+          <span class="fieldLabel">Profile</span>
+          <textarea id="agentProfileMarkdown" placeholder="What this runtime is for"></textarea>
+        </label>
+
+        <div class="modalFooter">
+          <button id="btnDisconnectAgentProfile" class="dangerButton" type="button">Disconnect</button>
+          <div id="agentProfileFooterError" class="modalFooterError" aria-live="polite"></div>
+          <button id="btnSaveAgentProfile" class="primaryButton" type="button">Save</button>
+        </div>
+      </div>
+    </dialog>
 
     <script src="/common.js"></script>
     <script src="/agents.js"></script>

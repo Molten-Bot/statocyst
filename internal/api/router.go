@@ -135,6 +135,7 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/v1/me/metadata", handler.handleMeMetadata)
 	mux.HandleFunc("/v1/me/orgs", handler.handleMyOrgs)
 	mux.HandleFunc("/v1/me/agents", handler.handleMyAgents)
+	mux.HandleFunc("/v1/me/agents/", handler.handleMyAgentSubroutes)
 	mux.HandleFunc("/v1/me/agents/bind-token", handler.handleMyAgentBindToken)
 	mux.HandleFunc("/v1/me/agents/bind-tokens", handler.handleMyAgentBindTokens)
 	mux.HandleFunc("/v1/me/agent-trusts", handler.handleMyAgentTrusts)

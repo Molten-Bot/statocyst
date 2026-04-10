@@ -1,6 +1,8 @@
 const UI = MoltenHubUI;
 let agentOrgByUUID = {};
+let agentsByUUID = {};
 let latestBindPrompt = "";
+let activeAgentProfileUUID = "";
 
 function setStatus(id, message, warn = false) {
   const el = UI.$(id);
@@ -41,6 +43,24 @@ function metadataProfileMarkdown(raw) {
   const value = metadataFrom(raw).profile_markdown;
   if (typeof value !== "string") return "";
   return value.trim();
+}
+
+function metadataDisplayName(raw) {
+  const value = metadataFrom(raw).display_name;
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function metadataEmoji(raw) {
+  const value = metadataFrom(raw).emoji;
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function metadataPresence(raw) {
+  const value = metadataFrom(raw).presence;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return { ...value };
 }
 
 function metadataActivities(raw) {
@@ -116,6 +136,78 @@ function agentOwnerLabel(agent) {
   const ownerHuman = agent?.owner?.human_id || agent?.owner_human_id;
   if (ownerHuman) return ownerHuman;
   return "org-owned";
+}
+
+function setAgentProfileError(message) {
+  const el = UI.$("agentProfileFooterError");
+  if (!el) return;
+  el.textContent = String(message || "").trim();
+}
+
+function closeAgentProfileDialog() {
+  const dialog = UI.$("agentProfileDialog");
+  if (!dialog) return;
+  activeAgentProfileUUID = "";
+  setAgentProfileError("");
+  hideEmojiPicker();
+  if (typeof dialog.close === "function" && dialog.open) {
+    dialog.close();
+  }
+}
+
+function openAgentProfileDialog(agentUUID) {
+  const agent = agentsByUUID[agentUUID];
+  const dialog = UI.$("agentProfileDialog");
+  if (!agent || !dialog) return;
+
+  activeAgentProfileUUID = agentUUID;
+  setAgentProfileError("");
+  UI.$("agentProfileHandle").value = String(agent.handle || "").trim();
+  UI.$("agentProfileDisplayName").value = metadataDisplayName(agent.metadata);
+  UI.$("agentProfileEmoji").value = metadataEmoji(agent.metadata);
+  UI.$("agentProfileMarkdown").value = metadataProfileMarkdown(agent.metadata);
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  }
+}
+
+function hideEmojiPicker() {
+  const panel = UI.$("agentProfileEmojiPickerPanel");
+  if (panel) panel.hidden = true;
+}
+
+function toggleEmojiPicker() {
+  const panel = UI.$("agentProfileEmojiPickerPanel");
+  if (!panel) return;
+  const nextHidden = !panel.hidden;
+  panel.hidden = nextHidden;
+}
+
+function bindEmojiPicker() {
+  const picker = UI.$("agentProfileEmojiPicker");
+  const fallback = UI.$("agentProfileEmojiPickerFallback");
+  if (!picker) return;
+
+  if (!window.customElements || !customElements.whenDefined) {
+    if (fallback) fallback.hidden = false;
+    return;
+  }
+
+  customElements.whenDefined("emoji-picker")
+    .then(() => {
+      picker.addEventListener("emoji-click", (event) => {
+        UI.$("agentProfileEmoji").value = String(event?.detail?.unicode || "").trim();
+        hideEmojiPicker();
+      });
+    })
+    .catch(() => {
+      if (fallback) fallback.hidden = false;
+    });
+}
+
+function errorMessageFrom(result, fallbackMessage) {
+  const message = String(result?.data?.message || result?.data?.error || "").trim();
+  return message || fallbackMessage;
 }
 
 async function loadBindOrganizations() {
@@ -250,6 +342,7 @@ function renderAgents(agents) {
   const body = UI.$("agentsBody");
   body.innerHTML = "";
   agentOrgByUUID = {};
+  agentsByUUID = {};
 
   if (!Array.isArray(agents) || agents.length === 0) {
     const tr = document.createElement("tr");
@@ -268,6 +361,7 @@ function renderAgents(agents) {
     const agentUUID = String(agent?.agent_uuid || "").trim();
     if (agentUUID) {
       agentOrgByUUID[agentUUID] = String(agent?.org_id || "").trim();
+      agentsByUUID[agentUUID] = agent;
     }
     const tr = document.createElement("tr");
 
@@ -317,19 +411,28 @@ function renderAgents(agents) {
     const tdActions = document.createElement("td");
     const actionWrap = document.createElement("div");
     actionWrap.className = "row-actions";
+    const isRevoked = String(agent.status || "").toLowerCase() === "revoked";
+
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Agent Profile";
+    editBtn.className = "secondary";
+    editBtn.dataset.agentAction = "edit";
+    editBtn.dataset.agentUuid = agent.agent_uuid || "";
+    editBtn.disabled = isRevoked;
+    actionWrap.appendChild(editBtn);
 
     const rotateBtn = document.createElement("button");
     rotateBtn.textContent = "Rotate Token";
     rotateBtn.dataset.agentAction = "rotate";
     rotateBtn.dataset.agentUuid = agent.agent_uuid || "";
-    rotateBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
+    rotateBtn.disabled = isRevoked;
     actionWrap.appendChild(rotateBtn);
 
     const revokeBtn = document.createElement("button");
     revokeBtn.textContent = "Revoke Agent";
     revokeBtn.dataset.agentAction = "revoke";
     revokeBtn.dataset.agentUuid = agent.agent_uuid || "";
-    revokeBtn.disabled = String(agent.status || "").toLowerCase() === "revoked";
+    revokeBtn.disabled = isRevoked;
     actionWrap.appendChild(revokeBtn);
 
     tdActions.appendChild(actionWrap);
@@ -350,6 +453,61 @@ async function loadAgents() {
     return;
   }
   renderAgents(result.data.agents || []);
+}
+
+async function saveAgentProfile() {
+  const agentUUID = activeAgentProfileUUID;
+  const agent = agentsByUUID[agentUUID];
+  if (!agentUUID || !agent) return;
+
+  const nextHandle = String(UI.$("agentProfileHandle").value || "").trim();
+  const nextDisplayName = String(UI.$("agentProfileDisplayName").value || "").trim();
+  const nextEmoji = String(UI.$("agentProfileEmoji").value || "").trim();
+  const nextProfile = String(UI.$("agentProfileMarkdown").value || "").trim();
+  if (!nextHandle) {
+    setAgentProfileError("Handle is required.");
+    return;
+  }
+
+  setAgentProfileError("");
+  const metadata = {
+    display_name: nextDisplayName || null,
+    emoji: nextEmoji || null,
+    profile_markdown: nextProfile || null,
+  };
+  const payload = { metadata };
+  if (nextHandle !== String(agent.handle || "").trim()) {
+    payload.handle = nextHandle;
+  }
+
+  const result = await UI.req(`/v1/me/agents/${encodeURIComponent(agentUUID)}`, "PATCH", payload);
+  if (result.status !== 200) {
+    setAgentProfileError(errorMessageFrom(result, "Could not save agent profile."));
+    return;
+  }
+
+  await loadAgents();
+  closeAgentProfileDialog();
+}
+
+async function disconnectAgentProfile() {
+  const agentUUID = activeAgentProfileUUID;
+  const agent = agentsByUUID[agentUUID];
+  if (!agentUUID || !agent) return;
+
+  setAgentProfileError("");
+  const presence = metadataPresence(agent.metadata);
+  const result = await UI.req(`/v1/me/agents/${encodeURIComponent(agentUUID)}/disconnect`, "POST", {
+    session_key: String(presence.session_key || "main").trim() || "main",
+    reason: "Disconnected from Agents UI",
+  });
+  if (result.status !== 200) {
+    setAgentProfileError(errorMessageFrom(result, "Could not disconnect agent runtime."));
+    return;
+  }
+
+  await loadAgents();
+  closeAgentProfileDialog();
 }
 
 async function createBindCode() {
@@ -550,6 +708,23 @@ async function init() {
   UI.$("btnCreateBindCode").onclick = createBindCode;
   UI.$("btnCopyBindPrompt").onclick = copyBindPrompt;
   UI.$("btnCreateTrust").onclick = createTrust;
+  UI.$("btnCloseAgentProfile").onclick = closeAgentProfileDialog;
+  UI.$("btnSaveAgentProfile").onclick = saveAgentProfile;
+  UI.$("btnDisconnectAgentProfile").onclick = disconnectAgentProfile;
+  UI.$("btnAgentProfileEmojiPicker").onclick = toggleEmojiPicker;
+  UI.$("agentProfileDialog").addEventListener("click", (event) => {
+    if (event.target === UI.$("agentProfileDialog")) {
+      closeAgentProfileDialog();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    const panel = UI.$("agentProfileEmojiPickerPanel");
+    const toggle = UI.$("btnAgentProfileEmojiPicker");
+    if (!panel || panel.hidden) return;
+    if (panel.contains(event.target) || toggle.contains(event.target)) return;
+    hideEmojiPicker();
+  });
+  bindEmojiPicker();
 
   UI.$("agentsBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-agent-action]");
@@ -559,6 +734,10 @@ async function init() {
     const agentUUID = button.dataset.agentUuid || "";
     if (!action || !agentUUID) return;
 
+    if (action === "edit") {
+      openAgentProfileDialog(agentUUID);
+      return;
+    }
     if (action === "rotate") {
       await rotateAgent(agentUUID);
       return;

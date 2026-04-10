@@ -553,6 +553,175 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) handleMyAgentSubroutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	const prefix = "/v1/me/agents/"
+	if !strings.HasPrefix(path, prefix) {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+	tail := strings.Trim(strings.TrimPrefix(path, prefix), "/")
+	if tail == "" || tail == "bind-token" || tail == "bind-tokens" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	action := ""
+	agentRef := tail
+	if r.Method == http.MethodPost && strings.HasSuffix(tail, "/disconnect") {
+		action = "disconnect"
+		agentRef = strings.Trim(strings.TrimSuffix(tail, "/disconnect"), "/")
+	}
+
+	agentUUID := normalizeUUID(agentRef)
+	if !validateUUID(agentUUID) {
+		writeError(w, http.StatusBadRequest, "invalid_agent_uuid", "agent_uuid must be a valid UUID")
+		return
+	}
+
+	actor, err := h.authenticateHuman(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
+		return
+	}
+	if h.requireHandleConfirmedForWrite(w, actor) {
+		return
+	}
+
+	agent, err := h.control.GetAgentByUUID(agentUUID)
+	if err != nil {
+		if errors.Is(err, store.ErrAgentNotFound) {
+			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent")
+		return
+	}
+	if !actor.IsSuperAdmin && !h.humanCanManageAgent(actor.Human.HumanID, agentUUID) {
+		writeError(w, http.StatusForbidden, "forbidden", "admin/owner required")
+		return
+	}
+
+	switch {
+	case r.Method == http.MethodPatch && action == "":
+		h.handleMyAgentProfilePatch(w, r, agent)
+		return
+	case r.Method == http.MethodPost && action == "disconnect":
+		h.handleMyAgentDisconnect(w, r, agent)
+		return
+	default:
+		writeMethodNotAllowed(w)
+		return
+	}
+}
+
+func (h *Handler) humanCanManageAgent(humanID, agentUUID string) bool {
+	for _, candidate := range h.control.ListHumanAgents(humanID) {
+		if candidate.AgentUUID == agentUUID {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) handleMyAgentProfilePatch(w http.ResponseWriter, r *http.Request, agent model.Agent) {
+	if !requireJSONRequestContentType(w, r) {
+		return
+	}
+
+	handle, metadata, err := decodeAgentProfileUpdateRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	updated := agent
+	now := h.now().UTC()
+	if handle != nil {
+		updated, err = h.finalizeAgentHandleSelfWithRuntimeFallback(agent.AgentUUID, *handle, now)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrAgentNotFound):
+				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			case errors.Is(err, store.ErrInvalidHandle):
+				writeError(w, http.StatusBadRequest, "invalid_handle", "handle must be 2-64 chars, URL-safe (a-z, 0-9, ., _, -), and not blocked")
+			case errors.Is(err, store.ErrAgentExists):
+				writeError(w, http.StatusConflict, "agent_exists", "agent_id already registered")
+			case errors.Is(err, store.ErrAgentHandleLocked):
+				writeError(w, http.StatusConflict, "agent_handle_locked", "agent handle is already finalized")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to finalize agent handle")
+			}
+			return
+		}
+	}
+	if metadata != nil {
+		updated, err = h.updateAgentMetadataSelfWithRuntimeFallback(agent.AgentUUID, metadata, now)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrAgentNotFound):
+				writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			case errors.Is(err, store.ErrInvalidAgentType):
+				writeError(w, http.StatusBadRequest, "invalid_agent_type", "metadata.agent_type must be 2-64 chars: a-z, 0-9, ., _, -")
+			case errors.Is(err, store.ErrInvalidAgentSkills):
+				writeError(w, http.StatusBadRequest, "invalid_agent_skills", "metadata.skills must be an array of {name, description, parameters?}; parameters may be markdown or json, must mark required/optional values, and must keep secrets forbidden")
+			case errors.Is(err, store.ErrInvalidSkillDescription):
+				writeError(w, http.StatusBadRequest, "invalid_skill_description", "metadata.skills and metadata.skills[].parameters must not include secret values; parameter docs must clearly forbid passing secrets")
+			default:
+				writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
+			}
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agent": h.agentResponsePayload(updated),
+	})
+}
+
+func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request, agent model.Agent) {
+	if !requireJSONRequestContentType(w, r) {
+		return
+	}
+
+	var req openClawOfflineRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+			return
+		}
+	}
+
+	sessionKey := normalizeOpenClawSessionKey(req.SessionKey)
+	updated, err := h.setOpenClawWebSocketPresence(agent.AgentUUID, sessionKey, openClawPresenceStatusOffline, req.Reason)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrAgentNotFound):
+			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+		case errors.Is(err, store.ErrInvalidAgentType):
+			writeError(w, http.StatusBadRequest, "invalid_agent_type", "metadata.agent_type must be 2-64 chars: a-z, 0-9, ., _, -")
+		default:
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent presence")
+		}
+		return
+	}
+
+	details := map[string]any{"session_key": sessionKey, "source": "human_ui"}
+	if reason := strings.TrimSpace(req.Reason); reason != "" {
+		details["reason"] = reason
+	}
+	h.recordOpenClawAdapterUsage(agent.AgentUUID, "ws_offline", details)
+
+	payload := map[string]any{
+		"agent":        h.agentResponsePayload(updated),
+		"disconnected": true,
+	}
+	if presence := openClawPresenceFromMetadata(updated.Metadata); presence != nil {
+		payload["presence"] = presence
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request) {
 	h.handleMyAgentBindTokenCreate(w, r, true)
 }
