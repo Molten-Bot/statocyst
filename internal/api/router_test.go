@@ -2818,6 +2818,9 @@ func TestBindTokenRedeemSingleUse(t *testing.T) {
 	if bindToken == "" {
 		t.Fatalf("bind_token missing in create response")
 	}
+	if !strings.HasPrefix(bindToken, "b_") {
+		t.Fatalf("expected bind_token to start with b_, got %q", bindToken)
+	}
 
 	redeemResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]string{
 		"hub_url":    "https://hub.qa.example.com",
@@ -2830,6 +2833,9 @@ func TestBindTokenRedeemSingleUse(t *testing.T) {
 	token, _ := redeemPayload["token"].(string)
 	if token == "" {
 		t.Fatalf("expected token in bind response")
+	}
+	if !strings.HasPrefix(token, "t_") {
+		t.Fatalf("expected agent token to start with t_, got %q", token)
 	}
 	apiBase, _ := redeemPayload["api_base"].(string)
 	if apiBase != "http://example.com/v1" {
@@ -3004,6 +3010,9 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	if strings.TrimSpace(bindTokenA) == "" {
 		t.Fatalf("expected first bind token")
 	}
+	if !strings.HasPrefix(bindTokenA, "b_") {
+		t.Fatalf("expected first bind token to start with b_, got %q", bindTokenA)
+	}
 	redeemA := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
 		"bind_token": bindTokenA,
 	}, nil)
@@ -3013,6 +3022,9 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	tokenA, _ := decodeJSONMap(t, redeemA.Body.Bytes())["token"].(string)
 	if strings.TrimSpace(tokenA) == "" {
 		t.Fatalf("expected first agent token from bind redeem")
+	}
+	if !strings.HasPrefix(tokenA, "t_") {
+		t.Fatalf("expected first agent token to start with t_, got %q", tokenA)
 	}
 	finalizeA := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
 		"handle": "org-agent",
@@ -3033,6 +3045,9 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	if strings.TrimSpace(bindTokenB) == "" {
 		t.Fatalf("expected second bind token")
 	}
+	if !strings.HasPrefix(bindTokenB, "b_") {
+		t.Fatalf("expected second bind token to start with b_, got %q", bindTokenB)
+	}
 	redeemB := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind", map[string]any{
 		"bind_token": bindTokenB,
 	}, nil)
@@ -3042,6 +3057,9 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	tokenB, _ := decodeJSONMap(t, redeemB.Body.Bytes())["token"].(string)
 	if strings.TrimSpace(tokenB) == "" {
 		t.Fatalf("expected second agent token from bind redeem")
+	}
+	if !strings.HasPrefix(tokenB, "t_") {
+		t.Fatalf("expected second agent token to start with t_, got %q", tokenB)
 	}
 	dup := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me", map[string]any{
 		"handle": "ORG-AGENT",

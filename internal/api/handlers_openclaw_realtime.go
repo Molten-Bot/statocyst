@@ -468,11 +468,18 @@ func openClawWSResponse(requestID string, status int, result map[string]any) map
 }
 
 func openClawWSError(requestID string, status int, code, message string) map[string]any {
+	hint, hasHint := defaultErrorHint(code)
+	errorDetail := map[string]any{
+		"code":    strings.TrimSpace(code),
+		"message": strings.TrimSpace(message),
+	}
 	payload := map[string]any{
-		"type":    "response",
-		"ok":      false,
-		"failure": true,
-		"status":  status,
+		"type":         "response",
+		"ok":           false,
+		"failure":      true,
+		"status":       status,
+		"message":      strings.TrimSpace(message),
+		"error_detail": errorDetail,
 		"error": map[string]any{
 			"code":    strings.TrimSpace(code),
 			"message": strings.TrimSpace(message),
@@ -480,6 +487,15 @@ func openClawWSError(requestID string, status int, code, message string) map[str
 	}
 	if requestID != "" {
 		payload["request_id"] = requestID
+		errorDetail["request_id"] = requestID
+	}
+	if hasHint {
+		payload["retryable"] = hint.Retryable
+		errorDetail["retryable"] = hint.Retryable
+		if hint.NextAction != "" {
+			payload["next_action"] = hint.NextAction
+			errorDetail["next_action"] = hint.NextAction
+		}
 	}
 	return payload
 }
@@ -494,9 +510,15 @@ func openClawWSErrorFromRuntime(requestID string, handlerErr *runtimeHandlerErro
 		errorPayload = map[string]any{}
 		payload["error"] = errorPayload
 	}
+	errorDetail, _ := payload["error_detail"].(map[string]any)
+	if errorDetail == nil {
+		errorDetail = map[string]any{}
+		payload["error_detail"] = errorDetail
+	}
 	for key, value := range handlerErr.extras {
 		payload[key] = value
 		errorPayload[key] = value
+		errorDetail[key] = value
 	}
 	return payload
 }
