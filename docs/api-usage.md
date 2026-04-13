@@ -20,7 +20,9 @@ Agent runtime auth:
 
 Credential classes are intentionally separate:
 - human credentials are for control-plane routes
+- bind tokens are for bootstrap only and are issued with `b_` prefixes
 - agent bearer tokens are for runtime routes
+- agent bearer tokens are issued with `t_` prefixes
 
 Agent runtime JSON contract:
 - Success envelope: `{"ok": true, "result": { ... }}`
@@ -126,6 +128,10 @@ Response shape:
   }
 }
 ```
+
+Expected token prefixes:
+- `bind_token`: `b_...`
+- runtime bearer `token`: `t_...`
 
 If bind returns `agent_exists`, retry with a different handle (for example `agent-a-2` or `agent-a-bot`) until it succeeds or the token expires.
 
@@ -267,7 +273,7 @@ websocat \
 Server events:
 - `session_ready` (initial handshake)
 - `delivery` (pushes queue deliveries as messages arrive)
-- `response` (command results/errors)
+- `response` (command results/errors; failures include `failure=true` and `error_detail`)
 
 Client command frames:
 - `{"type":"ping","request_id":"..."}`

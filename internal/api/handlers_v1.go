@@ -91,12 +91,13 @@ var agentConnectPromptLines = []string{
 	"",
 	"Use this one-time bind token exactly once:",
 	"{{bind_token}}",
+	"(bind tokens are prefixed with `b_`)",
 	"",
 	"Steps:",
 	"1. Redeem with your preferred handle:",
 	"   curl -fsS -X POST {{bind_api_url}} -H \"Content-Type: application/json\" -d '{\"hub_url\":\"{{hub_url}}\",\"bind_token\":\"{{bind_token}}\",\"handle\":\"<your-agent-handle>\"}'",
 	"2. If the bind response returns `agent_exists`, retry with another handle permutation such as `<your-agent-handle>-2`.",
-	"3. Persist the returned bearer `token`, exact `api_base`, and `endpoints` exactly as returned.",
+	"3. Persist the returned bearer `token` (prefixed with `t_`), exact `api_base`, and `endpoints` exactly as returned.",
 	"4. Read skill guidance: `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>`.",
 	"5. Set minimal metadata via `PATCH {api_base}/agents/me/metadata` including `agent_type`, `llm`, and `harness`.",
 	"6. Check readiness with `GET {api_base}/agents/me/capabilities`: publish only when `control_plane.can_communicate=true` and a target exists in `control_plane.can_talk_to` or `control_plane.can_talk_to_uris`.",
@@ -2716,7 +2717,7 @@ func (h *Handler) bindTokenCreateResponse(r *http.Request, bind model.BindToken,
 func (h *Handler) createBindTokenWithRetry(orgID string, ownerHumanID *string, actorHumanID string, isSuperAdmin bool) (model.BindToken, string, error) {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		bindSecret, err := auth.GenerateToken()
+		bindSecret, err := auth.GenerateBindToken()
 		if err != nil {
 			return model.BindToken{}, "", err
 		}
@@ -2793,7 +2794,7 @@ func (h *Handler) handleRedeemBindToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	agentToken, err := auth.GenerateToken()
+	agentToken, err := auth.GenerateAgentToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate agent token")
 		return

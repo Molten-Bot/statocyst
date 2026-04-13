@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,42 @@ func TestGenerateTokenProducesURLSafeEntropy(t *testing.T) {
 	decoded, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
 		t.Fatalf("token is not valid base64url: %v", err)
+	}
+	if len(decoded) != 32 {
+		t.Fatalf("expected 32 random bytes, got %d", len(decoded))
+	}
+}
+
+func TestGenerateBindTokenUsesBindPrefix(t *testing.T) {
+	token, err := GenerateBindToken()
+	if err != nil {
+		t.Fatalf("GenerateBindToken() error = %v", err)
+	}
+	if !strings.HasPrefix(token, bindTokenPrefix) {
+		t.Fatalf("expected bind token prefix %q, got %q", bindTokenPrefix, token)
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, bindTokenPrefix))
+	if err != nil {
+		t.Fatalf("bind token entropy is not valid base64url: %v", err)
+	}
+	if len(decoded) != 32 {
+		t.Fatalf("expected 32 random bytes, got %d", len(decoded))
+	}
+}
+
+func TestGenerateAgentTokenUsesAgentPrefix(t *testing.T) {
+	token, err := GenerateAgentToken()
+	if err != nil {
+		t.Fatalf("GenerateAgentToken() error = %v", err)
+	}
+	if !strings.HasPrefix(token, agentTokenPrefix) {
+		t.Fatalf("expected agent token prefix %q, got %q", agentTokenPrefix, token)
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, agentTokenPrefix))
+	if err != nil {
+		t.Fatalf("agent token entropy is not valid base64url: %v", err)
 	}
 	if len(decoded) != 32 {
 		t.Fatalf("expected 32 random bytes, got %d", len(decoded))

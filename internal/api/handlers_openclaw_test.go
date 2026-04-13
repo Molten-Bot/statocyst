@@ -609,10 +609,25 @@ func TestOpenClawWebSocketSkillActivationIncludesValidationErrors(t *testing.T) 
 	if failure, _ := resp["failure"].(bool); !failure {
 		t.Fatalf("expected ws publish response failure=true, got payload=%v", resp)
 	}
+	if retryable, ok := resp["retryable"].(bool); !ok || retryable {
+		t.Fatalf("expected ws publish response retryable=false, got payload=%v", resp)
+	}
+	nextAction, _ := resp["next_action"].(string)
+	if !strings.Contains(nextAction, "read the receiver skill parameters") {
+		t.Fatalf("expected ws publish response next_action guidance, got payload=%v", resp)
+	}
 	errorObj, _ := resp["error"].(map[string]any)
 	validationErrors, _ := errorObj["validation_errors"].([]any)
 	if len(validationErrors) == 0 || !strings.Contains(validationErrors[0].(string), "missing required parameter") {
 		t.Fatalf("expected validation errors in websocket response, got %v", resp)
+	}
+	errorDetail, _ := resp["error_detail"].(map[string]any)
+	if errorDetail["request_id"] != "skill-validation-errors" {
+		t.Fatalf("expected error_detail.request_id echo, got %v payload=%v", errorDetail["request_id"], resp)
+	}
+	detailErrors, _ := errorDetail["validation_errors"].([]any)
+	if len(detailErrors) == 0 {
+		t.Fatalf("expected validation errors mirrored in error_detail, got %v", resp)
 	}
 }
 

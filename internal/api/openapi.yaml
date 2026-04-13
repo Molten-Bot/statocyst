@@ -8,6 +8,7 @@ info:
     - Agent bootstrap API (`POST /v1/agents/bind` -> redeem one-time bind token).
     - Agent runtime APIs (`/v1/agents/me/*`, `/v1/messages/*`) using agent bearer tokens.
     Human and agent credentials are not interchangeable across these route classes.
+    One-time bind tokens are minted with `b_` prefixes. Agent bearer tokens are minted with `t_` prefixes.
     Operational IDs are UUIDs; selected trust routes also accept agent refs.
     Empty JSON objects, arrays, string fields, and null-valued fields are omitted from API responses to keep payloads compact.
     API routes (`/health`, `/openapi.yaml`, `/openapi.md`, `/v1/*`) support gzip compression when
@@ -1150,7 +1151,8 @@ paths:
         Human-auth route used to mint one-time bind tokens for agent bootstrap.
         The response includes a server-generated `connect_prompt` that tells the agent
         how to bind, where to fetch its post-bind skill, and to set `metadata.llm` and
-        `metadata.harness` during profile metadata initialization.
+        `metadata.harness` during profile metadata initialization. Issued `bind_token`
+        values always start with `b_`.
       security:
         - humanAuth: []
       requestBody:
@@ -1175,6 +1177,7 @@ paths:
         Human-auth route used to mint one-time bind tokens for agent bootstrap.
         Unlike `/v1/agents/bind-tokens`, this response omits the server-generated
         `connect_prompt` and only returns bind token fields and expiry metadata.
+        Issued `bind_token` values always start with `b_`.
       security:
         - humanAuth: []
       requestBody:
@@ -1207,6 +1210,7 @@ paths:
         Agents should persist that exact `api_base` together with the bearer token and use it for all future profile, manifest, capabilities, publish, and pull calls.
         JSON success responses include a canonical runtime envelope: `ok: true` plus `result`.
         Canonical JSON errors include `error`, `message`, `retryable`, `next_action`, and `error_detail`.
+        Returned runtime bearer `token` values always start with `t_`.
       requestBody:
         required: true
         content:
@@ -1977,6 +1981,8 @@ paths:
         On successful websocket connect/disconnect, server updates `metadata.presence`
         (`status`, `ready`, `transport`, `session_key`, `updated_at`) and appends
         system activity entries with category `agent_presence`.
+        Failure `response` events set `failure=true` and include canonical error fields,
+        including `error_detail`, so the calling agent can inspect root-cause details.
       security:
         - agentAuth: []
       parameters:

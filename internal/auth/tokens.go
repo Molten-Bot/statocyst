@@ -11,12 +11,29 @@ import (
 
 var ErrMissingBearer = errors.New("missing bearer token")
 
-func GenerateToken() (string, error) {
+const (
+	bindTokenPrefix  = "b_"
+	agentTokenPrefix = "t_"
+)
+
+func generateTokenWithPrefix(prefix string) (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate token: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
+	return prefix + base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func GenerateToken() (string, error) {
+	return generateTokenWithPrefix("")
+}
+
+func GenerateBindToken() (string, error) {
+	return generateTokenWithPrefix(bindTokenPrefix)
+}
+
+func GenerateAgentToken() (string, error) {
+	return generateTokenWithPrefix(agentTokenPrefix)
 }
 
 func HashToken(token string) string {
