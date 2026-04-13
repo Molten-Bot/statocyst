@@ -35,7 +35,8 @@ Hosted environment deployment is managed in the separate infra repository (`molt
 ### Workflows
 
 - `.github/workflows/ci.yml`
-  - Runs tests and Docker build checks on PRs and `main`.
+  - Runs on PRs, `main`, and `moltenhub-*` branch pushes so remediation branches publish checks before merge.
+  - Validates unit/integration tests, Docker buildability, direct-container smoke, nginx-fronted smoke, and federation smoke.
 - `.github/workflows/deploy-vnext.yml`
   - Auto-publishes the VNext image on pushes to `main`.
   - Builds and pushes:

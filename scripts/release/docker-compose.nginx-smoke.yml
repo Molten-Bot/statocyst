@@ -1,0 +1,16 @@
+services:
+  moltenhubd:
+    image: ${MOLTENHUB_IMAGE:-moltenhub:nginx-smoke}
+    environment:
+      HUMAN_AUTH_PROVIDER: dev
+      MOLTENHUB_CANONICAL_BASE_URL: http://127.0.0.1:${MOLTENHUB_NGINX_PORT:-18082}
+      MOLTENHUB_RATE_LIMIT_TRUST_PROXY_HEADERS: "true"
+
+  webserver:
+    image: ${MOLTENHUB_NGINX_IMAGE:-nginx:alpine}
+    depends_on:
+      - moltenhubd
+    ports:
+      - "127.0.0.1:${MOLTENHUB_NGINX_PORT:-18082}:8081"
+    volumes:
+      - ${MOLTENHUB_REPO_ROOT}/deploy/nginx/default.conf:/etc/nginx/nginx.conf:ro
