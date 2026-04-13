@@ -2109,8 +2109,11 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	if !strings.Contains(connectPrompt, "GET {api_base}/agents/me/skill") {
 		t.Fatalf("expected connect prompt to include skill read step, got %q", connectPrompt)
 	}
-	if !strings.Contains(connectPrompt, "agent_type") || !strings.Contains(connectPrompt, "llm") || !strings.Contains(connectPrompt, "harness") {
-		t.Fatalf("expected connect prompt to include minimal metadata guidance, got %q", connectPrompt)
+	if !strings.Contains(connectPrompt, "display_name") || !strings.Contains(connectPrompt, "emoji") || !strings.Contains(connectPrompt, "agent_type") || !strings.Contains(connectPrompt, "llm") || !strings.Contains(connectPrompt, "harness") {
+		t.Fatalf("expected connect prompt to include profile metadata guidance, got %q", connectPrompt)
+	}
+	if !strings.Contains(connectPrompt, "metadata.presence") || !strings.Contains(connectPrompt, "server-managed") {
+		t.Fatalf("expected connect prompt to describe server-managed presence, got %q", connectPrompt)
 	}
 	if !strings.Contains(connectPrompt, "control_plane.can_communicate=true") || !strings.Contains(connectPrompt, "POST {api_base}/messages/publish") {
 		t.Fatalf("expected connect prompt to include readiness + first publish guidance, got %q", connectPrompt)
@@ -3236,8 +3239,14 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if !strings.Contains(skillContent, "Skill Call Contract") || !strings.Contains(skillContent, "skill_request") {
 		t.Fatalf("expected skill call contract in skill, got %q", skillContent)
 	}
-	if !strings.Contains(skillContent, "\"agent_type\":\"<assistant-type>\"") || !strings.Contains(skillContent, "\"llm\":\"<provider>/<model>@<version>\"") || !strings.Contains(skillContent, "\"harness\":\"<runtime-or-framework>@<version>\"") {
-		t.Fatalf("expected onboarding skill to include minimal metadata setup guidance, got %q", skillContent)
+	if !strings.Contains(skillContent, "\"display_name\":\"<human-friendly-name>\"") || !strings.Contains(skillContent, "\"emoji\":\"<single-emoji>\"") || !strings.Contains(skillContent, "\"agent_type\":\"<assistant-type>\"") || !strings.Contains(skillContent, "\"llm\":\"<provider>/<model>@<version>\"") || !strings.Contains(skillContent, "\"harness\":\"<runtime-or-framework>@<version>\"") {
+		t.Fatalf("expected onboarding skill to include profile metadata setup guidance, got %q", skillContent)
+	}
+	if !strings.Contains(skillContent, "metadata.display_name") || !strings.Contains(skillContent, "metadata.emoji") {
+		t.Fatalf("expected onboarding skill to mention display_name and emoji guidance, got %q", skillContent)
+	}
+	if !strings.Contains(skillContent, "status=online") || !strings.Contains(skillContent, "status=offline") {
+		t.Fatalf("expected onboarding skill to describe online/offline presence semantics, got %q", skillContent)
 	}
 	if strings.Contains(skillContent, "## OpenClaw Node + Agent HTTP Path") {
 		t.Fatalf("did not expect OpenClaw-only section for non-OpenClaw profile, got %q", skillContent)
@@ -4024,11 +4033,14 @@ func TestOpenAPIMarkdownHeaders(t *testing.T) {
 	if !strings.Contains(body, "```yaml") || !strings.Contains(body, "/v1/agents/me") {
 		t.Fatalf("expected embedded yaml spec content in openapi markdown, got %q", body)
 	}
-	if !strings.Contains(body, "metadata.profile_markdown") || !strings.Contains(body, "metadata.activities") || !strings.Contains(body, "metadata.hire_me") {
+	if !strings.Contains(body, "metadata.display_name") || !strings.Contains(body, "metadata.emoji") || !strings.Contains(body, "metadata.profile_markdown") || !strings.Contains(body, "metadata.activities") || !strings.Contains(body, "metadata.hire_me") {
 		t.Fatalf("expected metadata directory fields in openapi markdown, got %q", body)
 	}
-	if !strings.Contains(body, "metadata.llm") || !strings.Contains(body, "metadata.harness") {
-		t.Fatalf("expected llm/harness metadata fields in openapi markdown, got %q", body)
+	if !strings.Contains(body, "metadata.llm") || !strings.Contains(body, "metadata.harness") || !strings.Contains(body, "metadata.presence") {
+		t.Fatalf("expected llm/harness/presence metadata fields in openapi markdown, got %q", body)
+	}
+	if !strings.Contains(body, "status=online") || !strings.Contains(body, "status=offline") {
+		t.Fatalf("expected presence status guidance in openapi markdown, got %q", body)
 	}
 	if !strings.Contains(body, "copy-ready self-signup prompt") {
 		t.Fatalf("expected self-signup prompt contract text in openapi markdown, got %q", body)
@@ -4823,7 +4835,7 @@ func TestUIRoutes_AgentsPageIncludesSelfSignupMetadataControls(t *testing.T) {
 	if !strings.Contains(body, "Generate Self-Signup Prompt") || !strings.Contains(body, "Copy Agent Prompt") {
 		t.Fatalf("expected self-signup prompt controls in /agents page, got %q", body)
 	}
-	if !strings.Contains(body, "profile_markdown") || !strings.Contains(body, "activities") || !strings.Contains(body, "hire_me") {
+	if !strings.Contains(body, "display_name") || !strings.Contains(body, "emoji") || !strings.Contains(body, "profile_markdown") || !strings.Contains(body, "activities") || !strings.Contains(body, "hire_me") {
 		t.Fatalf("expected metadata field hints in /agents page, got %q", body)
 	}
 	if !strings.Contains(body, "Agent Profile") || !strings.Contains(body, "Disconnect") || !strings.Contains(body, "emoji-picker-element") {

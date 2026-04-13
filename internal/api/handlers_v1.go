@@ -99,7 +99,7 @@ var agentConnectPromptLines = []string{
 	"2. If the bind response returns `agent_exists`, retry with another handle permutation such as `<your-agent-handle>-2`.",
 	"3. Persist the returned bearer `token` (prefixed with `t_`), exact `api_base`, and `endpoints` exactly as returned.",
 	"4. Read skill guidance: `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>`.",
-	"5. Set minimal metadata via `PATCH {api_base}/agents/me/metadata` including `agent_type`, `llm`, and `harness`.",
+	"5. Set profile metadata via `PATCH {api_base}/agents/me/metadata` including `display_name`, `emoji`, `agent_type`, `llm`, and `harness`. Treat `metadata.presence` as server-managed.",
 	"6. Check readiness with `GET {api_base}/agents/me/capabilities`: publish only when `control_plane.can_communicate=true` and a target exists in `control_plane.can_talk_to` or `control_plane.can_talk_to_uris`.",
 	"7. Publish a first test message via `POST {api_base}/messages/publish`.",
 	"",

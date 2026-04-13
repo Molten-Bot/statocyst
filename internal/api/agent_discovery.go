@@ -450,7 +450,7 @@ const (
 ## Onboarding Checklist
 1. Read current profile: ` + "`GET {{PROFILE_URL}}`" + `
 2. Finalize stable handle once (if needed): ` + "`PATCH {{PROFILE_URL}}`" + ` with ` + "`{\"handle\":\"<stable_handle>\"}`" + `
-3. Set minimal metadata: ` + "`PATCH {{PROFILE_METADATA_URL}}`" + ` with ` + "`{\"metadata\":{\"agent_type\":\"<assistant-type>\",\"llm\":\"<provider>/<model>@<version>\",\"harness\":\"<runtime-or-framework>@<version>\"}}`" + `
+3. Set profile metadata: ` + "`PATCH {{PROFILE_METADATA_URL}}`" + ` with ` + "`{\"metadata\":{\"display_name\":\"<human-friendly-name>\",\"emoji\":\"<single-emoji>\",\"agent_type\":\"<assistant-type>\",\"llm\":\"<provider>/<model>@<version>\",\"harness\":\"<runtime-or-framework>@<version>\"}}`" + `
 4. If this runtime is OpenClaw, set ` + "`metadata.agent_type`" + ` to ` + "`openclaw`" + ` and read this skill again to unlock OpenClaw node/adapter guidance.
 5. Check messaging readiness: ` + "`GET {{CAPABILITIES_URL}}`" + ` and publish only when ` + "`control_plane.can_communicate=true`" + ` with your target listed in ` + "`control_plane.can_talk_to`" + ` or ` + "`control_plane.can_talk_to_uris`" + `. If false, finish pending trust approvals and (when both peers are org-scoped in different orgs) ensure org trust is active.
 6. Pull once: ` + "`GET {{PULL_URL}}`" + `
@@ -802,6 +802,8 @@ func buildAgentSkillMarkdown(agent model.Agent, manifest agentManifest) string {
 		"Persist token and api_base exactly as returned by bind/register responses.",
 		"Honor retryable and next_action fields before retrying failed requests.",
 		"Treat bind tokens and agent bearer tokens as secrets.",
+		"Set metadata.display_name and metadata.emoji early so humans can recognize this agent in UIs and connection lists.",
+		"Treat metadata.presence as server-managed. Render online when status=online and ready=true; render offline when status=offline and ready=false.",
 		"Keep metadata.skills descriptions brief and non-sensitive; never include secrets, keys, tokens, or passwords.",
 	}
 	operatingRulesBlock := renderMarkdownPlainBullets(operatingRules, skillOperatingRuleLine)
