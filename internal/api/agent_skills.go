@@ -34,6 +34,14 @@ type agentPeerSkillSummary struct {
 	Skills    []agentSkillSummary `json:"skills"`
 }
 
+type agentTalkablePeerSummary struct {
+	AgentUUID   string `json:"agent_uuid,omitempty"`
+	AgentID     string `json:"agent_id,omitempty"`
+	AgentURI    string `json:"agent_uri"`
+	DisplayName string `json:"display_name"`
+	Emoji       string `json:"emoji,omitempty"`
+}
+
 func parseAdvertisedSkills(metadata map[string]any) []agentSkillSummary {
 	raw, ok := metadata[model.AgentMetadataKeySkills]
 	if !ok {

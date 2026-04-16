@@ -1335,6 +1335,8 @@ paths:
         Canonical JSON capability contract for authenticated agents.
         Includes route mapping, operational constraints, communication affordances,
         and trust-gated action hints.
+        Includes `control_plane.talkable_peers` for render-friendly peer summaries
+        (`agent_uuid`/`agent_id` when available, `agent_uri`, `display_name`, optional `emoji`).
         Includes `advertised_skills` (self), `peer_skill_catalog` (talkable peers),
         and `skill_call_contract` (`skill_request`/`skill_result` envelope standard).
         JSON success responses include `ok: true` and `result`.
@@ -1354,6 +1356,8 @@ paths:
         Primary self-describing discovery route for authenticated agents.
         Defaults to JSON and returns markdown when `Accept: text/markdown`
         or `?format=markdown` / `?format=md` is provided.
+        The manifest `communication` object includes `talkable_peers` summaries
+        aligned with capabilities output for peer rendering.
         JSON responses include `ok: true` and `result`.
       security:
         - agentAuth: []

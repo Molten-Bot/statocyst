@@ -126,6 +126,7 @@ type agentControlPlaneView struct {
 	OwnerHumanID     string
 	CanTalkTo        []string
 	CanTalkToURIs    []string
+	TalkablePeers    []agentTalkablePeerSummary
 	Capabilities     []string
 	AdvertisedSkills []agentSkillSummary
 	PeerSkillCatalog []agentPeerSkillSummary
@@ -1237,6 +1238,7 @@ func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (ag
 		return agentControlPlaneView{}, err
 	}
 	talkableURIs := make([]string, 0, len(peers))
+	talkablePeers := make([]agentTalkablePeerSummary, 0, len(peers))
 	peerSkillCatalog := make([]agentPeerSkillSummary, 0, len(peers))
 	for _, peerUUID := range peers {
 		peerAgent, err := h.control.GetAgentByUUID(peerUUID)
@@ -1245,6 +1247,7 @@ func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (ag
 		}
 		peerURI := h.agentURI(peerAgent)
 		talkableURIs = append(talkableURIs, peerURI)
+		talkablePeers = append(talkablePeers, talkablePeerSummaryFromLocalAgent(peerAgent, peerURI))
 		peerSkillCatalog = append(peerSkillCatalog, agentPeerSkillSummary{
 			AgentUUID: peerAgent.AgentUUID,
 			AgentID:   peerAgent.AgentID,
@@ -1262,12 +1265,27 @@ func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (ag
 			continue
 		}
 		talkableURIs = append(talkableURIs, remoteURI)
+		talkablePeers = append(talkablePeers, agentTalkablePeerSummary{
+			AgentURI:    remoteURI,
+			DisplayName: remoteURI,
+		})
 		peerSkillCatalog = append(peerSkillCatalog, agentPeerSkillSummary{
 			AgentURI: remoteURI,
 			Skills:   []agentSkillSummary{},
 		})
 	}
 	sort.Strings(talkableURIs)
+	sort.Slice(talkablePeers, func(i, j int) bool {
+		left := strings.TrimSpace(talkablePeers[i].AgentID)
+		if left == "" {
+			left = strings.TrimSpace(talkablePeers[i].AgentURI)
+		}
+		right := strings.TrimSpace(talkablePeers[j].AgentID)
+		if right == "" {
+			right = strings.TrimSpace(talkablePeers[j].AgentURI)
+		}
+		return left < right
+	})
 	sort.Slice(peerSkillCatalog, func(i, j int) bool {
 		left := strings.TrimSpace(peerSkillCatalog[i].AgentID)
 		if left == "" {
@@ -1292,10 +1310,35 @@ func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (ag
 		OwnerHumanID:     ownerHumanID,
 		CanTalkTo:        peers,
 		CanTalkToURIs:    talkableURIs,
+		TalkablePeers:    talkablePeers,
 		Capabilities:     []string{"publish_messages", "pull_messages", "read_capabilities", "read_skill", "update_profile"},
 		AdvertisedSkills: parseAdvertisedSkills(agent.Metadata),
 		PeerSkillCatalog: peerSkillCatalog,
 	}, nil
+}
+
+func talkablePeerSummaryFromLocalAgent(peer model.Agent, peerURI string) agentTalkablePeerSummary {
+	displayName := metadataStringAliasValue(peer.Metadata, "display_name")
+	if displayName == "" {
+		displayName = strings.TrimSpace(peer.Handle)
+	}
+	if displayName == "" {
+		displayName = strings.TrimSpace(peer.AgentID)
+	}
+	if displayName == "" {
+		displayName = strings.TrimSpace(peerURI)
+	}
+
+	summary := agentTalkablePeerSummary{
+		AgentUUID:   strings.TrimSpace(peer.AgentUUID),
+		AgentID:     strings.TrimSpace(peer.AgentID),
+		AgentURI:    strings.TrimSpace(peerURI),
+		DisplayName: displayName,
+	}
+	if emoji := metadataStringAliasValue(peer.Metadata, "emoji"); emoji != "" {
+		summary.Emoji = emoji
+	}
+	return summary
 }
 
 func (h *Handler) agentControlPlanePayload(cp agentControlPlaneView) map[string]any {
@@ -1317,6 +1360,7 @@ func (h *Handler) agentControlPlanePayload(cp agentControlPlaneView) map[string]
 		"owner":               owner,
 		"can_talk_to":         cp.CanTalkTo,
 		"can_talk_to_uris":    cp.CanTalkToURIs,
+		"talkable_peers":      cp.TalkablePeers,
 		"capabilities":        cp.Capabilities,
 		"can_communicate":     len(cp.CanTalkToURIs) > 0,
 		"advertised_skills":   cp.AdvertisedSkills,

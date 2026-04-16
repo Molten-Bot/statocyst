@@ -3115,7 +3115,7 @@ func TestBindTokenExpires(t *testing.T) {
 
 func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	router := newTestRouter()
-	_, _, tokenA, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
+	_, _, tokenA, tokenB, _, _, agentUUIDA, agentUUIDB := setupTrustedAgents(t, router)
 
 	skillPatchA := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
 		"metadata": map[string]any{
@@ -3131,6 +3131,8 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 	skillPatchB := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
 		"metadata": map[string]any{
+			"display_name": "Math Bot",
+			"emoji":        "🧮",
 			"skills": []map[string]any{
 				{"name": "math.add", "description": "Add two numbers."},
 			},
@@ -3156,6 +3158,14 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if manifestObj["schema_version"] != "2" {
 		t.Fatalf("expected manifest schema_version=2, got %v", manifestObj["schema_version"])
 	}
+	manifestCommunication, ok := manifestObj["communication"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected communication in manifest payload, got %v", manifestObj)
+	}
+	manifestTalkablePeers, ok := manifestCommunication["talkable_peers"].([]any)
+	if !ok || len(manifestTalkablePeers) == 0 {
+		t.Fatalf("expected communication.talkable_peers in manifest payload, got %v", manifestCommunication["talkable_peers"])
+	}
 
 	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
 		"Authorization": "Bearer " + tokenA,
@@ -3174,6 +3184,71 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 	if len(peers) == 0 {
 		t.Fatalf("expected at least one talkable peer")
+	}
+	talkablePeers, ok := controlPlane["talkable_peers"].([]any)
+	if !ok || len(talkablePeers) == 0 {
+		t.Fatalf("expected talkable_peers in control_plane payload, got %v", controlPlane["talkable_peers"])
+	}
+	foundPeerB := false
+	for _, raw := range talkablePeers {
+		peer, _ := raw.(map[string]any)
+		if peer == nil {
+			continue
+		}
+		if gotUUID, _ := peer["agent_uuid"].(string); gotUUID != agentUUIDB {
+			continue
+		}
+		foundPeerB = true
+		if gotName, _ := peer["display_name"].(string); gotName != "Math Bot" {
+			t.Fatalf("expected talkable peer B display_name Math Bot, got %q peer=%v", gotName, peer)
+		}
+		if gotEmoji, _ := peer["emoji"].(string); gotEmoji != "🧮" {
+			t.Fatalf("expected talkable peer B emoji 🧮, got %q peer=%v", gotEmoji, peer)
+		}
+	}
+	if !foundPeerB {
+		t.Fatalf("expected talkable_peers to include peer B %q, got %v", agentUUIDB, talkablePeers)
+	}
+	communication, ok := capsPayload["communication"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected communication in capabilities payload, got %v", capsPayload)
+	}
+	communicationTalkablePeers, ok := communication["talkable_peers"].([]any)
+	if !ok || len(communicationTalkablePeers) == 0 {
+		t.Fatalf("expected communication.talkable_peers in capabilities payload, got %v", communication["talkable_peers"])
+	}
+
+	capsRespB := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
+		"Authorization": "Bearer " + tokenB,
+	})
+	if capsRespB.Code != http.StatusOK {
+		t.Fatalf("agent B capabilities failed: %d %s", capsRespB.Code, capsRespB.Body.String())
+	}
+	capsPayloadB := decodeJSONMap(t, capsRespB.Body.Bytes())
+	controlPlaneB, ok := capsPayloadB["control_plane"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing control_plane for agent B: %v", capsPayloadB)
+	}
+	talkablePeersB, ok := controlPlaneB["talkable_peers"].([]any)
+	if !ok || len(talkablePeersB) == 0 {
+		t.Fatalf("expected talkable_peers for agent B, got %v", controlPlaneB["talkable_peers"])
+	}
+	foundPeerA := false
+	for _, raw := range talkablePeersB {
+		peer, _ := raw.(map[string]any)
+		if peer == nil {
+			continue
+		}
+		if gotUUID, _ := peer["agent_uuid"].(string); gotUUID != agentUUIDA {
+			continue
+		}
+		foundPeerA = true
+		if gotName, _ := peer["display_name"].(string); gotName != "agent-a" {
+			t.Fatalf("expected talkable peer A fallback display_name agent-a, got %q peer=%v", gotName, peer)
+		}
+	}
+	if !foundPeerA {
+		t.Fatalf("expected talkable_peers to include peer A %q, got %v", agentUUIDA, talkablePeersB)
 	}
 	if _, ok := capsPayload["manifest_url"].(string); !ok {
 		t.Fatalf("expected manifest_url in capabilities payload, got %v", capsPayload)
@@ -3308,6 +3383,57 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	notAcceptablePayload := decodeJSONMap(t, notAcceptableResp.Body.Bytes())
 	if notAcceptablePayload["error"] != "not_acceptable" {
 		t.Fatalf("expected not_acceptable error code, got %v", notAcceptablePayload["error"])
+	}
+}
+
+func TestAgentCapabilitiesTalkablePeersIncludesRemoteURIOnlyEntry(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, agentUUIDA, _ := setupTrustedAgents(t, router)
+
+	const peerID = "peer-remote"
+	createPeer(t, router, peerID, "https://remote.example", "https://remote.example", "peer-secret")
+
+	const remoteURI = "https://remote.example/human/remote/agent/assistant"
+	createRemoteAgentTrustAdmin(t, router, agentUUIDA, peerID, remoteURI)
+
+	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
+		"Authorization": "Bearer " + tokenA,
+	})
+	if capsResp.Code != http.StatusOK {
+		t.Fatalf("agent capabilities failed: %d %s", capsResp.Code, capsResp.Body.String())
+	}
+	capsPayload := decodeJSONMap(t, capsResp.Body.Bytes())
+	controlPlane, ok := capsPayload["control_plane"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing control_plane: %v", capsPayload)
+	}
+	talkablePeers, ok := controlPlane["talkable_peers"].([]any)
+	if !ok || len(talkablePeers) == 0 {
+		t.Fatalf("expected talkable_peers in control_plane payload, got %v", controlPlane["talkable_peers"])
+	}
+
+	foundRemote := false
+	for _, raw := range talkablePeers {
+		peer, _ := raw.(map[string]any)
+		if peer == nil {
+			continue
+		}
+		if gotURI, _ := peer["agent_uri"].(string); gotURI != remoteURI {
+			continue
+		}
+		foundRemote = true
+		if gotName, _ := peer["display_name"].(string); gotName != remoteURI {
+			t.Fatalf("expected remote talkable peer display_name fallback %q, got %q peer=%v", remoteURI, gotName, peer)
+		}
+		if _, exists := peer["agent_uuid"]; exists {
+			t.Fatalf("expected remote URI-only peer to omit agent_uuid, got peer=%v", peer)
+		}
+		if _, exists := peer["agent_id"]; exists {
+			t.Fatalf("expected remote URI-only peer to omit agent_id, got peer=%v", peer)
+		}
+	}
+	if !foundRemote {
+		t.Fatalf("expected talkable_peers to include remote URI %q, got %v", remoteURI, talkablePeers)
 	}
 }
 

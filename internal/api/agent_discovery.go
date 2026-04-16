@@ -353,6 +353,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 		"can_communicate": len(cp.CanTalkToURIs) > 0,
 		"talkable_uris":   cp.CanTalkToURIs,
 		"talkable_agents": cp.CanTalkTo,
+		"talkable_peers":  cp.TalkablePeers,
 		"retry_guidance": map[string]any{
 			"store_error": map[string]any{
 				"retryable":   true,
