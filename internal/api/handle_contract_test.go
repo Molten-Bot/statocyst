@@ -153,8 +153,16 @@ func TestCanonicalAgentURIAndUUIDLifecycleRoutes(t *testing.T) {
 	if rotate.Code != http.StatusOK {
 		t.Fatalf("expected rotate with agent_uuid to succeed, got %d %s", rotate.Code, rotate.Body.String())
 	}
-	if decodeJSONMap(t, rotate.Body.Bytes())["agent_uuid"] != agentUUID {
+	rotatePayload := decodeJSONMap(t, rotate.Body.Bytes())
+	if rotatePayload["agent_uuid"] != agentUUID {
 		t.Fatalf("expected rotate response to preserve agent_uuid")
+	}
+	rotatedToken, _ := rotatePayload["token"].(string)
+	if rotatedToken == "" {
+		t.Fatalf("expected rotate response token")
+	}
+	if !strings.HasPrefix(rotatedToken, "t_") {
+		t.Fatalf("expected rotated token to start with t_, got %q", rotatedToken)
 	}
 
 	revoke := doJSONRequest(t, router, http.MethodDelete, "/v1/agents/"+agentUUID, nil, humanHeaders("alice", "alice@a.test"))
@@ -169,6 +177,37 @@ func TestCanonicalAgentURIAndUUIDLifecycleRoutes(t *testing.T) {
 	}
 	if decodeJSONMap(t, deleteResp.Body.Bytes())["result"] != "deleted" {
 		t.Fatalf("expected delete response to report deleted")
+	}
+}
+
+func TestRotateTokenFailureIncludesErrorDetail(t *testing.T) {
+	router := newTestRouter()
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	rotate := doJSONRequest(
+		t,
+		router,
+		http.MethodPost,
+		"/v1/agents/11111111-1111-4111-8111-111111111111/rotate-token",
+		nil,
+		humanHeaders("alice", "alice@a.test"),
+	)
+	if rotate.Code != http.StatusNotFound {
+		t.Fatalf("expected unknown agent rotate to return 404, got %d %s", rotate.Code, rotate.Body.String())
+	}
+	payload := decodeJSONMap(t, rotate.Body.Bytes())
+	if payload["error"] != "unknown_agent" {
+		t.Fatalf("expected unknown_agent error, got %v payload=%v", payload["error"], payload)
+	}
+	detail, _ := payload["error_detail"].(map[string]any)
+	if detail == nil {
+		t.Fatalf("expected error_detail object, got %v payload=%v", payload["error_detail"], payload)
+	}
+	if detail["code"] != "unknown_agent" {
+		t.Fatalf("expected error_detail.code=unknown_agent, got %v payload=%v", detail["code"], payload)
+	}
+	if detail["message"] != "agent_uuid is not registered" {
+		t.Fatalf("expected error_detail.message to describe failure, got %v payload=%v", detail["message"], payload)
 	}
 }
 

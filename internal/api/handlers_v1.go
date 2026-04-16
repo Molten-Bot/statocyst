@@ -2972,9 +2972,9 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 			writeMethodNotAllowed(w)
 			return
 		}
-		token, err := auth.GenerateToken()
+		token, err := auth.GenerateAgentToken()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate token")
+			writeError(w, http.StatusInternalServerError, "token_generation_failed", "failed to generate agent token")
 			return
 		}
 		if err := h.control.RotateAgentToken(agentUUID, actor.Human.HumanID, auth.HashToken(token), h.now().UTC(), actor.IsSuperAdmin); err != nil {
