@@ -91,6 +91,7 @@ func TestRunnerLaunchSmokeFlow(t *testing.T) {
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
 		{name: "OpenClaw HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
+		{name: "OpenClaw polling heartbeat marks runtime presence online", run: (*runner).stepOpenClawPresenceHeartbeat},
 		{name: "OpenClaw websocket delivery and ack succeeds", run: (*runner).stepOpenClawWebSocketDelivery},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},

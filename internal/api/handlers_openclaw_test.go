@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"moltenhub/internal/auth"
+	"moltenhub/internal/longpoll"
+	"moltenhub/internal/store"
 )
 
 func TestOpenClawPublishPullAckFlow(t *testing.T) {
@@ -368,6 +372,40 @@ func TestOpenClawOfflineEndpointUpdatesPresenceAndActivityLog(t *testing.T) {
 	}
 }
 
+func TestOpenClawPullMarksPresenceOnline(t *testing.T) {
+	router := newTestRouter()
+	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
+
+	offlineResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+		"session_key": "main",
+		"reason":      "pre-poll baseline",
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if offlineResp.Code != http.StatusOK {
+		t.Fatalf("expected openclaw offline 200, got %d %s", offlineResp.Code, offlineResp.Body.String())
+	}
+
+	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	if pullResp.Code != http.StatusNoContent {
+		t.Fatalf("expected openclaw pull 204 while queue empty, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+
+	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	if meResp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/agents/me 200, got %d %s", meResp.Code, meResp.Body.String())
+	}
+	mePayload := decodeJSONMap(t, meResp.Body.Bytes())
+	meResult := requireAgentRuntimeSuccessEnvelope(t, mePayload)
+	agent, _ := meResult["agent"].(map[string]any)
+	metadata, _ := agent["metadata"].(map[string]any)
+	presence, _ := metadata["presence"].(map[string]any)
+	if got, _ := presence["status"].(string); got != "online" {
+		t.Fatalf("expected metadata.presence.status=online after pull heartbeat, got %q payload=%v", got, mePayload)
+	}
+	if ready, ok := presence["ready"].(bool); !ok || !ready {
+		t.Fatalf("expected metadata.presence.ready=true after pull heartbeat, got %v payload=%v", presence["ready"], mePayload)
+	}
+}
+
 func TestOpenClawWebSocketPresenceOnlineThenOffline(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
@@ -429,6 +467,63 @@ func TestOpenClawWebSocketPresenceOnlineThenOffline(t *testing.T) {
 		payload := decodeJSONMap(t, resp.Body.Bytes())
 		offlineResult = requireAgentRuntimeSuccessEnvelope(t, payload)
 		offlineAgent, _ = offlineResult["agent"].(map[string]any)
+	}
+}
+
+func TestOpenClawWebSocketPresenceWriteFailureReturnsErrorDetail(t *testing.T) {
+	stateStore := &flakyStateWriteStore{MemoryStore: store.NewMemoryStore()}
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(
+		stateStore,
+		stateStore,
+		waiters,
+		auth.NewDevHumanAuthProvider(),
+		"https://hub.example.com",
+		"",
+		"",
+		"",
+		"",
+		"example.com",
+		true,
+		15*time.Minute,
+		false,
+	)
+	router := NewRouter(h)
+	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
+
+	stateStore.mu.Lock()
+	stateStore.failMetadataWriteLeft = 1
+	stateStore.mu.Unlock()
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=presence-fail"
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+tokenB)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected websocket dial to succeed, got err=%v", err)
+	}
+	defer conn.Close()
+
+	resp := readWSMessage(t, conn, 5*time.Second)
+	if got := readStringPath(resp, "type"); got != "response" {
+		t.Fatalf("expected websocket failure response payload, got type=%q payload=%v", got, resp)
+	}
+	if ok, _ := resp["ok"].(bool); ok {
+		t.Fatalf("expected websocket failure response ok=false, got payload=%v", resp)
+	}
+	if failure, _ := resp["failure"].(bool); !failure {
+		t.Fatalf("expected websocket failure response failure=true, got payload=%v", resp)
+	}
+	if got := readStringPath(resp, "error", "code"); got != "store_error" {
+		t.Fatalf("expected websocket error.code=store_error, got %q payload=%v", got, resp)
+	}
+	errorDetail, _ := resp["error_detail"].(map[string]any)
+	if detail, _ := errorDetail["detail"].(string); strings.TrimSpace(detail) == "" {
+		t.Fatalf("expected websocket failure error_detail.detail, got payload=%v", resp)
 	}
 }
 

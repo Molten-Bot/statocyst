@@ -1615,7 +1615,13 @@ func entityMetadataForRender(metadata map[string]any) map[string]any {
 }
 
 func agentMetadataForRender(metadata map[string]any) map[string]any {
-	return entityMetadataForRender(metadata)
+	out := entityMetadataForRender(metadata)
+	if presence := openClawPresenceFromMetadata(out); presence != nil {
+		out[model.AgentMetadataKeyPresence] = presence
+	} else {
+		delete(out, model.AgentMetadataKeyPresence)
+	}
+	return out
 }
 
 func agentSystemActivityLog(metadata map[string]any) []map[string]any {

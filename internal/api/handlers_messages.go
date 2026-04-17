@@ -107,6 +107,10 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
+	if heartbeatErr := h.touchAgentPresenceOnline(senderAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
+		return
+	}
 
 	var req publishRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -413,6 +417,10 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
+	if heartbeatErr := h.touchAgentPresenceOnline(receiverAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
+		return
+	}
 
 	timeout, err := parsePullTimeout(r)
 	if err != nil {
@@ -550,6 +558,10 @@ func (h *Handler) handleAckDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
+	if heartbeatErr := h.touchAgentPresenceOnline(receiverAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
+		return
+	}
 	var req deliveryActionRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
@@ -581,6 +593,10 @@ func (h *Handler) handleNackDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
+	if heartbeatErr := h.touchAgentPresenceOnline(receiverAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
+		return
+	}
 	var req deliveryActionRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
@@ -607,6 +623,10 @@ func (h *Handler) handleMessageStatus(w http.ResponseWriter, r *http.Request, me
 	agentUUID, err := h.authenticateAgent(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
+	}
+	if heartbeatErr := h.touchAgentPresenceOnline(agentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
 		return
 	}
 	record, handlerErr := h.messageStatusForAgent(agentUUID, messageID)

@@ -69,6 +69,7 @@ func main() {
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
 		{name: "OpenClaw HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
+		{name: "OpenClaw polling heartbeat marks runtime presence online", run: (*runner).stepOpenClawPresenceHeartbeat},
 		{name: "OpenClaw websocket delivery and ack succeeds", run: (*runner).stepOpenClawWebSocketDelivery},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},
@@ -586,6 +587,53 @@ func (r *runner) stepOpenClawWebSocketDelivery() error {
 		return fmt.Errorf("expected websocket delivery text %q, got %q", messageText, receivedText)
 	}
 	return r.ackOpenClawDeliveryWS(conn, deliveryID)
+}
+
+func (r *runner) stepOpenClawPresenceHeartbeat() error {
+	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+		return err
+	}
+
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/offline", agentHeaders(r.tokenB), map[string]any{
+		"session_key": "smoke-main",
+		"reason":      "smoke presence heartbeat baseline",
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected openclaw offline 200, got %d payload=%v", status, payload)
+	}
+
+	status, payload, err = r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", agentHeaders(r.tokenB), nil)
+	if err != nil {
+		return err
+	}
+	switch status {
+	case http.StatusNoContent:
+	case http.StatusOK:
+		result := runtimeResult(payload)
+		if deliveryID := readStringPath(result, "delivery", "delivery_id"); deliveryID != "" {
+			if err := r.ackOpenClawDeliveryHTTP(r.tokenB, deliveryID); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("expected openclaw pull 200/204 for heartbeat, got %d payload=%v", status, payload)
+	}
+
+	agent, err := r.currentAgent(r.tokenB)
+	if err != nil {
+		return err
+	}
+	metadata, _ := agent["metadata"].(map[string]any)
+	if got := readStringPath(metadata, "presence", "status"); got != "online" {
+		return fmt.Errorf("expected presence status online after polling heartbeat, got %q payload=%v", got, agent)
+	}
+	if got := readStringPath(metadata, "presence", "ready"); got != "true" {
+		return fmt.Errorf("expected presence ready true after polling heartbeat, got %q payload=%v", got, agent)
+	}
+	return nil
 }
 
 func (r *runner) publishOpenClawMessage(token, toAgentUUID, text string) (string, error) {

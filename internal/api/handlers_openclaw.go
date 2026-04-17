@@ -38,6 +38,10 @@ func (h *Handler) handleOpenClawPublish(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
+	if heartbeatErr := h.touchAgentPresenceOnline(senderAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
+		return
+	}
 
 	var req openClawPublishRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -90,6 +94,10 @@ func (h *Handler) handleOpenClawPull(w http.ResponseWriter, r *http.Request) {
 	receiverAgentUUID, err := h.authenticateAgent(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
+	}
+	if heartbeatErr := h.touchAgentPresenceOnline(receiverAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
 		return
 	}
 
@@ -171,6 +179,10 @@ func (h *Handler) handleOpenClawAckDelivery(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
+	if heartbeatErr := h.touchAgentPresenceOnline(receiverAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
+		return
+	}
 
 	var req deliveryActionRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -210,6 +222,10 @@ func (h *Handler) handleOpenClawNackDelivery(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
+	if heartbeatErr := h.touchAgentPresenceOnline(receiverAgentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
+		return
+	}
 
 	var req deliveryActionRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -244,6 +260,10 @@ func (h *Handler) handleOpenClawMessageStatus(w http.ResponseWriter, r *http.Req
 	agentUUID, err := h.authenticateAgent(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
+	}
+	if heartbeatErr := h.touchAgentPresenceOnline(agentUUID, "", ""); heartbeatErr != nil {
+		writeRuntimeHandlerError(w, heartbeatErr)
 		return
 	}
 
