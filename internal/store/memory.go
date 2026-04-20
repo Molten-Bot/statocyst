@@ -112,6 +112,7 @@ type MemoryStore struct {
 	remoteAgentTrustByKey map[string]string
 	peerOutbounds         map[string]model.PeerOutboundMessage
 	peerOutboundByPeer    map[string][]string
+	agentPresence         map[string]map[string]any
 
 	auditByOrg map[string][]model.AuditEvent
 	statsByOrg map[string]model.OrgStats
@@ -158,6 +159,7 @@ func NewMemoryStore() *MemoryStore {
 		remoteAgentTrustByKey:  make(map[string]string),
 		peerOutbounds:          make(map[string]model.PeerOutboundMessage),
 		peerOutboundByPeer:     make(map[string][]string),
+		agentPresence:          make(map[string]map[string]any),
 		auditByOrg:             make(map[string][]model.AuditEvent),
 		statsByOrg:             make(map[string]model.OrgStats),
 		statsDaily:             make(map[string]map[string]model.OrgDailyStats),
@@ -324,6 +326,7 @@ func (s *MemoryStore) DeleteOrg(orgID, actorHumanID string, isSuperAdmin bool, n
 		}
 		delete(s.agentTokenIdx, agent.TokenHash)
 		delete(s.agentByURI, agent.AgentID)
+		delete(s.agentPresence, agentUUID)
 		delete(s.agents, agentUUID)
 		deletedAgents[agentUUID] = struct{}{}
 	}
@@ -1334,6 +1337,7 @@ func (s *MemoryStore) RevokeAgent(agentUUID, actorHumanID string, now time.Time,
 		delete(s.orgOwnedAgentNameIdx, orgOwnedAgentNameKey(agent.OrgID, agent.Handle))
 	}
 	delete(s.agentByURI, agent.AgentID)
+	delete(s.agentPresence, agentUUID)
 	agent.Status = model.StatusRevoked
 	revokedAt := now
 	agent.RevokedAt = &revokedAt
@@ -1400,6 +1404,7 @@ func (s *MemoryStore) DeleteAgent(agentUUID, actorHumanID string, now time.Time,
 		delete(s.orgOwnedAgentNameIdx, orgOwnedAgentNameKey(agent.OrgID, agent.Handle))
 	}
 	delete(s.agentByURI, agent.AgentID)
+	delete(s.agentPresence, agentUUID)
 	delete(s.agents, agentUUID)
 
 	deletedTrustEdges := 0
@@ -1512,6 +1517,42 @@ func (s *MemoryStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[str
 	}
 	s.appendAuditLocked(agent.OrgID, "", "agent", "set_metadata_self", agentUUID, summary, now)
 	return agent, nil
+}
+
+func (s *MemoryStore) SetAgentPresence(agentUUID string, presence map[string]any, now time.Time) (model.Agent, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agents[agentUUID]
+	if !ok || agent.Status == model.StatusRevoked {
+		return model.Agent{}, false, ErrAgentNotFound
+	}
+	next := normalizeAgentPresence(presence)
+	if _, ok := next["updated_at"]; !ok {
+		next["updated_at"] = now.UTC().Format(time.RFC3339)
+	}
+	previous := copyMetadata(s.agentPresence[agentUUID])
+	s.agentPresence[agentUUID] = next
+
+	prevStatus := strings.ToLower(strings.TrimSpace(stringValue(previous["status"])))
+	nextStatus := strings.ToLower(strings.TrimSpace(stringValue(next["status"])))
+	changedStatus := prevStatus != nextStatus && nextStatus != ""
+	return agent, changedStatus, nil
+}
+
+func (s *MemoryStore) GetAgentPresence(agentUUID string) (map[string]any, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agent, ok := s.agents[agentUUID]
+	if !ok || agent.Status == model.StatusRevoked {
+		return nil, false, ErrAgentNotFound
+	}
+	presence, ok := s.agentPresence[agentUUID]
+	if !ok || len(presence) == 0 {
+		return nil, false, nil
+	}
+	return copyMetadata(presence), true, nil
 }
 
 func (s *MemoryStore) FinalizeAgentHandleSelf(agentUUID, handle string, now time.Time) (model.Agent, error) {
@@ -1776,6 +1817,29 @@ func copyMetadata(metadata map[string]any) map[string]any {
 	return out
 }
 
+func normalizeAgentPresence(presence map[string]any) map[string]any {
+	out := copyMetadata(presence)
+	if len(out) == 0 {
+		return map[string]any{}
+	}
+	if status := strings.ToLower(strings.TrimSpace(stringValue(out["status"]))); status != "" {
+		out["status"] = status
+	}
+	if transport := strings.TrimSpace(stringValue(out["transport"])); transport != "" {
+		out["transport"] = transport
+	}
+	if sessionKey := strings.TrimSpace(stringValue(out["session_key"])); sessionKey != "" {
+		out["session_key"] = sessionKey
+	}
+	if updatedAt := strings.TrimSpace(stringValue(out["updated_at"])); updatedAt != "" {
+		out["updated_at"] = updatedAt
+	}
+	if ready, ok := out["ready"].(bool); ok {
+		out["ready"] = ready
+	}
+	return out
+}
+
 func mergeAndNormalizeAgentMetadata(current, patch map[string]any, now time.Time) (map[string]any, error) {
 	merged := mergeMetadataMaps(current, patch)
 	if rawActivities, hasActivitiesUpdate := patch[model.AgentMetadataKeyActivities]; hasActivitiesUpdate {
@@ -1799,7 +1863,7 @@ func mergeAndNormalizeAgentMetadata(current, patch map[string]any, now time.Time
 func mergeMetadataMaps(current, patch map[string]any) map[string]any {
 	merged := copyMetadata(current)
 	for key, value := range patch {
-		if key == model.AgentMetadataKeySystemActivityLog {
+		if key == model.AgentMetadataKeySystemActivityLog || key == model.AgentMetadataKeyPresence {
 			continue
 		}
 		if value == nil {

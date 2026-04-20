@@ -45,6 +45,8 @@ type ControlPlaneStore interface {
 	DeleteAgent(agentUUID, actorHumanID string, now time.Time, isSuperAdmin bool) error
 	UpdateAgentMetadata(agentUUID string, metadata map[string]any, actorHumanID string, now time.Time, isSuperAdmin bool) (model.Agent, error)
 	UpdateAgentMetadataSelf(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error)
+	SetAgentPresence(agentUUID string, presence map[string]any, now time.Time) (model.Agent, bool, error)
+	GetAgentPresence(agentUUID string) (map[string]any, bool, error)
 	FinalizeAgentHandleSelf(agentUUID, handle string, now time.Time) (model.Agent, error)
 	AgentUUIDForTokenHash(tokenHash string) (string, error)
 	GetHuman(humanID string) (model.Human, error)

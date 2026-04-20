@@ -420,6 +420,16 @@ func (h *Handler) meResponsePayload(human model.Human, isAdmin bool) map[string]
 
 func (h *Handler) agentResponsePayload(agent model.Agent) map[string]any {
 	payload := agentResponsePayload(agent)
+	metadata, _ := payload["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if presence := h.currentAgentPresence(agent.AgentUUID, agent.Metadata); presence != nil {
+		metadata[model.AgentMetadataKeyPresence] = presence
+	} else {
+		delete(metadata, model.AgentMetadataKeyPresence)
+	}
+	payload["metadata"] = metadata
 	payload["uri"] = h.agentURI(agent)
 	return payload
 }
@@ -718,7 +728,7 @@ func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request
 		"agent":        h.agentResponsePayload(updated),
 		"disconnected": true,
 	}
-	if presence := openClawPresenceFromMetadata(updated.Metadata); presence != nil {
+	if presence := h.currentAgentPresence(updated.AgentUUID, updated.Metadata); presence != nil {
 		payload["presence"] = presence
 	}
 	writeJSON(w, http.StatusOK, payload)
@@ -1616,12 +1626,22 @@ func entityMetadataForRender(metadata map[string]any) map[string]any {
 
 func agentMetadataForRender(metadata map[string]any) map[string]any {
 	out := entityMetadataForRender(metadata)
-	if presence := openClawPresenceFromMetadata(out); presence != nil {
-		out[model.AgentMetadataKeyPresence] = presence
-	} else {
-		delete(out, model.AgentMetadataKeyPresence)
-	}
+	delete(out, model.AgentMetadataKeyPresence)
 	return out
+}
+
+func (h *Handler) currentAgentPresence(agentUUID string, fallbackMetadata map[string]any) map[string]any {
+	agentUUID = strings.TrimSpace(agentUUID)
+	if agentUUID != "" {
+		if presence, ok, err := h.control.GetAgentPresence(agentUUID); err == nil && ok {
+			return openClawPresenceFromMetadataAt(
+				map[string]any{model.AgentMetadataKeyPresence: presence},
+				h.now().UTC(),
+				openClawPresenceOfflineAfter,
+			)
+		}
+	}
+	return openClawPresenceFromMetadata(fallbackMetadata)
 }
 
 func agentSystemActivityLog(metadata map[string]any) []map[string]any {

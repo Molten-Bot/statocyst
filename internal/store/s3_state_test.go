@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -760,5 +761,115 @@ func TestS3StateStore_BestEffortPersistUsesShortTimeout(t *testing.T) {
 	elapsed := time.Since(start)
 	if elapsed > 750*time.Millisecond {
 		t.Fatalf("expected best-effort persist to return quickly, took %s", elapsed)
+	}
+}
+
+func TestS3StateStore_SetAgentPresenceThrottlesHeartbeatPersistence(t *testing.T) {
+	fake := newFakeS3State()
+	server := fake.server("state-bucket")
+	defer server.Close()
+
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	store.presencePersistInterval = 30 * time.Second
+
+	now := time.Date(2026, 3, 7, 9, 0, 0, 0, time.UTC)
+	id := &idGen{}
+	human, err := store.UpsertHuman("dev", "presence-sub", "presence@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	org, _, err := store.CreateOrg("presence-org", "Presence Org", human.HumanID, id.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	owner := human.HumanID
+	agent, err := store.RegisterAgent(org.OrgID, "presence-agent", &owner, "presence-token", human.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+
+	fake.resetCounts()
+
+	_, changed, err := store.SetAgentPresence(agent.AgentUUID, map[string]any{
+		"status":      "online",
+		"ready":       true,
+		"transport":   "websocket",
+		"session_key": "main",
+	}, now)
+	if err != nil {
+		t.Fatalf("SetAgentPresence initial failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected first SetAgentPresence status write to mark changedStatus=true")
+	}
+	counts := fake.currentCounts()
+	if counts.put != 1 {
+		t.Fatalf("expected one presence put after initial online status, got %+v", counts)
+	}
+
+	presenceKeys := fake.keysWithPrefix("moltenhub-state/state/presence/")
+	if len(presenceKeys) != 1 {
+		t.Fatalf("expected one persisted presence object, got %v", presenceKeys)
+	}
+	fake.mu.Lock()
+	presenceBody := append([]byte(nil), fake.objects[presenceKeys[0]]...)
+	fake.mu.Unlock()
+	var persisted map[string]any
+	if err := json.Unmarshal(presenceBody, &persisted); err != nil {
+		t.Fatalf("presence body decode failed: %v", err)
+	}
+	if updatedAt := strings.TrimSpace(stringValue(persisted["updated_at"])); updatedAt == "" {
+		t.Fatalf("expected persisted presence to include normalized updated_at, got %v", persisted)
+	}
+
+	_, changed, err = store.SetAgentPresence(agent.AgentUUID, map[string]any{
+		"status":      "online",
+		"ready":       true,
+		"transport":   "websocket",
+		"session_key": "main",
+	}, now.Add(10*time.Second))
+	if err != nil {
+		t.Fatalf("SetAgentPresence heartbeat failed: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected unchanged online heartbeat changedStatus=false")
+	}
+	counts = fake.currentCounts()
+	if counts.put != 1 {
+		t.Fatalf("expected heartbeat write inside interval to skip S3 put, got %+v", counts)
+	}
+
+	_, changed, err = store.SetAgentPresence(agent.AgentUUID, map[string]any{
+		"status":      "online",
+		"ready":       true,
+		"transport":   "websocket",
+		"session_key": "main",
+	}, now.Add(40*time.Second))
+	if err != nil {
+		t.Fatalf("SetAgentPresence periodic heartbeat failed: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected periodic heartbeat to keep changedStatus=false while status unchanged")
+	}
+	counts = fake.currentCounts()
+	if counts.put != 2 {
+		t.Fatalf("expected heartbeat after interval to persist, got %+v", counts)
+	}
+
+	_, changed, err = store.SetAgentPresence(agent.AgentUUID, map[string]any{
+		"status":      "offline",
+		"ready":       false,
+		"transport":   "websocket",
+		"session_key": "main",
+	}, now.Add(45*time.Second))
+	if err != nil {
+		t.Fatalf("SetAgentPresence offline transition failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected offline transition to mark changedStatus=true")
+	}
+	counts = fake.currentCounts()
+	if counts.put != 3 {
+		t.Fatalf("expected status transition to persist immediately, got %+v", counts)
 	}
 }

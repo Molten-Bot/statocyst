@@ -173,7 +173,7 @@ func TestParseOpenClawPresenceTimestamp(t *testing.T) {
 	}
 }
 
-func TestAgentMetadataForRenderAppliesPresenceProjection(t *testing.T) {
+func TestAgentMetadataForRenderStripsPresence(t *testing.T) {
 	metadata := map[string]any{
 		"presence": map[string]any{
 			"status":      "online",
@@ -183,12 +183,8 @@ func TestAgentMetadataForRenderAppliesPresenceProjection(t *testing.T) {
 		},
 	}
 	rendered := agentMetadataForRender(metadata)
-	presence, _ := rendered["presence"].(map[string]any)
-	if got, _ := presence["status"].(string); got != "offline" {
-		t.Fatalf("expected stale rendered presence status=offline, got %q payload=%v", got, rendered)
-	}
-	if ready, _ := presence["ready"].(bool); ready {
-		t.Fatalf("expected stale rendered presence ready=false, got payload=%v", rendered)
+	if _, ok := rendered["presence"]; ok {
+		t.Fatalf("expected rendered metadata to exclude server-managed presence, got %v", rendered)
 	}
 }
 
@@ -242,11 +238,7 @@ func TestTouchAgentPresenceOnlineAppliesSessionAndTransport(t *testing.T) {
 		t.Fatalf("expected touchAgentPresenceOnline success, got %+v", err)
 	}
 
-	agent, getErr := h.control.GetAgentByUUID(agentUUIDA)
-	if getErr != nil {
-		t.Fatalf("GetAgentByUUID failed: %v", getErr)
-	}
-	presence := openClawPresenceFromMetadata(agent.Metadata)
+	presence := h.currentAgentPresence(agentUUIDA, nil)
 	if got, _ := presence["status"].(string); got != "online" {
 		t.Fatalf("expected status online, got %q payload=%v", got, presence)
 	}
@@ -314,7 +306,7 @@ func TestSetOpenClawWebSocketPresenceInvalidStatusFallsBackOffline(t *testing.T)
 	if err != nil {
 		t.Fatalf("expected setOpenClawWebSocketPresence success, got %v", err)
 	}
-	presence := openClawPresenceFromMetadata(agent.Metadata)
+	presence := h.currentAgentPresence(agentUUIDB, agent.Metadata)
 	if got, _ := presence["status"].(string); got != "offline" {
 		t.Fatalf("expected invalid status to degrade offline, got %q payload=%v", got, presence)
 	}
@@ -361,8 +353,13 @@ func TestSetOpenClawWebSocketPresenceActivityFailure(t *testing.T) {
 	_, _, _, _, _, _, agentUUIDA, _ := setupTrustedAgents(t, router)
 
 	stateStore.failRecordActivity = true
-	if _, err := h.setOpenClawWebSocketPresence(agentUUIDA, "main", "online", ""); err == nil {
-		t.Fatalf("expected activity record failure from setOpenClawWebSocketPresence")
+	agent, err := h.setOpenClawWebSocketPresence(agentUUIDA, "main", "online", "")
+	if err != nil {
+		t.Fatalf("expected setOpenClawWebSocketPresence to ignore activity write failure, got %v", err)
+	}
+	presence := h.currentAgentPresence(agentUUIDA, agent.Metadata)
+	if got, _ := presence["status"].(string); got != "online" {
+		t.Fatalf("expected status online despite activity write failure, got %q payload=%v", got, presence)
 	}
 }
 
@@ -392,13 +389,10 @@ func TestTouchAgentPresenceOnlineStoreFailure(t *testing.T) {
 	stateStore.mu.Unlock()
 
 	err := h.touchAgentPresenceOnline(agentUUIDA, "", "")
-	if err == nil {
-		t.Fatalf("expected touchAgentPresenceOnline to fail when metadata writes fail")
+	if err != nil {
+		t.Fatalf("expected touchAgentPresenceOnline to fail open when presence writes fail, got %+v", err)
 	}
-	if err.code != "store_error" || err.status != http.StatusInternalServerError {
-		t.Fatalf("expected store_error 500 for touch failure, got %+v", err)
-	}
-	if detail, _ := err.extras["detail"].(string); strings.TrimSpace(detail) == "" {
-		t.Fatalf("expected touch failure to include extras.detail, got %+v", err.extras)
+	if presence := h.currentAgentPresence(agentUUIDA, nil); presence != nil {
+		t.Fatalf("expected no presence to be persisted when write fails, got %v", presence)
 	}
 }

@@ -26,6 +26,8 @@ const (
 	defaultS3StatePersistTimeout = 8 * time.Second
 	// Best-effort metrics/status writes should not block request paths for long.
 	defaultS3StateBestEffortPersistTimeout = 750 * time.Millisecond
+	// Online heartbeats can be high-frequency; persist status snapshots on a coarse interval.
+	defaultS3StatePresencePersistInterval = 30 * time.Second
 	// Startup check should fail fast so readiness decisions are not delayed too long.
 	defaultS3StateStartupCheckTimeout = 5 * time.Second
 	defaultS3StateHydrationTimeout    = 20 * time.Second
@@ -42,14 +44,18 @@ type s3StateStore struct {
 	persistTimeout time.Duration
 	// bestEffortPersistTimeout bounds persist for fire-and-forget style writes.
 	bestEffortPersistTimeout time.Duration
-	hydrationTimeout         time.Duration
-	listConcurrency          int
-	getConcurrency           int
+	// presencePersistInterval throttles best-effort S3 presence heartbeats when status is unchanged.
+	presencePersistInterval time.Duration
+	hydrationTimeout        time.Duration
+	listConcurrency         int
+	getConcurrency          int
 
 	persistMu sync.Mutex
 	// persistedObjects tracks the last successfully persisted object bodies by key.
 	// It lets us write only changed keys instead of full-prefix rewrites.
 	persistedObjects map[string][]byte
+	// presenceLastPersist tracks successful per-agent heartbeat snapshot persistence.
+	presenceLastPersist map[string]time.Time
 	// hydrationPrefetch is populated only while loadFromS3 is running to avoid repeated list/get calls.
 	hydrationPrefetch map[string]map[string][]byte
 }
@@ -173,6 +179,7 @@ func NewS3StateStoreFromEnv() (*s3StateStore, error) {
 	hydrationTimeout := parseDurationSecondsEnv("MOLTENHUB_S3_HYDRATION_TIMEOUT_SEC", defaultS3StateHydrationTimeout)
 	listConcurrency := parsePositiveIntEnv("MOLTENHUB_S3_HYDRATION_LIST_CONCURRENCY", defaultS3StateListConcurrency)
 	getConcurrency := parsePositiveIntEnv("MOLTENHUB_S3_HYDRATION_GET_CONCURRENCY", defaultS3StateGetConcurrency)
+	presencePersistInterval := parseDurationSecondsEnv("MOLTENHUB_S3_PRESENCE_PERSIST_INTERVAL_SEC", defaultS3StatePresencePersistInterval)
 
 	if endpoint == "" {
 		return nil, fmt.Errorf("MOLTENHUB_STATE_S3_ENDPOINT is required for s3 state backend")
@@ -218,6 +225,7 @@ func NewS3StateStoreFromEnv() (*s3StateStore, error) {
 		prefix:                   prefix,
 		persistTimeout:           defaultS3StatePersistTimeout,
 		bestEffortPersistTimeout: defaultS3StateBestEffortPersistTimeout,
+		presencePersistInterval:  presencePersistInterval,
 		hydrationTimeout:         hydrationTimeout,
 		listConcurrency:          listConcurrency,
 		getConcurrency:           getConcurrency,
@@ -603,6 +611,57 @@ func (s *s3StateStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[st
 	return agent, nil
 }
 
+func (s *s3StateStore) SetAgentPresence(agentUUID string, presence map[string]any, now time.Time) (model.Agent, bool, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	agent, changedStatus, err := s.MemoryStore.SetAgentPresence(agentUUID, presence, now)
+	if err != nil {
+		return model.Agent{}, false, err
+	}
+	storedPresence, ok, readErr := s.MemoryStore.GetAgentPresence(agentUUID)
+	if readErr != nil || !ok {
+		return agent, changedStatus, nil
+	}
+	interval := s.presencePersistInterval
+	if interval <= 0 {
+		interval = defaultS3StatePresencePersistInterval
+	}
+	if !changedStatus && interval > 0 {
+		if last, hasLast := s.presenceLastPersist[agentUUID]; hasLast && now.UTC().Sub(last) < interval {
+			return agent, changedStatus, nil
+		}
+	}
+
+	key := s.presenceObjectKey(agentUUID)
+	body, marshalErr := json.Marshal(normalizeAgentPresence(storedPresence))
+	if marshalErr != nil {
+		return agent, changedStatus, nil
+	}
+
+	timeout := s.bestEffortPersistTimeout
+	if timeout <= 0 {
+		timeout = defaultS3StateBestEffortPersistTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if putErr := s.putObject(ctx, key, body); putErr == nil {
+		if s.persistedObjects == nil {
+			s.persistedObjects = make(map[string][]byte)
+		}
+		s.persistedObjects[key] = body
+		if s.presenceLastPersist == nil {
+			s.presenceLastPersist = make(map[string]time.Time)
+		}
+		s.presenceLastPersist[agentUUID] = now.UTC()
+	}
+	return agent, changedStatus, nil
+}
+
+func (s *s3StateStore) GetAgentPresence(agentUUID string) (map[string]any, bool, error) {
+	return s.MemoryStore.GetAgentPresence(agentUUID)
+}
+
 func (s *s3StateStore) UpdateAgentMetadataSelfBestEffort(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -883,6 +942,7 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	pBinds := s.prefixed("state/binds")
 	pOrgTrusts := s.prefixed("state/org_trusts")
 	pAgentTrusts := s.prefixed("state/agent_trusts")
+	pPresence := s.prefixed("state/presence")
 	pStats := s.prefixed("state/stats")
 	pStatsDaily := s.prefixed("state/stats_daily")
 	pAudit := s.prefixed("state/audit")
@@ -921,6 +981,9 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	}
 	for id, edge := range s.MemoryStore.agentTrusts {
 		add(pAgentTrusts, s.objectKey(pAgentTrusts, escapeKeySegment(id)+".json"), edge)
+	}
+	for agentUUID, presence := range s.MemoryStore.agentPresence {
+		add(pPresence, s.objectKey(pPresence, escapeKeySegment(agentUUID)+".json"), normalizeAgentPresence(presence))
 	}
 	for orgID, stats := range s.MemoryStore.statsByOrg {
 		add(pStats, s.objectKey(pStats, escapeKeySegment(orgID)+".json"), stats)
@@ -984,6 +1047,7 @@ func (s *s3StateStore) persistedPrefixes() []s3KeyDescriptor {
 		{Prefix: s.prefixed("state/binds")},
 		{Prefix: s.prefixed("state/org_trusts")},
 		{Prefix: s.prefixed("state/agent_trusts")},
+		{Prefix: s.prefixed("state/presence")},
 		{Prefix: s.prefixed("state/stats")},
 		{Prefix: s.prefixed("state/stats_daily")},
 		{Prefix: s.prefixed("state/audit")},
@@ -1010,6 +1074,7 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	pBinds := s.prefixed("state/binds")
 	pOrgTrusts := s.prefixed("state/org_trusts")
 	pAgentTrusts := s.prefixed("state/agent_trusts")
+	pPresence := s.prefixed("state/presence")
 	pStats := s.prefixed("state/stats")
 	pStatsDaily := s.prefixed("state/stats_daily")
 	pAudit := s.prefixed("state/audit")
@@ -1031,9 +1096,9 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 		pBinds,
 		pOrgTrusts,
 		pAgentTrusts,
+		pPresence,
 		pStats,
 		pStatsDaily,
-		pAudit,
 		pPersonalOrgs,
 		pQueues,
 		pMessages,
@@ -1157,6 +1222,29 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.loadTypedObjects(ctx, pPresence, func(key string, body []byte) error {
+		relative, ok := trimObjectKeyPrefix(key, pPresence)
+		if !ok {
+			return nil
+		}
+		agentObject := strings.TrimSpace(relative)
+		if agentObject == "" {
+			return nil
+		}
+		agentUUIDRaw := strings.TrimSuffix(agentObject, ".json")
+		agentUUID, err := url.PathUnescape(strings.TrimSpace(agentUUIDRaw))
+		if err != nil || strings.TrimSpace(agentUUID) == "" {
+			return nil
+		}
+		var value map[string]any
+		if err := json.Unmarshal(body, &value); err != nil {
+			return err
+		}
+		loaded.agentPresence[agentUUID] = normalizeAgentPresence(value)
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := s.loadTypedObjects(ctx, pStats, func(key string, body []byte) error {
 		var value model.OrgStats
 		if err := json.Unmarshal(body, &value); err != nil {
@@ -1215,7 +1303,8 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 		loaded.auditByOrg[orgID] = append(loaded.auditByOrg[orgID], value)
 		return nil
 	}); err != nil {
-		return err
+		// Activity log hydration is best-effort only; it must never block startup readiness.
+		loaded.auditByOrg = make(map[string][]model.AuditEvent)
 	}
 	if err := s.loadTypedObjects(ctx, pPersonalOrgs, func(key string, body []byte) error {
 		relative, ok := trimObjectKeyPrefix(key, pPersonalOrgs)
@@ -1989,6 +2078,11 @@ func (s *s3StateStore) prefixed(parts ...string) string {
 
 func (s *s3StateStore) objectKey(parts ...string) string {
 	return strings.Join(parts, "/")
+}
+
+func (s *s3StateStore) presenceObjectKey(agentUUID string) string {
+	prefix := s.prefixed("state/presence")
+	return s.objectKey(prefix, escapeKeySegment(agentUUID)+".json")
 }
 
 func trimObjectKeyPrefix(key, prefix string) (string, bool) {

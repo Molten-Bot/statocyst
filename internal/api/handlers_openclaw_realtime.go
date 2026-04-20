@@ -211,7 +211,7 @@ func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) 
 	out := map[string]any{
 		"agent": h.agentResponsePayload(agent),
 	}
-	if presence := openClawPresenceFromMetadata(agent.Metadata); presence != nil {
+	if presence := h.currentAgentPresence(agent.AgentUUID, agent.Metadata); presence != nil {
 		out["presence"] = presence
 	}
 	writeAgentRuntimeSuccess(w, http.StatusOK, out)
@@ -650,11 +650,27 @@ func (h *Handler) touchAgentPresenceOnline(agentUUID, sessionKey, transport stri
 	if transport = strings.TrimSpace(transport); transport != "" {
 		presence["transport"] = transport
 	}
-	_, err := h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, map[string]any{
-		model.AgentMetadataKeyPresence: presence,
-	}, now)
+	agent, changedStatus, err := h.control.SetAgentPresence(agentUUID, presence, now)
 	if err != nil {
-		return runtimeHandlerErrorForPresenceUpdate(err)
+		// Presence heartbeat is best-effort. Fail open for runtime traffic and only
+		// surface auth-style errors when identity is missing.
+		h.setStateRuntimeError(stateRuntimeFailureSummary("agent presence update", err))
+		return nil
+	}
+	if changedStatus {
+		entry := map[string]any{
+			"activity":   "websocket transport online",
+			"category":   "agent_presence",
+			"action":     openClawPresenceStatusOnline,
+			"subject_id": normalizeOpenClawSessionKey(sessionKey),
+			"event_id":   "agent-presence:online:" + normalizeOpenClawSessionKey(sessionKey) + ":" + strconv.FormatInt(now.UnixNano(), 10),
+		}
+		if transport = strings.TrimSpace(transport); transport != "" {
+			entry["transport"] = transport
+		}
+		if recorded, recordErr := h.control.RecordAgentSystemActivity(agent.AgentUUID, entry, now); recordErr == nil {
+			agent = recorded
+		}
 	}
 	return nil
 }
@@ -706,33 +722,31 @@ func (h *Handler) setOpenClawWebSocketPresence(agentUUID, sessionKey, status, re
 	sessionKey = normalizeOpenClawSessionKey(sessionKey)
 
 	patch := map[string]any{
-		model.AgentMetadataKeyPresence: map[string]any{
-			"status":      status,
-			"ready":       status == openClawPresenceStatusOnline,
-			"transport":   "websocket",
-			"session_key": sessionKey,
-			"updated_at":  now.Format(time.RFC3339),
-		},
+		"status":      status,
+		"ready":       status == openClawPresenceStatusOnline,
+		"transport":   "websocket",
+		"session_key": sessionKey,
+		"updated_at":  now.Format(time.RFC3339),
 	}
-	agent, err := h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, patch, now)
+	agent, changedStatus, err := h.control.SetAgentPresence(agentUUID, patch, now)
 	if err != nil {
 		return model.Agent{}, err
 	}
-
-	activityText := "websocket transport " + status
-	entry := map[string]any{
-		"activity":   activityText,
-		"category":   "agent_presence",
-		"action":     status,
-		"subject_id": sessionKey,
-		"event_id":   "agent-presence:" + status + ":" + sessionKey + ":" + strconv.FormatInt(now.UnixNano(), 10),
-	}
-	if trimmedReason := strings.TrimSpace(reason); trimmedReason != "" {
-		entry["reason"] = trimmedReason
-	}
-	agent, err = h.control.RecordAgentSystemActivity(agentUUID, entry, now)
-	if err != nil {
-		return model.Agent{}, err
+	if changedStatus {
+		activityText := "websocket transport " + status
+		entry := map[string]any{
+			"activity":   activityText,
+			"category":   "agent_presence",
+			"action":     status,
+			"subject_id": sessionKey,
+			"event_id":   "agent-presence:" + status + ":" + sessionKey + ":" + strconv.FormatInt(now.UnixNano(), 10),
+		}
+		if trimmedReason := strings.TrimSpace(reason); trimmedReason != "" {
+			entry["reason"] = trimmedReason
+		}
+		if recorded, recordErr := h.control.RecordAgentSystemActivity(agentUUID, entry, now); recordErr == nil {
+			agent = recorded
+		}
 	}
 	return agent, nil
 }

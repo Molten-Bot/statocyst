@@ -353,6 +353,16 @@ type flakyStateWriteStore struct {
 	failMetadataWriteLeft int
 }
 
+func (s *flakyStateWriteStore) consumeWriteFailure() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failMetadataWriteLeft <= 0 {
+		return false
+	}
+	s.failMetadataWriteLeft--
+	return true
+}
+
 func (s *flakyBindTokenStore) CreateBindToken(orgID string, ownerHumanID *string, actorHumanID, bindID, bindTokenHash string, expiresAt, now time.Time, isSuperAdmin bool) (model.BindToken, error) {
 	s.mu.Lock()
 	shouldFail := s.failCreateBindLeft > 0
@@ -367,16 +377,17 @@ func (s *flakyBindTokenStore) CreateBindToken(orgID string, ownerHumanID *string
 }
 
 func (s *flakyStateWriteStore) UpdateAgentMetadataSelf(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
-	s.mu.Lock()
-	shouldFail := s.failMetadataWriteLeft > 0
-	if shouldFail {
-		s.failMetadataWriteLeft--
-	}
-	s.mu.Unlock()
-	if shouldFail {
+	if s.consumeWriteFailure() {
 		return model.Agent{}, context.DeadlineExceeded
 	}
 	return s.MemoryStore.UpdateAgentMetadataSelf(agentUUID, metadata, now)
+}
+
+func (s *flakyStateWriteStore) SetAgentPresence(agentUUID string, presence map[string]any, now time.Time) (model.Agent, bool, error) {
+	if s.consumeWriteFailure() {
+		return model.Agent{}, false, context.DeadlineExceeded
+	}
+	return s.MemoryStore.SetAgentPresence(agentUUID, presence, now)
 }
 
 func (s *flakyStateWriteStore) UpdateAgentMetadataSelfBestEffort(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
