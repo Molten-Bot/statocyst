@@ -137,6 +137,13 @@ func TestOpenClawPublishRequiresMessageObject(t *testing.T) {
 	if got, _ := payload["error"].(string); got != "invalid_request" {
 		t.Fatalf("expected invalid_request, got %q payload=%v", got, payload)
 	}
+	if failureAlias, _ := payload["Failure"].(bool); !failureAlias {
+		t.Fatalf("expected Failure=true alias, got payload=%v", payload)
+	}
+	errorDetailsAlias, _ := payload["Error details"].(map[string]any)
+	if got, _ := errorDetailsAlias["code"].(string); got != "invalid_request" {
+		t.Fatalf("expected Error details.code=invalid_request, got %q payload=%v", got, payload)
+	}
 }
 
 func TestOpenClawPublishSkillActivationAllowsMissingPayload(t *testing.T) {
@@ -518,12 +525,19 @@ func TestOpenClawWebSocketPresenceWriteFailureReturnsErrorDetail(t *testing.T) {
 	if failure, _ := resp["failure"].(bool); !failure {
 		t.Fatalf("expected websocket failure response failure=true, got payload=%v", resp)
 	}
+	if failureAlias, _ := resp["Failure"].(bool); !failureAlias {
+		t.Fatalf("expected websocket failure response Failure=true alias, got payload=%v", resp)
+	}
 	if got := readStringPath(resp, "error", "code"); got != "store_error" {
 		t.Fatalf("expected websocket error.code=store_error, got %q payload=%v", got, resp)
 	}
 	errorDetail, _ := resp["error_detail"].(map[string]any)
 	if detail, _ := errorDetail["detail"].(string); strings.TrimSpace(detail) == "" {
 		t.Fatalf("expected websocket failure error_detail.detail, got payload=%v", resp)
+	}
+	errorDetailsAlias, _ := resp["Error details"].(map[string]any)
+	if detail, _ := errorDetailsAlias["detail"].(string); strings.TrimSpace(detail) == "" {
+		t.Fatalf("expected websocket failure Error details.detail, got payload=%v", resp)
 	}
 }
 
@@ -704,6 +718,9 @@ func TestOpenClawWebSocketSkillActivationIncludesValidationErrors(t *testing.T) 
 	if failure, _ := resp["failure"].(bool); !failure {
 		t.Fatalf("expected ws publish response failure=true, got payload=%v", resp)
 	}
+	if failureAlias, _ := resp["Failure"].(bool); !failureAlias {
+		t.Fatalf("expected ws publish response Failure=true alias, got payload=%v", resp)
+	}
 	if retryable, ok := resp["retryable"].(bool); !ok || retryable {
 		t.Fatalf("expected ws publish response retryable=false, got payload=%v", resp)
 	}
@@ -723,6 +740,11 @@ func TestOpenClawWebSocketSkillActivationIncludesValidationErrors(t *testing.T) 
 	detailErrors, _ := errorDetail["validation_errors"].([]any)
 	if len(detailErrors) == 0 {
 		t.Fatalf("expected validation errors mirrored in error_detail, got %v", resp)
+	}
+	errorDetailsAlias, _ := resp["Error details"].(map[string]any)
+	aliasErrors, _ := errorDetailsAlias["validation_errors"].([]any)
+	if len(aliasErrors) == 0 {
+		t.Fatalf("expected validation errors mirrored in Error details alias, got %v", resp)
 	}
 }
 

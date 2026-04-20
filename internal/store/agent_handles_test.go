@@ -1001,9 +1001,44 @@ func TestMemoryStoreAgentMetadataNormalizesAgentType(t *testing.T) {
 	if rawActivities[0]["source"] != "agent" || rawActivities[1]["source"] != "agent" {
 		t.Fatalf("expected metadata.activities entries normalized with source=agent, got %v", rawActivities)
 	}
+	firstExpectedAt := now.Add(140 * time.Second).UTC().Format(time.RFC3339)
+	secondExpectedAt := now.Add(150 * time.Second).UTC().Format(time.RFC3339)
+	if got, _ := rawActivities[0]["at"].(string); got != firstExpectedAt {
+		t.Fatalf("expected first activity timestamp %q, got %q entries=%v", firstExpectedAt, got, rawActivities)
+	}
+	if got, _ := rawActivities[1]["at"].(string); got != secondExpectedAt {
+		t.Fatalf("expected second activity timestamp %q, got %q entries=%v", secondExpectedAt, got, rawActivities)
+	}
 	rawActivitiesA, ok := withActivityA.Metadata[model.AgentMetadataKeyActivities].([]map[string]any)
 	if !ok || len(rawActivitiesA) == 0 {
 		t.Fatalf("expected first activity append to persist, got %v", withActivityA.Metadata[model.AgentMetadataKeyActivities])
+	}
+	if got, _ := rawActivitiesA[0]["at"].(string); got != firstExpectedAt {
+		t.Fatalf("expected first activity append timestamp %q, got %q entries=%v", firstExpectedAt, got, rawActivitiesA)
+	}
+	withClientTimestamp, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
+		"activities": []any{
+			map[string]any{
+				"activity": strings.Repeat("z", maxAgentActivityChars+20),
+				"at":       "2001-09-09T01:46:40Z",
+			},
+		},
+	}, now.Add(160*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateAgentMetadataSelf activities timestamp normalization failed: %v", err)
+	}
+	normalizedActivities, ok := withClientTimestamp.Metadata[model.AgentMetadataKeyActivities].([]map[string]any)
+	if !ok || len(normalizedActivities) == 0 {
+		t.Fatalf("expected normalized metadata.activities after timestamp normalization, got %v", withClientTimestamp.Metadata[model.AgentMetadataKeyActivities])
+	}
+	lastActivity := normalizedActivities[len(normalizedActivities)-1]
+	expectedAt := now.Add(160 * time.Second).UTC().Format(time.RFC3339)
+	if got, _ := lastActivity["at"].(string); got != expectedAt {
+		t.Fatalf("expected server timestamp %q, got %q activity=%v", expectedAt, got, lastActivity)
+	}
+	lastText, _ := lastActivity["activity"].(string)
+	if len([]rune(lastText)) != maxAgentActivityChars {
+		t.Fatalf("expected normalized activity length %d, got %d activity=%q", maxAgentActivityChars, len([]rune(lastText)), lastText)
 	}
 	updatedSkills, err := mem.UpdateAgentMetadataSelf(agent.AgentUUID, map[string]any{
 		"agent_type": "codex",

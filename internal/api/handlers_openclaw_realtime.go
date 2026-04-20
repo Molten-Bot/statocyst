@@ -483,12 +483,14 @@ func openClawWSError(requestID string, status int, code, message string) map[str
 		"message": strings.TrimSpace(message),
 	}
 	payload := map[string]any{
-		"type":         "response",
-		"ok":           false,
-		"failure":      true,
-		"status":       status,
-		"message":      strings.TrimSpace(message),
-		"error_detail": errorDetail,
+		"type":          "response",
+		"ok":            false,
+		"failure":       true,
+		"status":        status,
+		"message":       strings.TrimSpace(message),
+		"error_detail":  errorDetail,
+		"Failure":       true,
+		"Error details": errorDetail,
 		"error": map[string]any{
 			"code":    strings.TrimSpace(code),
 			"message": strings.TrimSpace(message),

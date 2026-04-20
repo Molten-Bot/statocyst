@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,5 +68,34 @@ func TestRecordAgentSystemActivity_UnknownAgent(t *testing.T) {
 	_, err := mem.RecordAgentSystemActivity("missing-agent", map[string]any{"activity": "test"}, now)
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Fatalf("expected ErrAgentNotFound, got %v", err)
+	}
+}
+
+func TestRecordAgentSystemActivity_UsesServerTimestampAndTruncates(t *testing.T) {
+	mem := NewMemoryStore()
+	ids := &idGen{}
+	now := time.Date(2026, 3, 27, 9, 15, 0, 0, time.UTC)
+
+	_, _, agent := seedOrgAndAgent(t, mem, ids, now, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
+
+	updated, err := mem.RecordAgentSystemActivity(agent.AgentUUID, map[string]any{
+		"activity": strings.Repeat("x", maxAgentActivityChars+40),
+		"at":       "2001-09-09T01:46:40Z",
+	}, now.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("RecordAgentSystemActivity returned error: %v", err)
+	}
+
+	log := parseActivityEntries(updated.Metadata[model.AgentMetadataKeySystemActivityLog])
+	if len(log) == 0 {
+		t.Fatalf("expected non-empty system activity log, got %v", updated.Metadata[model.AgentMetadataKeySystemActivityLog])
+	}
+	last := log[len(log)-1]
+	expectedAt := now.Add(3 * time.Minute).UTC().Format(time.RFC3339)
+	if got := stringValue(last["at"]); got != expectedAt {
+		t.Fatalf("expected server timestamp %q, got %q entry=%v", expectedAt, got, last)
+	}
+	if gotLen := len([]rune(stringValue(last["activity"]))); gotLen != maxAgentActivityChars {
+		t.Fatalf("expected activity length %d, got %d entry=%v", maxAgentActivityChars, gotLen, last)
 	}
 }

@@ -62,6 +62,7 @@ var (
 
 const (
 	maxAgentActivityEntries = 512
+	maxAgentActivityChars   = 128
 )
 
 type MemoryStore struct {
@@ -1896,7 +1897,7 @@ func mergeAgentCustomActivities(existingRaw, incomingRaw any, now time.Time) []m
 func parseActivityEntries(raw any) []map[string]any {
 	out := []map[string]any{}
 	appendText := func(text string) {
-		text = strings.TrimSpace(text)
+		text = normalizeActivityText(text)
 		if text == "" {
 			return
 		}
@@ -1941,12 +1942,12 @@ func parseActivityEntries(raw any) []map[string]any {
 
 func parseActivityEntryObject(raw map[string]any) (map[string]any, bool) {
 	entry := copyMetadata(raw)
-	activity := stringValue(entry["activity"])
+	activity := normalizeActivityText(stringValue(entry["activity"]))
 	if activity == "" {
-		activity = stringValue(entry["text"])
+		activity = normalizeActivityText(stringValue(entry["text"]))
 	}
 	if activity == "" {
-		activity = stringValue(entry["title"])
+		activity = normalizeActivityText(stringValue(entry["title"]))
 	}
 	if activity == "" {
 		return nil, false
@@ -1981,17 +1982,13 @@ func normalizeIncomingAgentActivities(raw any, now time.Time) []map[string]any {
 	defaultAt := now.UTC().Format(time.RFC3339)
 	out := make([]map[string]any, 0, len(parsed))
 	for _, item := range parsed {
-		activity := stringValue(item["activity"])
+		activity := normalizeActivityText(stringValue(item["activity"]))
 		if activity == "" {
 			continue
 		}
-		at := stringValue(item["at"])
-		if at == "" {
-			at = defaultAt
-		}
 		out = append(out, map[string]any{
 			"activity": activity,
-			"at":       at,
+			"at":       defaultAt,
 			"source":   "agent",
 		})
 	}
@@ -2006,10 +2003,13 @@ func normalizeSystemAgentActivityEntry(entry map[string]any, now time.Time) map[
 	if !ok {
 		return nil
 	}
-	parsed["source"] = "system"
-	if at := stringValue(parsed["at"]); at == "" {
-		parsed["at"] = now.UTC().Format(time.RFC3339)
+	activity := normalizeActivityText(stringValue(parsed["activity"]))
+	if activity == "" {
+		return nil
 	}
+	parsed["activity"] = activity
+	parsed["source"] = "system"
+	parsed["at"] = now.UTC().Format(time.RFC3339)
 	if category := stringValue(parsed["category"]); category != "" {
 		parsed["category"] = category
 	}
@@ -2036,7 +2036,7 @@ func dedupeAndTrimActivityEntries(entries []map[string]any, limit int) []map[str
 			continue
 		}
 		entry := copyMetadata(raw)
-		activity := stringValue(entry["activity"])
+		activity := normalizeActivityText(stringValue(entry["activity"]))
 		if activity == "" {
 			continue
 		}
@@ -2082,6 +2082,18 @@ func stringValue(value any) string {
 		return ""
 	}
 	return strings.TrimSpace(asString)
+}
+
+func normalizeActivityText(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= maxAgentActivityChars {
+		return trimmed
+	}
+	return string(runes[:maxAgentActivityChars])
 }
 
 func defaultAgentMetadata() map[string]any {
