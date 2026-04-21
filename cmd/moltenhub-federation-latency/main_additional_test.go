@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"moltenhub/internal/cmdutil"
 )
 
 func TestRequestJSON(t *testing.T) {
@@ -84,7 +86,7 @@ func TestProbeOnceAndRunDirection(t *testing.T) {
 			t.Fatalf("decode sender publish request: %v", err)
 		}
 		mu.Lock()
-		latestPayload = asString(body, "payload")
+		latestPayload = cmdutil.AsString(body, "payload")
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
@@ -167,14 +169,14 @@ func TestRuntimeStatusHelpersAndReporting(t *testing.T) {
 		t.Fatalf("expected nested runtime status, got %q", got)
 	}
 
-	obj, err := requireObject(map[string]any{"message": map[string]any{"payload": "x"}}, "message")
+	obj, err := cmdutil.RequireObject(map[string]any{"message": map[string]any{"payload": "x"}}, "message")
 	if err != nil {
 		t.Fatalf("unexpected requireObject error: %v", err)
 	}
-	if asString(obj, "payload") != "x" {
+	if cmdutil.AsString(obj, "payload") != "x" {
 		t.Fatalf("unexpected payload value: %v", obj)
 	}
-	if _, err := requireObject(map[string]any{"message": "bad"}, "message"); err == nil {
+	if _, err := cmdutil.RequireObject(map[string]any{"message": "bad"}, "message"); err == nil {
 		t.Fatal("expected requireObject to fail for non-object")
 	}
 

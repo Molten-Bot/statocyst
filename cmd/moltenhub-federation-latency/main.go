@@ -1,17 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"moltenhub/internal/cmdutil"
 )
 
 type latencySample struct {
@@ -209,7 +208,7 @@ func (r runner) probeOnce(senderBaseURL, senderToken, receiverBaseURL, receiverT
 		return latencySample{}, fmt.Errorf("publish expected 202 got %d body=%s", pubStatus, pubRaw)
 	}
 	if runtimeStatus(pubPayload) == "dropped" {
-		return latencySample{}, fmt.Errorf("publish dropped reason=%q body=%s", asString(pubPayload, "reason"), pubRaw)
+		return latencySample{}, fmt.Errorf("publish dropped reason=%q body=%s", cmdutil.AsString(pubPayload, "reason"), pubRaw)
 	}
 
 	pullPath := fmt.Sprintf("/messages/pull?timeout_ms=%d", r.pullTimeoutMS)
@@ -223,18 +222,18 @@ func (r runner) probeOnce(senderBaseURL, senderToken, receiverBaseURL, receiverT
 	if pullStatus != http.StatusOK {
 		return latencySample{}, fmt.Errorf("pull expected 200 got %d body=%s", pullStatus, pullRaw)
 	}
-	message, err := requireObject(pullPayload, "message")
+	message, err := cmdutil.RequireObject(pullPayload, "message")
 	if err != nil {
 		return latencySample{}, err
 	}
-	if got := asString(message, "payload"); got != payload {
+	if got := cmdutil.AsString(message, "payload"); got != payload {
 		return latencySample{}, fmt.Errorf("payload mismatch got=%q want=%q", got, payload)
 	}
-	delivery, err := requireObject(pullPayload, "delivery")
+	delivery, err := cmdutil.RequireObject(pullPayload, "delivery")
 	if err != nil {
 		return latencySample{}, err
 	}
-	deliveryID := asString(delivery, "delivery_id")
+	deliveryID := cmdutil.AsString(delivery, "delivery_id")
 	if deliveryID == "" {
 		return latencySample{}, fmt.Errorf("delivery_id missing in pull payload=%v", pullPayload)
 	}
@@ -261,73 +260,25 @@ func (r runner) probeOnce(senderBaseURL, senderToken, receiverBaseURL, receiverT
 }
 
 func (r runner) requestJSON(baseURL, method, path string, headers map[string]string, body any) (int, map[string]any, string, error) {
-	var bodyReader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return 0, nil, "", err
-		}
-		bodyReader = bytes.NewReader(data)
-	}
-
-	req, err := http.NewRequest(method, strings.TrimRight(baseURL, "/")+path, bodyReader)
+	resp, err := cmdutil.RequestJSON(r.client, baseURL, method, path, headers, body)
 	if err != nil {
 		return 0, nil, "", err
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return 0, nil, "", err
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, nil, "", err
-	}
-	raw := strings.TrimSpace(string(data))
-	if raw == "" {
-		return resp.StatusCode, map[string]any{}, "", nil
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return 0, nil, raw, fmt.Errorf("decode %s %s response: %w body=%s", method, path, err, raw)
-	}
-	return resp.StatusCode, payload, raw, nil
+	return resp.StatusCode, resp.Payload, resp.Raw, nil
 }
 
 func runtimeStatus(payload map[string]any) string {
 	if payload == nil {
 		return ""
 	}
-	if top := asString(payload, "status"); top != "" {
+	if top := cmdutil.AsString(payload, "status"); top != "" {
 		return top
 	}
 	result, ok := payload["result"].(map[string]any)
 	if !ok {
 		return ""
 	}
-	return asString(result, "status")
-}
-
-func requireObject(payload map[string]any, key string) (map[string]any, error) {
-	obj, ok := payload[key].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("expected %s object, got %T payload=%v", key, payload[key], payload)
-	}
-	return obj, nil
-}
-
-func asString(payload map[string]any, key string) string {
-	value, _ := payload[key].(string)
-	return value
+	return cmdutil.AsString(result, "status")
 }
 
 func computeLatencyStats(values []int64) latencyStats {

@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"moltenhub/internal/cmdutil"
 )
 
 const (
@@ -198,25 +197,25 @@ func (r *runner) publishPullAck(senderBaseURL, senderToken, receiverBaseURL, rec
 	if pullStatus != http.StatusOK {
 		return fmt.Errorf("pull expected 200, got %d payload=%v", pullStatus, pullPayload)
 	}
-	message, err := requireObject(pullPayload, "message")
+	message, err := cmdutil.RequireObject(pullPayload, "message")
 	if err != nil {
 		return err
 	}
-	if asString(message, "payload") != wantPayload {
-		return fmt.Errorf("expected payload %q, got %q", wantPayload, asString(message, "payload"))
+	if cmdutil.AsString(message, "payload") != wantPayload {
+		return fmt.Errorf("expected payload %q, got %q", wantPayload, cmdutil.AsString(message, "payload"))
 	}
-	if asString(message, "from_agent_uri") != fromAgentURI {
-		return fmt.Errorf("expected from_agent_uri %q, got %q", fromAgentURI, asString(message, "from_agent_uri"))
+	if cmdutil.AsString(message, "from_agent_uri") != fromAgentURI {
+		return fmt.Errorf("expected from_agent_uri %q, got %q", fromAgentURI, cmdutil.AsString(message, "from_agent_uri"))
 	}
-	if asString(message, "to_agent_uri") != toAgentURI {
-		return fmt.Errorf("expected to_agent_uri %q, got %q", toAgentURI, asString(message, "to_agent_uri"))
+	if cmdutil.AsString(message, "to_agent_uri") != toAgentURI {
+		return fmt.Errorf("expected to_agent_uri %q, got %q", toAgentURI, cmdutil.AsString(message, "to_agent_uri"))
 	}
 
-	delivery, err := requireObject(pullPayload, "delivery")
+	delivery, err := cmdutil.RequireObject(pullPayload, "delivery")
 	if err != nil {
 		return err
 	}
-	deliveryID := asString(delivery, "delivery_id")
+	deliveryID := cmdutil.AsString(delivery, "delivery_id")
 	if deliveryID == "" {
 		return fmt.Errorf("delivery_id missing from pull payload=%v", pullPayload)
 	}
@@ -233,12 +232,12 @@ func (r *runner) publishPullAck(senderBaseURL, senderToken, receiverBaseURL, rec
 }
 
 func (r *runner) createOrg(baseURL, humanID, email, handle, displayName string) (string, string, error) {
-	if _, _, err := r.requestJSON(baseURL, http.MethodPatch, "/v1/me", humanHeaders(humanID, email), map[string]any{
+	if _, _, err := r.requestJSON(baseURL, http.MethodPatch, "/v1/me", cmdutil.HumanHeaders(humanID, email), map[string]any{
 		"handle": humanID,
 	}); err != nil {
 		return "", "", err
 	}
-	status, payload, err := r.requestJSON(baseURL, http.MethodPost, "/v1/orgs", humanHeaders(humanID, email), map[string]any{
+	status, payload, err := r.requestJSON(baseURL, http.MethodPost, "/v1/orgs", cmdutil.HumanHeaders(humanID, email), map[string]any{
 		"handle":       handle,
 		"display_name": displayName,
 	})
@@ -248,15 +247,15 @@ func (r *runner) createOrg(baseURL, humanID, email, handle, displayName string) 
 	if status != http.StatusCreated {
 		return "", "", fmt.Errorf("create org expected 201, got %d payload=%v", status, payload)
 	}
-	org, err := requireObject(payload, "organization")
+	org, err := cmdutil.RequireObject(payload, "organization")
 	if err != nil {
 		return "", "", err
 	}
-	return asString(org, "org_id"), asString(org, "handle"), nil
+	return cmdutil.AsString(org, "org_id"), cmdutil.AsString(org, "handle"), nil
 }
 
 func (r *runner) createAgent(baseURL, humanID, email, orgID, handle string) (string, string, string, error) {
-	status, payload, err := r.requestJSON(baseURL, http.MethodPost, "/v1/agents/bind-tokens", humanHeaders(humanID, email), map[string]any{
+	status, payload, err := r.requestJSON(baseURL, http.MethodPost, "/v1/agents/bind-tokens", cmdutil.HumanHeaders(humanID, email), map[string]any{
 		"org_id": orgID,
 	})
 	if err != nil {
@@ -265,7 +264,7 @@ func (r *runner) createAgent(baseURL, humanID, email, orgID, handle string) (str
 	if status != http.StatusCreated {
 		return "", "", "", fmt.Errorf("create bind token expected 201, got %d payload=%v", status, payload)
 	}
-	bindToken := asString(payload, "bind_token")
+	bindToken := cmdutil.AsString(payload, "bind_token")
 	if bindToken == "" {
 		return "", "", "", fmt.Errorf("bind_token missing from payload=%v", payload)
 	}
@@ -279,7 +278,7 @@ func (r *runner) createAgent(baseURL, humanID, email, orgID, handle string) (str
 	if status != http.StatusCreated {
 		return "", "", "", fmt.Errorf("bind expected 201, got %d payload=%v", status, payload)
 	}
-	token := asString(payload, "token")
+	token := cmdutil.AsString(payload, "token")
 	if token == "" {
 		return "", "", "", fmt.Errorf("token missing from payload=%v", payload)
 	}
@@ -294,11 +293,11 @@ func (r *runner) createAgent(baseURL, humanID, email, orgID, handle string) (str
 	if status != http.StatusOK {
 		return "", "", "", fmt.Errorf("finalize agent expected 200, got %d payload=%v", status, payload)
 	}
-	agent, err := requireObject(payload, "agent")
+	agent, err := cmdutil.RequireObject(payload, "agent")
 	if err != nil {
 		return "", "", "", err
 	}
-	return token, asString(agent, "agent_uuid"), asString(agent, "uri"), nil
+	return token, cmdutil.AsString(agent, "agent_uuid"), cmdutil.AsString(agent, "uri"), nil
 }
 
 func (r *runner) createPeer(baseURL, canonicalBaseURL, deliveryBaseURL string) error {
@@ -348,65 +347,15 @@ func (r *runner) createRemoteAgentTrust(baseURL, localAgentUUID, remoteAgentURI 
 }
 
 func (r *runner) requestJSON(baseURL, method, path string, headers map[string]string, body any) (int, map[string]any, error) {
-	var bodyReader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return 0, nil, err
-		}
-		bodyReader = bytes.NewReader(data)
-	}
-	req, err := http.NewRequest(method, strings.TrimRight(baseURL, "/")+path, bodyReader)
+	resp, err := cmdutil.RequestJSON(r.client, baseURL, method, path, headers, body)
 	if err != nil {
 		return 0, nil, err
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, nil, err
-	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return resp.StatusCode, map[string]any{}, nil
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return 0, nil, fmt.Errorf("decode %s %s response: %w body=%s", method, path, err, string(data))
-	}
-	return resp.StatusCode, payload, nil
-}
-
-func humanHeaders(humanID, email string) map[string]string {
-	return map[string]string{
-		"X-Human-Id":    humanID,
-		"X-Human-Email": email,
-	}
+	return resp.StatusCode, resp.Payload, nil
 }
 
 func adminHeaders() map[string]string {
-	return humanHeaders("ops", "ops@example.com")
-}
-
-func requireObject(payload map[string]any, key string) (map[string]any, error) {
-	obj, ok := payload[key].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("expected %s object, got %T payload=%v", key, payload[key], payload)
-	}
-	return obj, nil
-}
-
-func asString(payload map[string]any, key string) string {
-	value, _ := payload[key].(string)
-	return value
+	return cmdutil.HumanHeaders("ops", "ops@example.com")
 }
 
 func containsString(payload map[string]any, topKey, nestedKey, want string) bool {

@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -15,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"moltenhub/internal/cmdutil"
 )
 
 type runner struct {
@@ -104,7 +103,7 @@ func (r *runner) stepAliceCreatesHandle() error {
 	if err != nil {
 		return err
 	}
-	human, err := requireEntity(payload, "human")
+	human, err := cmdutil.RequireObject(payload, "human")
 	if err != nil {
 		return err
 	}
@@ -115,7 +114,7 @@ func (r *runner) stepAliceCreatesHandle() error {
 }
 
 func (r *runner) stepBobCannotTakeAliceHandle() error {
-	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/me", humanHeaders("bob", "bob@b.test"), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/me", cmdutil.HumanHeaders("bob", "bob@b.test"), map[string]any{
 		"handle": "alice",
 	})
 	if err != nil {
@@ -172,7 +171,7 @@ func (r *runner) stepAliceCreatesOrganization() error {
 	}
 	r.aliceOrgID = orgID
 
-	status, payload, err := r.requestJSON(http.MethodGet, "/v1/me/orgs", humanHeaders("alice", "alice@a.test"), nil)
+	status, payload, err := r.requestJSON(http.MethodGet, "/v1/me/orgs", cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
 		return err
 	}
@@ -190,7 +189,7 @@ func (r *runner) stepBobCannotTakeOrgHandle() error {
 		return err
 	}
 
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/orgs", humanHeaders("bob", "bob@b.test"), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/orgs", cmdutil.HumanHeaders("bob", "bob@b.test"), map[string]any{
 		"handle":       "launch-alpha",
 		"display_name": "Launch Alpha Duplicate",
 	})
@@ -246,7 +245,7 @@ func (r *runner) stepAliceDeletesOrganization() error {
 	if err != nil {
 		return err
 	}
-	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/orgs/"+orgID, humanHeaders("alice", "alice@a.test"), nil)
+	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/orgs/"+orgID, cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
 		return err
 	}
@@ -290,11 +289,11 @@ func (r *runner) stepAgentFinalizesHandle() error {
 	if err != nil {
 		return err
 	}
-	agent, err := requireEntity(payload, "agent")
+	agent, err := cmdutil.RequireObject(payload, "agent")
 	if err != nil {
 		return err
 	}
-	r.agentUUIDA = asString(agent, "agent_uuid")
+	r.agentUUIDA = cmdutil.AsString(agent, "agent_uuid")
 	if agent["handle"] != "launch-agent-a" {
 		return fmt.Errorf("expected finalized handle launch-agent-a, got %v", agent["handle"])
 	}
@@ -312,7 +311,7 @@ func (r *runner) stepAgentDuplicateHandleRejected() error {
 	}
 	r.tokenB = token
 
-	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/agents/me", agentHeaders(token), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/agents/me", cmdutil.AgentHeaders(token), map[string]any{
 		"handle": "launch-agent-a",
 	})
 	if err != nil {
@@ -329,11 +328,11 @@ func (r *runner) stepAgentDuplicateHandleRejected() error {
 	if err != nil {
 		return err
 	}
-	agent, err := requireEntity(finalized, "agent")
+	agent, err := cmdutil.RequireObject(finalized, "agent")
 	if err != nil {
 		return err
 	}
-	r.agentUUIDB = asString(agent, "agent_uuid")
+	r.agentUUIDB = cmdutil.AsString(agent, "agent_uuid")
 	return nil
 }
 
@@ -380,7 +379,7 @@ func (r *runner) stepAgentClearsMetadata() error {
 }
 
 func (r *runner) stepAliceRevokesFirstAgent() error {
-	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/agents/"+r.agentUUIDA, humanHeaders("alice", "alice@a.test"), nil)
+	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/agents/"+r.agentUUIDA, cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
 		return err
 	}
@@ -388,7 +387,7 @@ func (r *runner) stepAliceRevokesFirstAgent() error {
 		return fmt.Errorf("expected revoke 200, got %d payload=%v", status, payload)
 	}
 
-	status, payload, err = r.requestJSON(http.MethodGet, "/v1/agents/me", agentHeaders(r.tokenA), nil)
+	status, payload, err = r.requestJSON(http.MethodGet, "/v1/agents/me", cmdutil.AgentHeaders(r.tokenA), nil)
 	if err != nil {
 		return err
 	}
@@ -399,7 +398,7 @@ func (r *runner) stepAliceRevokesFirstAgent() error {
 }
 
 func (r *runner) stepAliceSeesBothAgents() error {
-	status, payload, err := r.requestJSON(http.MethodGet, "/v1/me/agents", humanHeaders("alice", "alice@a.test"), nil)
+	status, payload, err := r.requestJSON(http.MethodGet, "/v1/me/agents", cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
 		return err
 	}
@@ -420,7 +419,7 @@ func (r *runner) stepAliceSeesBothAgents() error {
 }
 
 func (r *runner) stepAliceCreatesAgentTrust() error {
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/agent-trusts", humanHeaders("alice", "alice@a.test"), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/agent-trusts", cmdutil.HumanHeaders("alice", "alice@a.test"), map[string]any{
 		"org_id":          r.agentsOrgID,
 		"agent_uuid":      r.agentUUIDA,
 		"peer_agent_uuid": r.agentUUIDB,
@@ -435,15 +434,15 @@ func (r *runner) stepAliceCreatesAgentTrust() error {
 	if !ok {
 		return fmt.Errorf("expected trust object payload=%v", payload)
 	}
-	edgeID := asString(trust, "edge_id")
+	edgeID := cmdutil.AsString(trust, "edge_id")
 	if edgeID == "" {
 		return fmt.Errorf("expected trust.edge_id payload=%v", payload)
 	}
-	if asString(trust, "state") == "active" {
+	if cmdutil.AsString(trust, "state") == "active" {
 		return nil
 	}
 
-	status, payload, err = r.requestJSON(http.MethodPost, "/v1/agent-trusts/"+edgeID+"/approve", humanHeaders("alice", "alice@a.test"), nil)
+	status, payload, err = r.requestJSON(http.MethodPost, "/v1/agent-trusts/"+edgeID+"/approve", cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
 		return err
 	}
@@ -454,14 +453,14 @@ func (r *runner) stepAliceCreatesAgentTrust() error {
 	if !ok {
 		return fmt.Errorf("expected trust object after approve payload=%v", payload)
 	}
-	if state := asString(trust, "state"); state != "active" {
+	if state := cmdutil.AsString(trust, "state"); state != "active" {
 		return fmt.Errorf("expected trust state active after approve, got %q payload=%v", state, payload)
 	}
 	return nil
 }
 
 func (r *runner) stepAliceRevokesBothAgents() error {
-	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/agents/"+r.agentUUIDB, humanHeaders("alice", "alice@a.test"), nil)
+	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/agents/"+r.agentUUIDB, cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
 		return err
 	}
@@ -469,7 +468,7 @@ func (r *runner) stepAliceRevokesBothAgents() error {
 		return fmt.Errorf("expected second revoke 200, got %d payload=%v", status, payload)
 	}
 
-	status, payload, err = r.requestJSON(http.MethodGet, "/v1/agents/me", agentHeaders(r.tokenB), nil)
+	status, payload, err = r.requestJSON(http.MethodGet, "/v1/agents/me", cmdutil.AgentHeaders(r.tokenB), nil)
 	if err != nil {
 		return err
 	}
@@ -477,7 +476,7 @@ func (r *runner) stepAliceRevokesBothAgents() error {
 		return fmt.Errorf("expected second revoked token 401, got %d payload=%v", status, payload)
 	}
 
-	status, payload, err = r.requestJSON(http.MethodGet, "/v1/me/agents", humanHeaders("alice", "alice@a.test"), nil)
+	status, payload, err = r.requestJSON(http.MethodGet, "/v1/me/agents", cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
 		return err
 	}
@@ -503,7 +502,7 @@ func (r *runner) stepOpenClawRegisterPlugin() error {
 		{label: "b", token: r.tokenB},
 	} {
 		pluginID := "moltenhub-openclaw-smoke-" + target.label
-		status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/register-plugin", agentHeaders(target.token), map[string]any{
+		status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/register-plugin", cmdutil.AgentHeaders(target.token), map[string]any{
 			"plugin_id":    pluginID,
 			"package":      "@moltenbot/openclaw-plugin-moltenhub",
 			"transport":    "websocket",
@@ -518,14 +517,14 @@ func (r *runner) stepOpenClawRegisterPlugin() error {
 		}
 
 		result := runtimeResult(payload)
-		plugin, err := requireEntity(result, "plugin")
+		plugin, err := cmdutil.RequireObject(result, "plugin")
 		if err != nil {
 			return err
 		}
-		if got := asString(plugin, "transport"); got != "websocket" {
+		if got := cmdutil.AsString(plugin, "transport"); got != "websocket" {
 			return fmt.Errorf("expected plugin transport websocket, got %q payload=%v", got, payload)
 		}
-		agent, err := requireEntity(result, "agent")
+		agent, err := cmdutil.RequireObject(result, "agent")
 		if err != nil {
 			return err
 		}
@@ -594,7 +593,7 @@ func (r *runner) stepOpenClawPresenceHeartbeat() error {
 		return err
 	}
 
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/offline", agentHeaders(r.tokenB), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/offline", cmdutil.AgentHeaders(r.tokenB), map[string]any{
 		"session_key": "smoke-main",
 		"reason":      "smoke presence heartbeat baseline",
 	})
@@ -605,7 +604,7 @@ func (r *runner) stepOpenClawPresenceHeartbeat() error {
 		return fmt.Errorf("expected openclaw offline 200, got %d payload=%v", status, payload)
 	}
 
-	status, payload, err = r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", agentHeaders(r.tokenB), nil)
+	status, payload, err = r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", cmdutil.AgentHeaders(r.tokenB), nil)
 	if err != nil {
 		return err
 	}
@@ -637,7 +636,7 @@ func (r *runner) stepOpenClawPresenceHeartbeat() error {
 }
 
 func (r *runner) publishOpenClawMessage(token, toAgentUUID, text string) (string, error) {
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/publish", agentHeaders(token), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/publish", cmdutil.AgentHeaders(token), map[string]any{
 		"to_agent_uuid": toAgentUUID,
 		"message": map[string]any{
 			"kind": "text_message",
@@ -664,7 +663,7 @@ func (r *runner) publishOpenClawMessage(token, toAgentUUID, text string) (string
 func (r *runner) pullOpenClawMessage(token, expectedMessageID string, timeout time.Duration) (string, string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		status, payload, err := r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", agentHeaders(token), nil)
+		status, payload, err := r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", cmdutil.AgentHeaders(token), nil)
 		if err != nil {
 			return "", "", err
 		}
@@ -685,11 +684,11 @@ func (r *runner) pullOpenClawMessage(token, expectedMessageID string, timeout ti
 			return "", "", fmt.Errorf("expected openclaw pull to include delivery_id payload=%v", payload)
 		}
 
-		openClawMessage, err := requireEntity(result, "openclaw_message")
+		openClawMessage, err := cmdutil.RequireObject(result, "openclaw_message")
 		if err != nil {
 			return "", "", err
 		}
-		text := asString(openClawMessage, "text")
+		text := cmdutil.AsString(openClawMessage, "text")
 		if messageID == expectedMessageID {
 			return deliveryID, text, nil
 		}
@@ -702,7 +701,7 @@ func (r *runner) pullOpenClawMessage(token, expectedMessageID string, timeout ti
 
 func (r *runner) drainOpenClawQueue(token string) error {
 	for i := 0; i < 64; i++ {
-		status, payload, err := r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", agentHeaders(token), nil)
+		status, payload, err := r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", cmdutil.AgentHeaders(token), nil)
 		if err != nil {
 			return err
 		}
@@ -726,7 +725,7 @@ func (r *runner) drainOpenClawQueue(token string) error {
 }
 
 func (r *runner) ackOpenClawDeliveryHTTP(token, deliveryID string) error {
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/ack", agentHeaders(token), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/ack", cmdutil.AgentHeaders(token), map[string]any{
 		"delivery_id": deliveryID,
 	})
 	if err != nil {
@@ -735,7 +734,7 @@ func (r *runner) ackOpenClawDeliveryHTTP(token, deliveryID string) error {
 	if status == http.StatusOK {
 		return nil
 	}
-	if status == http.StatusNotFound && asString(payload, "error") == "unknown_delivery" {
+	if status == http.StatusNotFound && cmdutil.AsString(payload, "error") == "unknown_delivery" {
 		return nil
 	}
 	return fmt.Errorf("expected openclaw ack 200, got %d payload=%v", status, payload)
@@ -800,11 +799,11 @@ func (r *runner) waitForOpenClawWSDelivery(conn *websocket.Conn, expectedMessage
 			return "", "", fmt.Errorf("expected websocket delivery_id payload=%v", evt)
 		}
 
-		openClawMessage, err := requireEntity(result, "openclaw_message")
+		openClawMessage, err := cmdutil.RequireObject(result, "openclaw_message")
 		if err != nil {
 			return "", "", err
 		}
-		text := asString(openClawMessage, "text")
+		text := cmdutil.AsString(openClawMessage, "text")
 		if messageID == expectedMessageID {
 			return deliveryID, text, nil
 		}
@@ -858,7 +857,7 @@ func (r *runner) ackOpenClawDeliveryWS(conn *websocket.Conn, deliveryID string) 
 }
 
 func (r *runner) setHumanHandle(humanID, email, handle string) (map[string]any, error) {
-	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/me", humanHeaders(humanID, email), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/me", cmdutil.HumanHeaders(humanID, email), map[string]any{
 		"handle": handle,
 	})
 	if err != nil {
@@ -871,7 +870,7 @@ func (r *runner) setHumanHandle(humanID, email, handle string) (map[string]any, 
 }
 
 func (r *runner) patchHumanMetadata(humanID, email string, metadata map[string]any) (map[string]any, error) {
-	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/me/metadata", humanHeaders(humanID, email), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/me/metadata", cmdutil.HumanHeaders(humanID, email), map[string]any{
 		"metadata": metadata,
 	})
 	if err != nil {
@@ -884,7 +883,7 @@ func (r *runner) patchHumanMetadata(humanID, email string, metadata map[string]a
 }
 
 func (r *runner) createOrg(humanID, email, handle, displayName string) (string, error) {
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/orgs", humanHeaders(humanID, email), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/orgs", cmdutil.HumanHeaders(humanID, email), map[string]any{
 		"handle":       handle,
 		"display_name": displayName,
 	})
@@ -894,15 +893,15 @@ func (r *runner) createOrg(humanID, email, handle, displayName string) (string, 
 	if status != http.StatusCreated {
 		return "", fmt.Errorf("expected org create 201, got %d payload=%v", status, payload)
 	}
-	org, err := requireEntity(payload, "organization")
+	org, err := cmdutil.RequireObject(payload, "organization")
 	if err != nil {
 		return "", err
 	}
-	return asString(org, "org_id"), nil
+	return cmdutil.AsString(org, "org_id"), nil
 }
 
 func (r *runner) patchOrgMetadata(orgID string, metadata map[string]any) (map[string]any, error) {
-	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/orgs/"+orgID+"/metadata", humanHeaders("alice", "alice@a.test"), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/orgs/"+orgID+"/metadata", cmdutil.HumanHeaders("alice", "alice@a.test"), map[string]any{
 		"metadata": metadata,
 	})
 	if err != nil {
@@ -915,7 +914,7 @@ func (r *runner) patchOrgMetadata(orgID string, metadata map[string]any) (map[st
 }
 
 func (r *runner) createBindToken(orgID string) (string, error) {
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/me/agents/bind-tokens", humanHeaders("alice", "alice@a.test"), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/me/agents/bind-tokens", cmdutil.HumanHeaders("alice", "alice@a.test"), map[string]any{
 		"org_id": orgID,
 	})
 	if err != nil {
@@ -924,7 +923,7 @@ func (r *runner) createBindToken(orgID string) (string, error) {
 	if status != http.StatusCreated {
 		return "", fmt.Errorf("expected bind token create 201, got %d payload=%v", status, payload)
 	}
-	return asString(payload, "bind_token"), nil
+	return cmdutil.AsString(payload, "bind_token"), nil
 }
 
 func (r *runner) redeemBindToken(bindToken, agentID string) (string, error) {
@@ -938,11 +937,11 @@ func (r *runner) redeemBindToken(bindToken, agentID string) (string, error) {
 	if status != http.StatusCreated {
 		return "", fmt.Errorf("expected bind token redeem 201, got %d payload=%v", status, payload)
 	}
-	return asString(payload, "token"), nil
+	return cmdutil.AsString(payload, "token"), nil
 }
 
 func (r *runner) patchAgentHandle(token, handle string) (map[string]any, error) {
-	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/agents/me", agentHeaders(token), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/agents/me", cmdutil.AgentHeaders(token), map[string]any{
 		"handle": handle,
 	})
 	if err != nil {
@@ -955,18 +954,18 @@ func (r *runner) patchAgentHandle(token, handle string) (map[string]any, error) 
 }
 
 func (r *runner) currentAgent(token string) (map[string]any, error) {
-	status, payload, err := r.requestJSON(http.MethodGet, "/v1/agents/me", agentHeaders(token), nil)
+	status, payload, err := r.requestJSON(http.MethodGet, "/v1/agents/me", cmdutil.AgentHeaders(token), nil)
 	if err != nil {
 		return nil, err
 	}
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("expected /v1/agents/me 200, got %d payload=%v", status, payload)
 	}
-	return requireEntity(payload, "agent")
+	return cmdutil.RequireObject(payload, "agent")
 }
 
 func (r *runner) patchAgentMetadata(token string, metadata map[string]any) (map[string]any, error) {
-	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/agents/me/metadata", agentHeaders(token), map[string]any{
+	status, payload, err := r.requestJSON(http.MethodPatch, "/v1/agents/me/metadata", cmdutil.AgentHeaders(token), map[string]any{
 		"metadata": metadata,
 	})
 	if err != nil {
@@ -979,56 +978,11 @@ func (r *runner) patchAgentMetadata(token string, metadata map[string]any) (map[
 }
 
 func (r *runner) requestJSON(method, path string, headers map[string]string, body any) (int, map[string]any, error) {
-	var requestBody io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			return 0, nil, fmt.Errorf("marshal request body: %w", err)
-		}
-		requestBody = bytes.NewReader(raw)
-	}
-
-	req, err := http.NewRequest(method, r.baseURL+path, requestBody)
+	resp, err := cmdutil.RequestJSON(r.client, r.baseURL, method, path, headers, body)
 	if err != nil {
-		return 0, nil, fmt.Errorf("build request %s %s: %w", method, path, err)
+		return 0, nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return 0, nil, fmt.Errorf("perform request %s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, nil, fmt.Errorf("read response %s %s: %w", method, path, err)
-	}
-	if len(raw) == 0 {
-		return resp.StatusCode, map[string]any{}, nil
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return 0, nil, fmt.Errorf("decode response %s %s: %w body=%s", method, path, err, string(raw))
-	}
-	return resp.StatusCode, payload, nil
-}
-
-func humanHeaders(humanID, email string) map[string]string {
-	return map[string]string{
-		"X-Human-Id":    humanID,
-		"X-Human-Email": email,
-	}
-}
-
-func agentHeaders(token string) map[string]string {
-	return map[string]string{
-		"Authorization": "Bearer " + token,
-	}
+	return resp.StatusCode, resp.Payload, nil
 }
 
 func requireErrorCode(payload map[string]any, want string) error {
@@ -1039,7 +993,7 @@ func requireErrorCode(payload map[string]any, want string) error {
 }
 
 func requireEntityMetadata(payload map[string]any, entityKey string, want map[string]any) error {
-	entity, err := requireEntity(payload, entityKey)
+	entity, err := cmdutil.RequireObject(payload, entityKey)
 	if err != nil {
 		return err
 	}
@@ -1078,14 +1032,6 @@ func requireEntityMetadata(payload map[string]any, entityKey string, want map[st
 		return fmt.Errorf("expected %s.metadata=%v, got %v", entityKey, want, got)
 	}
 	return nil
-}
-
-func requireEntity(payload map[string]any, entityKey string) (map[string]any, error) {
-	entity, ok := payload[entityKey].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("expected %s object, got %T payload=%v", entityKey, payload[entityKey], payload)
-	}
-	return entity, nil
 }
 
 func membershipHasOrg(payload map[string]any, orgID string) bool {
@@ -1140,11 +1086,6 @@ func requireAgentStatus(agents []map[string]any, agentUUID, wantStatus string) e
 		return nil
 	}
 	return fmt.Errorf("agent %q not found in list %v", agentUUID, agents)
-}
-
-func asString(payload map[string]any, key string) string {
-	value, _ := payload[key].(string)
-	return value
 }
 
 func runtimeResult(payload map[string]any) map[string]any {

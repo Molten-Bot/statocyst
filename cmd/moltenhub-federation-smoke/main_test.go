@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"moltenhub/internal/cmdutil"
 )
 
 type fakeFedMessage struct {
@@ -97,7 +99,7 @@ func (h *fakeFedHub) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(http.StatusCreated, map[string]any{
 			"organization": map[string]any{
 				"org_id": orgID,
-				"handle": asString(body, "handle"),
+				"handle": cmdutil.AsString(body, "handle"),
 			},
 		})
 		return
@@ -120,7 +122,7 @@ func (h *fakeFedHub) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodPatch && r.URL.Path == "/v1/agents/me":
 		body := decodeBody()
-		handle := asString(body, "handle")
+		handle := cmdutil.AsString(body, "handle")
 		token := authToken()
 		if handle == "" || token == "" {
 			writeJSON(http.StatusBadRequest, map[string]any{"error": "invalid_request"})
@@ -152,7 +154,7 @@ func (h *fakeFedHub) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/remote-agent-trusts":
 		body := decodeBody()
-		remoteURI := asString(body, "remote_agent_uri")
+		remoteURI := cmdutil.AsString(body, "remote_agent_uri")
 		h.mu.Lock()
 		h.allowedRemoteURI[remoteURI] = struct{}{}
 		h.mu.Unlock()
@@ -183,8 +185,8 @@ func (h *fakeFedHub) handle(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		fromURI := h.tokenToAgentURI[token]
 		h.mu.Unlock()
-		toURI := asString(body, "to_agent_uri")
-		payload := asString(body, "payload")
+		toURI := cmdutil.AsString(body, "to_agent_uri")
+		payload := cmdutil.AsString(body, "payload")
 		if fromURI == "" || toURI == "" {
 			writeJSON(http.StatusBadRequest, map[string]any{"error": "invalid_request"})
 			return
