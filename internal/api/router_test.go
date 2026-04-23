@@ -3155,6 +3155,16 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 		t.Fatalf("expected agent B skill metadata patch 200, got %d %s", skillPatchB.Code, skillPatchB.Body.String())
 	}
 
+	offlinePeer := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+		"session_key": "peer-main",
+		"reason":      "peer_capability_test",
+	}, map[string]string{
+		"Authorization": "Bearer " + tokenB,
+	})
+	if offlinePeer.Code != http.StatusOK {
+		t.Fatalf("expected agent B offline marker 200, got %d %s", offlinePeer.Code, offlinePeer.Body.String())
+	}
+
 	manifestResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/manifest", nil, map[string]string{
 		"Authorization": "Bearer " + tokenA,
 	})
@@ -3176,6 +3186,27 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	manifestTalkablePeers, ok := manifestCommunication["talkable_peers"].([]any)
 	if !ok || len(manifestTalkablePeers) == 0 {
 		t.Fatalf("expected communication.talkable_peers in manifest payload, got %v", manifestCommunication["talkable_peers"])
+	}
+	foundManifestPeerB := false
+	for _, raw := range manifestTalkablePeers {
+		peer, _ := raw.(map[string]any)
+		if peer == nil {
+			continue
+		}
+		if gotUUID, _ := peer["agent_uuid"].(string); gotUUID != agentUUIDB {
+			continue
+		}
+		foundManifestPeerB = true
+		presence, _ := peer["presence"].(map[string]any)
+		if got, _ := presence["status"].(string); got != "offline" {
+			t.Fatalf("expected manifest talkable peer B presence.status offline, got %q peer=%v", got, peer)
+		}
+		if ready, ok := presence["ready"].(bool); !ok || ready {
+			t.Fatalf("expected manifest talkable peer B presence.ready=false, got %v peer=%v", presence["ready"], peer)
+		}
+	}
+	if !foundManifestPeerB {
+		t.Fatalf("expected manifest talkable_peers to include peer B %q, got %v", agentUUIDB, manifestTalkablePeers)
 	}
 
 	capsResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/capabilities", nil, map[string]string{
@@ -3215,6 +3246,16 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 		}
 		if gotEmoji, _ := peer["emoji"].(string); gotEmoji != "🧮" {
 			t.Fatalf("expected talkable peer B emoji 🧮, got %q peer=%v", gotEmoji, peer)
+		}
+		presence, _ := peer["presence"].(map[string]any)
+		if got, _ := presence["status"].(string); got != "offline" {
+			t.Fatalf("expected talkable peer B presence.status offline, got %q peer=%v", got, peer)
+		}
+		if ready, ok := presence["ready"].(bool); !ok || ready {
+			t.Fatalf("expected talkable peer B presence.ready=false, got %v peer=%v", presence["ready"], peer)
+		}
+		if gotSession, _ := presence["session_key"].(string); gotSession != "peer-main" {
+			t.Fatalf("expected talkable peer B presence.session_key peer-main, got %q peer=%v", gotSession, peer)
 		}
 	}
 	if !foundPeerB {
@@ -3441,6 +3482,9 @@ func TestAgentCapabilitiesTalkablePeersIncludesRemoteURIOnlyEntry(t *testing.T) 
 		}
 		if _, exists := peer["agent_id"]; exists {
 			t.Fatalf("expected remote URI-only peer to omit agent_id, got peer=%v", peer)
+		}
+		if _, exists := peer["presence"]; exists {
+			t.Fatalf("expected remote URI-only peer to omit presence, got peer=%v", peer)
 		}
 	}
 	if !foundRemote {

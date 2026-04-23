@@ -1257,7 +1257,7 @@ func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (ag
 		}
 		peerURI := h.agentURI(peerAgent)
 		talkableURIs = append(talkableURIs, peerURI)
-		talkablePeers = append(talkablePeers, talkablePeerSummaryFromLocalAgent(peerAgent, peerURI))
+		talkablePeers = append(talkablePeers, h.talkablePeerSummaryFromLocalAgent(peerAgent, peerURI))
 		peerSkillCatalog = append(peerSkillCatalog, agentPeerSkillSummary{
 			AgentUUID: peerAgent.AgentUUID,
 			AgentID:   peerAgent.AgentID,
@@ -1327,7 +1327,7 @@ func (h *Handler) buildAgentControlPlane(r *http.Request, agent model.Agent) (ag
 	}, nil
 }
 
-func talkablePeerSummaryFromLocalAgent(peer model.Agent, peerURI string) agentTalkablePeerSummary {
+func (h *Handler) talkablePeerSummaryFromLocalAgent(peer model.Agent, peerURI string) agentTalkablePeerSummary {
 	displayName := metadataStringAliasValue(peer.Metadata, "display_name")
 	if displayName == "" {
 		displayName = strings.TrimSpace(peer.Handle)
@@ -1347,6 +1347,9 @@ func talkablePeerSummaryFromLocalAgent(peer model.Agent, peerURI string) agentTa
 	}
 	if emoji := metadataStringAliasValue(peer.Metadata, "emoji"); emoji != "" {
 		summary.Emoji = emoji
+	}
+	if presence := h.currentAgentPresence(peer.AgentUUID, peer.Metadata); presence != nil {
+		summary.Presence = presence
 	}
 	return summary
 }
