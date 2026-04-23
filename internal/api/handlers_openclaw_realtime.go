@@ -813,6 +813,24 @@ func openClawPresenceFromMetadataAt(metadata map[string]any, now time.Time, stal
 	return out
 }
 
+func openClawOnlinePresenceStale(presence map[string]any, now time.Time, staleAfter time.Duration) bool {
+	if staleAfter <= 0 || len(presence) == 0 {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	status := strings.ToLower(strings.TrimSpace(asStringAny(presence["status"])))
+	if status != openClawPresenceStatusOnline {
+		return false
+	}
+	updatedAt := strings.TrimSpace(asStringAny(presence["updated_at"]))
+	seenAt, ok := parseOpenClawPresenceTimestamp(updatedAt)
+	return ok && now.Sub(seenAt) >= staleAfter
+}
+
 func parseOpenClawPresenceTimestamp(raw string) (time.Time, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

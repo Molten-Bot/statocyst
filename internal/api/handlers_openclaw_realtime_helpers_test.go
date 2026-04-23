@@ -253,6 +253,57 @@ func TestTouchAgentPresenceOnlineAppliesSessionAndTransport(t *testing.T) {
 	}
 }
 
+func TestCurrentAgentPresencePersistsStaleOnlineAsOffline(t *testing.T) {
+	mem := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	current := time.Date(2026, time.April, 17, 18, 0, 0, 0, time.UTC)
+	h := NewHandler(
+		mem,
+		mem,
+		waiters,
+		auth.NewDevHumanAuthProvider(),
+		"https://hub.example.com",
+		"",
+		"",
+		"",
+		"",
+		"example.com",
+		true,
+		15*time.Minute,
+		false,
+	)
+	h.now = func() time.Time { return current }
+	router := NewRouter(h)
+	_, _, _, _, _, _, agentUUIDA, _ := setupTrustedAgents(t, router)
+
+	if err := h.touchAgentPresenceOnline(agentUUIDA, "Session-Presence", "websocket"); err != nil {
+		t.Fatalf("expected touchAgentPresenceOnline success, got %+v", err)
+	}
+
+	current = current.Add(openClawPresenceOfflineAfter + time.Second)
+	presence := h.currentAgentPresence(agentUUIDA, nil)
+	if got, _ := presence["status"].(string); got != "offline" {
+		t.Fatalf("expected stale current presence to render offline, got %q payload=%v", got, presence)
+	}
+	if ready, _ := presence["ready"].(bool); ready {
+		t.Fatalf("expected stale current presence ready=false, got payload=%v", presence)
+	}
+
+	stored, ok, err := mem.GetAgentPresence(agentUUIDA)
+	if err != nil {
+		t.Fatalf("GetAgentPresence failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected stale presence to remain stored")
+	}
+	if got, _ := stored["status"].(string); got != "offline" {
+		t.Fatalf("expected stale presence to persist offline, got %q payload=%v", got, stored)
+	}
+	if ready, _ := stored["ready"].(bool); ready {
+		t.Fatalf("expected persisted stale presence ready=false, got payload=%v", stored)
+	}
+}
+
 func TestRuntimeHandlerErrorForPresenceUpdateMappings(t *testing.T) {
 	notFound := runtimeHandlerErrorForPresenceUpdate(store.ErrAgentNotFound)
 	if notFound.status != http.StatusNotFound || notFound.code != "unknown_agent" {
