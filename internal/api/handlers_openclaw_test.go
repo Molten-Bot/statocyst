@@ -379,6 +379,37 @@ func TestOpenClawOfflineEndpointUpdatesPresenceAndActivityLog(t *testing.T) {
 	}
 }
 
+func TestOpenClawOfflineEndpointHonorsExplicitTransport(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+		"session_key": "main",
+		"transport":   "http_long_poll",
+		"reason":      "runtime shutdown",
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected openclaw offline 200, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	result := requireAgentRuntimeSuccessEnvelope(t, payload)
+	agent, _ := result["agent"].(map[string]any)
+	metadata, _ := agent["metadata"].(map[string]any)
+	presence, _ := metadata["presence"].(map[string]any)
+	if got, _ := presence["status"].(string); got != "offline" {
+		t.Fatalf("expected metadata.presence.status=offline, got %q payload=%v", got, payload)
+	}
+	if got, _ := presence["transport"].(string); got != "http_long_poll" {
+		t.Fatalf("expected metadata.presence.transport=http_long_poll, got %q payload=%v", got, payload)
+	}
+
+	activityLog, _ := agent["activity_log"].([]any)
+	if !hasActivityText(activityLog, "http_long_poll transport offline") {
+		t.Fatalf("expected activity_log to include http_long_poll transport offline, got %v", activityLog)
+	}
+}
+
 func TestOpenClawPullMarksPresenceOnline(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
