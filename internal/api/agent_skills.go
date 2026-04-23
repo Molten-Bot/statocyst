@@ -35,11 +35,12 @@ type agentPeerSkillSummary struct {
 }
 
 type agentTalkablePeerSummary struct {
-	AgentUUID   string `json:"agent_uuid,omitempty"`
-	AgentID     string `json:"agent_id,omitempty"`
-	AgentURI    string `json:"agent_uri"`
-	DisplayName string `json:"display_name"`
-	Emoji       string `json:"emoji,omitempty"`
+	AgentUUID   string         `json:"agent_uuid,omitempty"`
+	AgentID     string         `json:"agent_id,omitempty"`
+	AgentURI    string         `json:"agent_uri"`
+	DisplayName string         `json:"display_name"`
+	Emoji       string         `json:"emoji,omitempty"`
+	Presence    map[string]any `json:"presence,omitempty"`
 }
 
 func parseAdvertisedSkills(metadata map[string]any) []agentSkillSummary {

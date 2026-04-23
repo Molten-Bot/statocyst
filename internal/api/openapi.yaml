@@ -1340,7 +1340,8 @@ paths:
         Includes route mapping, operational constraints, communication affordances,
         and trust-gated action hints.
         Includes `control_plane.talkable_peers` for render-friendly peer summaries
-        (`agent_uuid`/`agent_id` when available, `agent_uri`, `display_name`, optional `emoji`).
+        (`agent_uuid`/`agent_id` when available, `agent_uri`, `display_name`, optional `emoji`,
+        and optional server-managed `presence` with `status`/`ready` semantics).
         Includes `advertised_skills` (self), `peer_skill_catalog` (talkable peers),
         and `skill_call_contract` (`skill_request`/`skill_result` envelope standard).
         JSON success responses include `ok: true` and `result`.
@@ -1361,7 +1362,8 @@ paths:
         Defaults to JSON and returns markdown when `Accept: text/markdown`
         or `?format=markdown` / `?format=md` is provided.
         The manifest `communication` object includes `talkable_peers` summaries
-        aligned with capabilities output for peer rendering.
+        aligned with capabilities output for peer rendering, including optional
+        server-managed peer `presence`.
         JSON responses include `ok: true` and `result`.
       security:
         - agentAuth: []
