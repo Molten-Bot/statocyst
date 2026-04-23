@@ -1624,58 +1624,14 @@ func (h *Handler) currentAgentPresence(agentUUID string, fallbackMetadata map[st
 	agentUUID = strings.TrimSpace(agentUUID)
 	if agentUUID != "" {
 		if presence, ok, err := h.control.GetAgentPresence(agentUUID); err == nil && ok {
-			now := h.now().UTC()
-			if openClawOnlinePresenceStale(presence, now, openClawPresenceOfflineAfter) {
-				presence = h.markStaleAgentPresenceOffline(agentUUID, presence, now)
-			}
 			return openClawPresenceFromMetadataAt(
 				map[string]any{model.AgentMetadataKeyPresence: presence},
-				now,
+				h.now().UTC(),
 				openClawPresenceOfflineAfter,
 			)
 		}
 	}
 	return openClawPresenceFromMetadata(fallbackMetadata)
-}
-
-func (h *Handler) markStaleAgentPresenceOffline(agentUUID string, presence map[string]any, now time.Time) map[string]any {
-	next := map[string]any{
-		"status":     openClawPresenceStatusOffline,
-		"ready":      false,
-		"updated_at": now.UTC().Format(time.RFC3339),
-	}
-	if transport := strings.TrimSpace(asStringAny(presence["transport"])); transport != "" {
-		next["transport"] = transport
-	}
-	sessionKey := normalizeOpenClawSessionKey(asStringAny(presence["session_key"]))
-	if sessionKey != "" {
-		next["session_key"] = sessionKey
-	}
-
-	agent, changedStatus, err := h.control.SetAgentPresence(agentUUID, next, now)
-	if err != nil {
-		h.setStateRuntimeError(stateRuntimeFailureSummary("agent presence stale offline update", err))
-		return next
-	}
-	if changedStatus {
-		entry := map[string]any{
-			"activity":   "websocket transport offline",
-			"category":   "agent_presence",
-			"action":     openClawPresenceStatusOffline,
-			"subject_id": sessionKey,
-			"event_id":   "agent-presence:offline:" + sessionKey + ":" + strconv.FormatInt(now.UnixNano(), 10),
-			"reason":     "presence heartbeat stale",
-		}
-		if transport := strings.TrimSpace(asStringAny(next["transport"])); transport != "" {
-			entry["transport"] = transport
-		}
-		if recorded, recordErr := h.control.RecordAgentSystemActivity(agent.AgentUUID, entry, now); recordErr == nil {
-			if recordedPresence, ok, readErr := h.control.GetAgentPresence(recorded.AgentUUID); readErr == nil && ok {
-				return recordedPresence
-			}
-		}
-	}
-	return next
 }
 
 func agentSystemActivityLog(metadata map[string]any) []map[string]any {
