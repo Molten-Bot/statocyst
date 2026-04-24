@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"moltenhub/internal/api"
 	"moltenhub/internal/auth"
 	"moltenhub/internal/store"
 )
@@ -68,29 +69,29 @@ func TestConfiguredBackendFromEnv(t *testing.T) {
 func TestHasStartupUIConfigPrivilegedAccess(t *testing.T) {
 	t.Setenv("UI_CONFIG_API_KEY", "")
 	req := httptest.NewRequest(http.MethodGet, "/v1/ui/config", nil)
-	if hasStartupUIConfigPrivilegedAccess(req) {
+	if api.HasUIConfigPrivilegedAccess(req) {
 		t.Fatal("expected privileged access disabled when api key is unset")
 	}
 
 	t.Setenv("UI_CONFIG_API_KEY", "secret-key")
-	if hasStartupUIConfigPrivilegedAccess(req) {
+	if api.HasUIConfigPrivilegedAccess(req) {
 		t.Fatal("expected privileged access to fail without header")
 	}
 
 	req.Header.Set("X-UI-Config-Key", "wrong")
-	if hasStartupUIConfigPrivilegedAccess(req) {
+	if api.HasUIConfigPrivilegedAccess(req) {
 		t.Fatal("expected privileged access to fail with wrong header")
 	}
 
 	req.Header.Set("X-UI-Config-Key", "secret-key")
-	if !hasStartupUIConfigPrivilegedAccess(req) {
+	if !api.HasUIConfigPrivilegedAccess(req) {
 		t.Fatal("expected privileged access with matching API key")
 	}
 }
 
 func TestParseCSVSetSortedValuesAndSuperAdminResolution(t *testing.T) {
-	values := parseCSVSet(" Alice@example.com, @Example.com,alice@example.com, ")
-	sorted := sortedSetValues(values)
+	values := auth.ParseCSVSet(" Alice@example.com, @Example.com,alice@example.com, ", true)
+	sorted := auth.SortedSetValues(values)
 	if len(sorted) != 2 {
 		t.Fatalf("expected two unique set values, got %v", sorted)
 	}

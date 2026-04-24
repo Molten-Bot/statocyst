@@ -1,11 +1,8 @@
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"net/http"
-	"os"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,8 +85,8 @@ func newBootstrapHandler(startupMode store.StorageStartupMode, stateBackend, que
 		humanAuth:         option.humanAuth,
 		supabaseURL:       strings.TrimSpace(option.supabaseURL),
 		supabaseAnonKey:   strings.TrimSpace(option.supabaseAnonKey),
-		superAdminEmails:  parseCSVSet(option.superAdminEmails),
-		superAdminDomains: parseCSVSet(option.superAdminDomains),
+		superAdminEmails:  auth.ParseCSVSet(option.superAdminEmails, true),
+		superAdminDomains: auth.ParseCSVSet(option.superAdminDomains, true),
 		superAdminReview:  option.superAdminReview,
 		bindTokenTTL:      option.bindTokenTTL,
 		headlessMode:      option.headlessMode,
@@ -247,60 +244,20 @@ func (h *bootstrapHandler) handleStartupUIConfig(w http.ResponseWriter, r *http.
 		return
 	}
 
-	authConfig := map[string]any{
-		"human": h.humanAuth.Name(),
-	}
-	if h.humanAuth.Name() == "dev" {
-		devConfig := map[string]any{}
-		if devHumanID := strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_ID")); devHumanID != "" {
-			devConfig["human_id"] = devHumanID
-		}
-		if devHumanEmail := strings.ToLower(strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_EMAIL"))); devHumanEmail != "" {
-			devConfig["human_email"] = devHumanEmail
-		}
-		if len(devConfig) > 0 {
-			authConfig["dev"] = devConfig
-		}
-	}
-	if h.humanAuth.Name() == "supabase" {
-		supabaseConfig := map[string]any{}
-		if h.supabaseURL != "" {
-			supabaseConfig["url"] = h.supabaseURL
-		}
-		if auth.IsSafeSupabaseBrowserKey(h.supabaseAnonKey) {
-			supabaseConfig["anon_key"] = h.supabaseAnonKey
-		}
-		if len(supabaseConfig) > 0 {
-			authConfig["supabase"] = supabaseConfig
-		}
-	}
-
-	superAdminEmails := []string{}
-	if hasStartupUIConfigPrivilegedAccess(r) {
-		superAdminEmails = sortedSetValues(h.superAdminEmails)
-	}
-	adminConfig := map[string]any{
-		"review_mode":  h.superAdminReview,
-		"write_policy": "global_write",
-	}
-	if len(superAdminEmails) > 0 {
-		adminConfig["emails"] = superAdminEmails
-	}
-	superAdminDomains := sortedSetValues(h.superAdminDomains)
-	if len(superAdminDomains) > 0 {
-		adminConfig["domains"] = superAdminDomains
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"auth":               authConfig,
-		"dev_auto_login":     strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN_AUTO")), "true"),
-		"admin":              adminConfig,
-		"bind_token_ttl_sec": int(h.bindTokenTTL.Seconds()),
-		"headless_mode":      h.headlessMode,
-		"boot_status":        "starting",
-	})
+	_ = json.NewEncoder(w).Encode(api.BuildUIConfigPayload(api.UIConfigPayloadOptions{
+		HumanAuthName:            h.humanAuth.Name(),
+		SupabaseURL:              h.supabaseURL,
+		SupabaseAnonKey:          h.supabaseAnonKey,
+		SuperAdminEmails:         h.superAdminEmails,
+		SuperAdminDomains:        h.superAdminDomains,
+		SuperAdminReview:         h.superAdminReview,
+		BindTokenTTL:             h.bindTokenTTL,
+		HeadlessMode:             h.headlessMode,
+		IncludePrivilegedEmails:  api.HasUIConfigPrivilegedAccess(r),
+		IncludeStartupBootStatus: true,
+	}))
 }
 
 func (h *bootstrapHandler) handleStartupMe(w http.ResponseWriter, r *http.Request) {
@@ -368,58 +325,6 @@ func configuredBackendFromEnv(raw, fallback string) string {
 	return value
 }
 
-func hasStartupUIConfigPrivilegedAccess(r *http.Request) bool {
-	expectedKey := strings.TrimSpace(os.Getenv("UI_CONFIG_API_KEY"))
-	if expectedKey == "" {
-		return false
-	}
-	presentedKey := strings.TrimSpace(r.Header.Get("X-UI-Config-Key"))
-	if presentedKey == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(presentedKey), []byte(expectedKey)) == 1
-}
-
-func parseCSVSet(csv string) map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, raw := range strings.Split(csv, ",") {
-		value := strings.ToLower(strings.TrimSpace(raw))
-		if value == "" {
-			continue
-		}
-		if strings.HasPrefix(value, "@") {
-			value = strings.TrimPrefix(value, "@")
-		}
-		out[value] = struct{}{}
-	}
-	return out
-}
-
-func sortedSetValues(values map[string]struct{}) []string {
-	out := make([]string, 0, len(values))
-	for value := range values {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func (h *bootstrapHandler) isSuperAdmin(identity auth.HumanIdentity) bool {
-	if !identity.EmailVerified {
-		return false
-	}
-	email := strings.ToLower(strings.TrimSpace(identity.Email))
-	if email == "" {
-		return false
-	}
-	if _, ok := h.superAdminEmails[email]; ok {
-		return true
-	}
-	at := strings.LastIndex(email, "@")
-	if at <= 0 || at == len(email)-1 {
-		return false
-	}
-	domain := email[at+1:]
-	_, ok := h.superAdminDomains[domain]
-	return ok
+	return auth.IsSuperAdmin(identity, h.superAdminEmails, h.superAdminDomains)
 }

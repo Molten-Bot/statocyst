@@ -162,69 +162,17 @@ func (h *Handler) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authConfig := map[string]any{
-		"human": h.humanAuth.Name(),
-	}
-	if h.humanAuth.Name() == "dev" {
-		devConfig := map[string]any{}
-		if devHumanID := strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_ID")); devHumanID != "" {
-			devConfig["human_id"] = devHumanID
-		}
-		if devHumanEmail := strings.ToLower(strings.TrimSpace(os.Getenv("DEV_LOGIN_HUMAN_EMAIL"))); devHumanEmail != "" {
-			devConfig["human_email"] = devHumanEmail
-		}
-		if len(devConfig) > 0 {
-			authConfig["dev"] = devConfig
-		}
-	}
-	if h.humanAuth.Name() == "supabase" {
-		supabaseConfig := map[string]any{}
-		if strings.TrimSpace(h.supabaseURL) != "" {
-			supabaseConfig["url"] = h.supabaseURL
-		}
-		if auth.IsSafeSupabaseBrowserKey(h.supabaseAnonKey) {
-			supabaseConfig["anon_key"] = h.supabaseAnonKey
-		}
-		if len(supabaseConfig) > 0 {
-			authConfig["supabase"] = supabaseConfig
-		}
-	}
-
-	superAdminEmails := []string{}
-	if hasUIConfigPrivilegedAccess(r) {
-		superAdminEmails = setToSortedSlice(h.superAdminEmails)
-	}
-	adminConfig := map[string]any{
-		"review_mode":  h.superAdminReview,
-		"write_policy": "global_write",
-	}
-	if len(superAdminEmails) > 0 {
-		adminConfig["emails"] = superAdminEmails
-	}
-	superAdminDomains := setToSortedSlice(h.superAdminDomains)
-	if len(superAdminDomains) > 0 {
-		adminConfig["domains"] = superAdminDomains
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"auth":               authConfig,
-		"dev_auto_login":     strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN_AUTO")), "true"),
-		"admin":              adminConfig,
-		"bind_token_ttl_sec": int(h.bindTokenTTL.Seconds()),
-		"headless_mode":      h.headlessMode,
-	})
-}
-
-func hasUIConfigPrivilegedAccess(r *http.Request) bool {
-	expectedKey := strings.TrimSpace(os.Getenv("UI_CONFIG_API_KEY"))
-	if expectedKey == "" {
-		return false
-	}
-	presentedKey := strings.TrimSpace(r.Header.Get("X-UI-Config-Key"))
-	if presentedKey == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(presentedKey), []byte(expectedKey)) == 1
+	writeJSON(w, http.StatusOK, BuildUIConfigPayload(UIConfigPayloadOptions{
+		HumanAuthName:           h.humanAuth.Name(),
+		SupabaseURL:             h.supabaseURL,
+		SupabaseAnonKey:         h.supabaseAnonKey,
+		SuperAdminEmails:        h.superAdminEmails,
+		SuperAdminDomains:       h.superAdminDomains,
+		SuperAdminReview:        h.superAdminReview,
+		BindTokenTTL:            h.bindTokenTTL,
+		HeadlessMode:            h.headlessMode,
+		IncludePrivilegedEmails: HasUIConfigPrivilegedAccess(r),
+	}))
 }
 
 func hasEntitiesMetadataAccess(r *http.Request) bool {

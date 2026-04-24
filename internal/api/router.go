@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,8 +106,8 @@ func NewHandler(
 		supabaseURL:       strings.TrimSpace(supabaseURL),
 		supabaseAnonKey:   strings.TrimSpace(supabaseAnonKey),
 		adminSnapshotKey:  strings.TrimSpace(adminSnapshotKey),
-		superAdminEmails:  parseEmails(superAdminEmailsCSV),
-		superAdminDomains: parseDomains(superAdminDomainsCSV),
+		superAdminEmails:  auth.ParseCSVSet(superAdminEmailsCSV, false),
+		superAdminDomains: auth.ParseCSVSet(superAdminDomainsCSV, true),
 		superAdminReview:  superAdminReview,
 		bindTokenTTL:      bindTokenTTL,
 		headlessMode:      headlessMode,
@@ -1106,60 +1105,8 @@ func splitPath(path string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-func parseDomains(csv string) map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, raw := range strings.Split(csv, ",") {
-		d := strings.ToLower(strings.TrimSpace(raw))
-		if d == "" {
-			continue
-		}
-		if strings.HasPrefix(d, "@") {
-			d = strings.TrimPrefix(d, "@")
-		}
-		out[d] = struct{}{}
-	}
-	return out
-}
-
-func parseEmails(csv string) map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, raw := range strings.Split(csv, ",") {
-		email := strings.ToLower(strings.TrimSpace(raw))
-		if email == "" {
-			continue
-		}
-		out[email] = struct{}{}
-	}
-	return out
-}
-
-func setToSortedSlice(set map[string]struct{}) []string {
-	out := make([]string, 0, len(set))
-	for key := range set {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func (h *Handler) isSuperAdmin(identity auth.HumanIdentity) bool {
-	if !identity.EmailVerified {
-		return false
-	}
-	email := strings.ToLower(strings.TrimSpace(identity.Email))
-	if email == "" {
-		return false
-	}
-	if _, ok := h.superAdminEmails[email]; ok {
-		return true
-	}
-
-	parts := strings.Split(email, "@")
-	if len(parts) != 2 {
-		return false
-	}
-	_, ok := h.superAdminDomains[parts[1]]
-	return ok
+	return auth.IsSuperAdmin(identity, h.superAdminEmails, h.superAdminDomains)
 }
 
 func (h *Handler) requireHandleConfirmedForWrite(w http.ResponseWriter, actor humanActor) bool {
