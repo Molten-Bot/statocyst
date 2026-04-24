@@ -288,6 +288,34 @@ func TestLaunchSmoke(t *testing.T) {
 		requireEntityMetadata(t, decodeJSONMap(t, resp.Body.Bytes()), "agent", map[string]any{})
 	})
 
+	t.Run("Alice creates a bind token and the agent publishes activity", func(t *testing.T) {
+		router := newTestRouter()
+		token := createBoundAgentForSmoke(t, router, "Launch Agents", "launch-agent-a")
+
+		resp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/me/activities", map[string]any{
+			"activity": "Started coding launch smoke coverage",
+			"category": "coding",
+			"status":   "started",
+		}, map[string]string{
+			"Authorization": "Bearer " + token,
+		})
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("expected activity publish 201, got %d %s", resp.Code, resp.Body.String())
+		}
+		payload := decodeJSONMap(t, resp.Body.Bytes())
+		result := requireAgentRuntimeSuccessEnvelope(t, payload)
+		agent, _ := result["agent"].(map[string]any)
+		metadata, _ := agent["metadata"].(map[string]any)
+		activities, _ := metadata["activities"].([]any)
+		if len(activities) == 0 {
+			t.Fatalf("expected metadata.activities to include pushed activity, got metadata=%v", metadata)
+		}
+		log, _ := agent["activity_log"].([]any)
+		if !hasAgentActivity(log, "Started coding launch smoke coverage", "coding", "started") {
+			t.Fatalf("expected activity_log to include pushed agent activity, got %v", log)
+		}
+	})
+
 	t.Run("Alice binds an agent and revokes it", func(t *testing.T) {
 		router := newTestRouter()
 		orgID := createOrg(t, router, "alice", "alice@a.test", "Launch Agents")

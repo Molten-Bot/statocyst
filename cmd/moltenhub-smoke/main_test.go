@@ -87,6 +87,7 @@ func TestRunnerLaunchSmokeFlow(t *testing.T) {
 		{name: "Alice creates a bind token and the agent adds profile metadata", run: (*runner).stepAgentAddsMetadata},
 		{name: "Alice creates a bind token and the agent changes profile metadata", run: (*runner).stepAgentChangesMetadata},
 		{name: "Alice creates a bind token and the agent clears profile metadata", run: (*runner).stepAgentClearsMetadata},
+		{name: "Agent publishes activities over HTTP and OpenClaw websocket", run: (*runner).stepAgentPublishesActivities},
 		{name: "Alice invites two agents by bind token, binds both agents, and sees both in her list", run: (*runner).stepAliceSeesBothAgents},
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
