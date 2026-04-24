@@ -1126,6 +1126,7 @@ func (s *MemoryStore) RegisterAgent(orgID, agentID string, ownerHumanID *string,
 		s.orgOwnedAgentNameIdx[orgOwnedAgentNameKey(orgID, agentHandle)] = agentUUID
 	}
 	s.queues[agentUUID] = s.queues[agentUUID]
+	s.appendAuditLocked(orgID, actorHumanID, "agent", "create", agent.AgentUUID, agentCreationAuditDetails(agent, "register", ""), now)
 	if orgID != "" {
 		s.appendAuditLocked(orgID, actorHumanID, "agent", "register", agent.AgentUUID, map[string]any{
 			"agent_id":       agent.AgentID,
@@ -1287,6 +1288,7 @@ func (s *MemoryStore) RedeemBindToken(bindTokenHash, agentID, agentTokenHash str
 	used := now
 	bind.UsedAt = &used
 	s.binds[bind.BindID] = bind
+	s.appendAuditLocked(bind.OrgID, bind.CreatedBy, "agent", "create", agent.AgentUUID, agentCreationAuditDetails(agent, "bind", bind.BindID), now)
 	if bind.OrgID != "" {
 		s.appendAuditLocked(bind.OrgID, bind.CreatedBy, "agent_bind", "redeem", bind.BindID, map[string]any{
 			"agent_id":   agent.AgentID,
@@ -1655,6 +1657,20 @@ func metadataAuditSummary(metadata map[string]any) map[string]any {
 		summary["metadata_size_bytes"] = len(body)
 	}
 	return summary
+}
+
+func agentCreationAuditDetails(agent model.Agent, creationFlow, bindID string) map[string]any {
+	details := map[string]any{
+		"agent_id":       strings.TrimSpace(agent.AgentID),
+		"agent_uuid":     strings.TrimSpace(agent.AgentUUID),
+		"handle":         strings.TrimSpace(agent.Handle),
+		"owner_human_id": agent.OwnerHumanID,
+		"creation_flow":  strings.TrimSpace(creationFlow),
+	}
+	if bindID = strings.TrimSpace(bindID); bindID != "" {
+		details["bind_id"] = bindID
+	}
+	return details
 }
 
 func agentMetadataChangeAuditSummary(before, after map[string]any) map[string]any {
@@ -4215,6 +4231,8 @@ func (s *MemoryStore) auditActivityLabelLocked(event model.AuditEvent) string {
 	switch event.Category {
 	case "agent":
 		switch event.Action {
+		case "create":
+			return "created agent"
 		case "register":
 			return "bound to hub"
 		case "set_metadata", "set_metadata_self":

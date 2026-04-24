@@ -4601,6 +4601,87 @@ func TestAdminSnapshotIncludesActivityFeedForMessageLifecycle(t *testing.T) {
 	}
 }
 
+func TestAdminSnapshotIncludesAgentCreationActivity(t *testing.T) {
+	router := newTestRouter()
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Org A")
+	_, agentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "agent-a", aliceHumanID)
+
+	snap := doJSONRequest(t, router, http.MethodGet, "/v1/admin/snapshot", nil, humanHeaders("root", "root@example.com"))
+	if snap.Code != http.StatusOK {
+		t.Fatalf("snapshot failed: %d %s", snap.Code, snap.Body.String())
+	}
+	payload := decodeJSONMap(t, snap.Body.Bytes())
+	snapshot, _ := payload["snapshot"].(map[string]any)
+
+	feed, _ := snapshot["activity_feed"].([]any)
+	foundCreate := false
+	foundRedeem := false
+	for _, raw := range feed {
+		row, _ := raw.(map[string]any)
+		if row == nil {
+			continue
+		}
+		category, _ := row["category"].(string)
+		action, _ := row["action"].(string)
+		subjectID, _ := row["subject_id"].(string)
+		details, _ := row["details"].(map[string]any)
+		if category == "agent" && action == "create" && subjectID == agentUUID {
+			foundCreate = true
+			if got, _ := details["creation_flow"].(string); got != "bind" {
+				t.Fatalf("expected agent/create creation_flow=bind, got %q row=%v", got, row)
+			}
+			if got, _ := details["agent_uuid"].(string); got != agentUUID {
+				t.Fatalf("expected agent_uuid detail %q, got %q row=%v", agentUUID, got, row)
+			}
+		}
+		if category == "agent_bind" && action == "redeem" {
+			if got, _ := details["agent_uuid"].(string); got == agentUUID {
+				foundRedeem = true
+			}
+		}
+	}
+	if !foundCreate {
+		t.Fatalf("expected snapshot.activity_feed to include agent/create for %q, got feed=%v", agentUUID, feed)
+	}
+	if !foundRedeem {
+		t.Fatalf("expected existing agent_bind/redeem event for %q to remain, got feed=%v", agentUUID, feed)
+	}
+
+	agents, _ := snapshot["agents"].([]any)
+	var createdAgent map[string]any
+	for _, raw := range agents {
+		agent, _ := raw.(map[string]any)
+		if agent == nil {
+			continue
+		}
+		if got, _ := agent["agent_uuid"].(string); got == agentUUID {
+			createdAgent = agent
+			break
+		}
+	}
+	if createdAgent == nil {
+		t.Fatalf("expected created agent %q in snapshot agents=%v", agentUUID, agents)
+	}
+	log, _ := createdAgent["activity_log"].([]any)
+	for _, raw := range log {
+		row, _ := raw.(map[string]any)
+		if row == nil {
+			continue
+		}
+		activity, _ := row["activity"].(string)
+		source, _ := row["source"].(string)
+		category, _ := row["category"].(string)
+		action, _ := row["action"].(string)
+		eventID, _ := row["event_id"].(string)
+		subjectID, _ := row["subject_id"].(string)
+		if activity == "created agent" && source == "system" && category == "agent" && action == "create" && eventID != "" && subjectID == agentUUID {
+			return
+		}
+	}
+	t.Fatalf("expected full created agent activity_log entry for %q, got log=%v", agentUUID, log)
+}
+
 func TestAdminSnapshotHeaderKeyAccess(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()

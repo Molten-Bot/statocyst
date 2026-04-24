@@ -99,3 +99,144 @@ func TestRecordAgentSystemActivity_UsesServerTimestampAndTruncates(t *testing.T)
 		t.Fatalf("expected activity length %d, got %d entry=%v", maxAgentActivityChars, gotLen, last)
 	}
 }
+
+func TestAgentCreationAudit_RegisterAddsCanonicalCreateEvent(t *testing.T) {
+	mem := NewMemoryStore()
+	ids := &idGen{}
+	now := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	_, _, agent := seedOrgAndAgent(t, mem, ids, now, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
+
+	snapshot := mem.AdminSnapshot()
+	event, ok := findAuditEvent(snapshot.ActivityFeed, "agent", "create", agent.AgentUUID)
+	if !ok {
+		t.Fatalf("expected agent/create event for %q, got=%v", agent.AgentUUID, snapshot.ActivityFeed)
+	}
+	if got := stringValue(event.Details["creation_flow"]); got != "register" {
+		t.Fatalf("expected creation_flow=register, got %q event=%v", got, event)
+	}
+	if got := stringValue(event.Details["agent_uuid"]); got != agent.AgentUUID {
+		t.Fatalf("expected agent_uuid detail %q, got %q event=%v", agent.AgentUUID, got, event)
+	}
+	snapshotAgent, ok := findSnapshotAgent(snapshot, agent.AgentUUID)
+	if !ok {
+		t.Fatalf("expected created agent in snapshot, got=%v", snapshot.Agents)
+	}
+	if !hasStoredSystemActivity(snapshotAgent, "created agent", "agent", "create") {
+		t.Fatalf("expected created agent system activity, got metadata=%v", snapshotAgent.Metadata)
+	}
+}
+
+func TestAgentCreationAudit_BindRedeemAddsCanonicalCreateEventAndKeepsRedeem(t *testing.T) {
+	mem := NewMemoryStore()
+	ids := &idGen{}
+	now := time.Date(2026, 3, 27, 10, 15, 0, 0, time.UTC)
+
+	alice, err := mem.UpsertHuman("dev", "alice", "alice@a.test", true, now, ids.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	org, _, err := mem.CreateOrg("org-a", "Org A", alice.HumanID, ids.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	bind, err := mem.CreateBindToken(org.OrgID, nil, alice.HumanID, ids.MustID(t), "bind-hash", now.Add(time.Hour), now, false)
+	if err != nil {
+		t.Fatalf("CreateBindToken failed: %v", err)
+	}
+	agent, err := mem.RedeemBindToken("bind-hash", "agent-a", "agent-token-hash", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RedeemBindToken failed: %v", err)
+	}
+
+	snapshot := mem.AdminSnapshot()
+	event, ok := findAuditEvent(snapshot.ActivityFeed, "agent", "create", agent.AgentUUID)
+	if !ok {
+		t.Fatalf("expected agent/create event for bind-created agent %q, got=%v", agent.AgentUUID, snapshot.ActivityFeed)
+	}
+	if got := stringValue(event.Details["creation_flow"]); got != "bind" {
+		t.Fatalf("expected creation_flow=bind, got %q event=%v", got, event)
+	}
+	if got := stringValue(event.Details["bind_id"]); got != bind.BindID {
+		t.Fatalf("expected bind_id detail %q, got %q event=%v", bind.BindID, got, event)
+	}
+	if _, ok := findAuditEvent(snapshot.ActivityFeed, "agent_bind", "redeem", bind.BindID); !ok {
+		t.Fatalf("expected existing agent_bind/redeem event to remain, got=%v", snapshot.ActivityFeed)
+	}
+	snapshotAgent, ok := findSnapshotAgent(snapshot, agent.AgentUUID)
+	if !ok {
+		t.Fatalf("expected redeemed agent in snapshot, got=%v", snapshot.Agents)
+	}
+	if !hasStoredSystemActivity(snapshotAgent, "created agent", "agent", "create") {
+		t.Fatalf("expected created agent system activity, got metadata=%v", snapshotAgent.Metadata)
+	}
+}
+
+func TestAgentCreationAudit_PersonalAgentUsesGlobalActivityFeed(t *testing.T) {
+	mem := NewMemoryStore()
+	ids := &idGen{}
+	now := time.Date(2026, 3, 27, 10, 30, 0, 0, time.UTC)
+
+	alice, err := mem.UpsertHuman("dev", "alice", "alice@a.test", true, now, ids.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	alice, err = mem.UpdateHumanProfile(alice.HumanID, "alice", true, now)
+	if err != nil {
+		t.Fatalf("UpdateHumanProfile failed: %v", err)
+	}
+	ownerHumanID := alice.HumanID
+	agent, err := mem.RegisterAgent("", "personal-agent", &ownerHumanID, "personal-token-hash", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent personal failed: %v", err)
+	}
+
+	snapshot := mem.AdminSnapshot()
+	event, ok := findAuditEvent(snapshot.ActivityFeed, "agent", "create", agent.AgentUUID)
+	if !ok {
+		t.Fatalf("expected personal agent/create event for %q, got=%v", agent.AgentUUID, snapshot.ActivityFeed)
+	}
+	if event.OrgID != "" {
+		t.Fatalf("expected personal agent/create event in global org scope, got org_id=%q event=%v", event.OrgID, event)
+	}
+}
+
+func findAuditEvent(events []model.AuditEvent, category, action, subjectID string) (model.AuditEvent, bool) {
+	for _, event := range events {
+		if event.Category == category && event.Action == action && event.SubjectID == subjectID {
+			return event, true
+		}
+	}
+	return model.AuditEvent{}, false
+}
+
+func findSnapshotAgent(snapshot model.AdminSnapshot, agentUUID string) (model.Agent, bool) {
+	for _, agent := range snapshot.Agents {
+		if agent.AgentUUID == agentUUID {
+			return agent, true
+		}
+	}
+	return model.Agent{}, false
+}
+
+func hasStoredSystemActivity(agent model.Agent, activity, category, action string) bool {
+	for _, row := range parseActivityEntries(agent.Metadata[model.AgentMetadataKeySystemActivityLog]) {
+		if stringValue(row["activity"]) != activity {
+			continue
+		}
+		if stringValue(row["source"]) != "system" {
+			continue
+		}
+		if stringValue(row["category"]) != category {
+			continue
+		}
+		if stringValue(row["action"]) != action {
+			continue
+		}
+		if stringValue(row["event_id"]) == "" || stringValue(row["subject_id"]) != agent.AgentUUID {
+			continue
+		}
+		return true
+	}
+	return false
+}

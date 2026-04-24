@@ -278,8 +278,13 @@ func TestS3StateStore_LoadFromS3HydratesAuditFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertHuman failed: %v", err)
 	}
-	if _, _, err := store.CreateOrg("org-a", "Org A", alice.HumanID, id.MustID(t), now); err != nil {
+	org, _, err := store.CreateOrg("org-a", "Org A", alice.HumanID, id.MustID(t), now)
+	if err != nil {
 		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	agent, err := store.RegisterAgent(org.OrgID, "agent-a", nil, "agent-token-hash", alice.HumanID, now.Add(time.Minute), false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
 	}
 
 	if !fake.hasKey("moltenhub-state/state/audit/") {
@@ -296,14 +301,20 @@ func TestS3StateStore_LoadFromS3HydratesAuditFeed(t *testing.T) {
 		t.Fatalf("expected non-empty AdminSnapshot activity_feed after reload")
 	}
 	foundOrgCreate := false
+	foundAgentCreate := false
 	for _, event := range snapshot.ActivityFeed {
 		if event.Category == "org" && event.Action == "create" {
 			foundOrgCreate = true
-			break
+		}
+		if event.Category == "agent" && event.Action == "create" && event.SubjectID == agent.AgentUUID {
+			foundAgentCreate = true
 		}
 	}
 	if !foundOrgCreate {
 		t.Fatalf("expected org/create event in reloaded activity_feed, got=%v", snapshot.ActivityFeed)
+	}
+	if !foundAgentCreate {
+		t.Fatalf("expected agent/create event in reloaded activity_feed, got=%v", snapshot.ActivityFeed)
 	}
 }
 
