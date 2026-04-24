@@ -53,15 +53,20 @@ type openClawOfflineRequest struct {
 }
 
 type openClawWSRequest struct {
-	Type        string         `json:"type"`
-	RequestID   string         `json:"request_id,omitempty"`
-	ToAgentUUID string         `json:"to_agent_uuid,omitempty"`
-	ToAgentURI  string         `json:"to_agent_uri,omitempty"`
-	ClientMsgID *string        `json:"client_msg_id,omitempty"`
-	Message     map[string]any `json:"message,omitempty"`
-	DeliveryID  string         `json:"delivery_id,omitempty"`
-	MessageID   string         `json:"message_id,omitempty"`
-	TimeoutMS   *int           `json:"timeout_ms,omitempty"`
+	Type        string          `json:"type"`
+	RequestID   string          `json:"request_id,omitempty"`
+	ToAgentUUID string          `json:"to_agent_uuid,omitempty"`
+	ToAgentURI  string          `json:"to_agent_uri,omitempty"`
+	ClientMsgID *string         `json:"client_msg_id,omitempty"`
+	Message     map[string]any  `json:"message,omitempty"`
+	Activity    string          `json:"activity,omitempty"`
+	Activities  json.RawMessage `json:"activities,omitempty"`
+	Category    string          `json:"category,omitempty"`
+	Status      string          `json:"status,omitempty"`
+	State       string          `json:"state,omitempty"`
+	DeliveryID  string          `json:"delivery_id,omitempty"`
+	MessageID   string          `json:"message_id,omitempty"`
+	TimeoutMS   *int            `json:"timeout_ms,omitempty"`
 }
 
 // openClawWSResponseWriter bridges websocket upgrades through wrappers that may
@@ -388,6 +393,25 @@ func (h *Handler) handleOpenClawWSCommand(
 			"session_key": sessionKey,
 		})
 		return writeEvent(openClawWSResponse(requestID, http.StatusAccepted, out))
+	case "activity", "publish_activity":
+		agent, err := h.publishAgentActivity(agentUUID, publishAgentActivityRequest{
+			Activity:   req.Activity,
+			Activities: req.Activities,
+			Category:   req.Category,
+			Status:     req.Status,
+			State:      req.State,
+		})
+		if err != nil {
+			return writeEvent(openClawWSErrorFromAgentActivity(requestID, err))
+		}
+		result := map[string]any{
+			"agent":     h.agentResponsePayload(agent),
+			"transport": openClawTransportMetadataForAdapter("websocket"),
+		}
+		h.recordOpenClawAdapterUsage(agentUUID, "ws_activity", map[string]any{
+			"session_key": sessionKey,
+		})
+		return writeEvent(openClawWSResponse(requestID, http.StatusCreated, result))
 	case "ack":
 		deliveryID := strings.TrimSpace(req.DeliveryID)
 		if deliveryID == "" {
@@ -509,6 +533,19 @@ func openClawWSError(requestID string, status int, code, message string) map[str
 		}
 	}
 	return payload
+}
+
+func openClawWSErrorFromAgentActivity(requestID string, err error) map[string]any {
+	switch {
+	case errors.Is(err, store.ErrAgentNotFound):
+		return openClawWSError(requestID, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+	case errors.Is(err, store.ErrInvalidAgentActivity):
+		return openClawWSError(requestID, http.StatusBadRequest, "invalid_agent_activity", "activity text must be non-sensitive and must not include secrets, tokens, passwords, keys, or credentials")
+	case errors.Is(err, errInvalidAgentActivityRequest):
+		return openClawWSError(requestID, http.StatusBadRequest, "invalid_request", strings.TrimPrefix(err.Error(), errInvalidAgentActivityRequest.Error()+": "))
+	default:
+		return openClawWSError(requestID, http.StatusInternalServerError, "store_error", "failed to publish agent activity")
+	}
 }
 
 func openClawWSErrorFromRuntime(requestID string, handlerErr *runtimeHandlerError) map[string]any {

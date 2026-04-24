@@ -159,6 +159,7 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/v1/agents/bind", handler.handleRedeemBindToken)
 	mux.HandleFunc("/v1/agents/me", handler.handleAgentMe)
 	mux.HandleFunc("/v1/agents/me/metadata", handler.handleAgentMeMetadata)
+	mux.HandleFunc("/v1/agents/me/activities", handler.handleAgentMeActivities)
 	mux.HandleFunc("/v1/agents/me/manifest", handler.handleAgentMeManifest)
 	mux.HandleFunc("/v1/agents/me/capabilities", handler.handleAgentMeCapabilities)
 	mux.HandleFunc("/v1/agents/me/skill", handler.handleAgentMeSkill)

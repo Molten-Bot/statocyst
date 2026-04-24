@@ -68,6 +68,16 @@ type updateAgentProfileRequest struct {
 	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
+type publishAgentActivityRequest struct {
+	Activity   string          `json:"activity,omitempty"`
+	Activities json.RawMessage `json:"activities,omitempty"`
+	Category   string          `json:"category,omitempty"`
+	Status     string          `json:"status,omitempty"`
+	State      string          `json:"state,omitempty"`
+}
+
+var errInvalidAgentActivityRequest = errors.New("invalid agent activity request")
+
 type trustOrgRequest struct {
 	OrgID     string `json:"org_id"`
 	PeerOrgID string `json:"peer_org_id"`
@@ -265,6 +275,91 @@ func decodeAgentProfileUpdateRequest(r *http.Request) (*string, map[string]any, 
 		return nil, nil, errors.New("at least one of handle or metadata is required")
 	}
 	return handle, metadata, nil
+}
+
+func agentActivityPatchFromRequest(req publishAgentActivityRequest) (map[string]any, error) {
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		status = strings.TrimSpace(req.State)
+	}
+	category := strings.TrimSpace(req.Category)
+	entries := make([]any, 0)
+	appendEntry := func(raw any) error {
+		entry, err := agentActivityRequestEntry(raw, category, status)
+		if err != nil {
+			return err
+		}
+		if entry != nil {
+			entries = append(entries, entry)
+		}
+		return nil
+	}
+
+	if strings.TrimSpace(req.Activity) != "" {
+		if err := appendEntry(map[string]any{"activity": req.Activity}); err != nil {
+			return nil, err
+		}
+	}
+	if len(req.Activities) > 0 {
+		var raw any
+		if err := json.Unmarshal(req.Activities, &raw); err != nil {
+			return nil, fmt.Errorf("%w: activities must be a string, object, or array", errInvalidAgentActivityRequest)
+		}
+		switch typed := raw.(type) {
+		case []any:
+			for _, item := range typed {
+				if err := appendEntry(item); err != nil {
+					return nil, err
+				}
+			}
+		default:
+			if err := appendEntry(typed); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("%w: activity or activities is required", errInvalidAgentActivityRequest)
+	}
+	return map[string]any{model.AgentMetadataKeyActivities: entries}, nil
+}
+
+func agentActivityRequestEntry(raw any, defaultCategory, defaultStatus string) (any, error) {
+	switch typed := raw.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil, nil
+		}
+		entry := map[string]any{"activity": text}
+		applyAgentActivityDefaults(entry, defaultCategory, defaultStatus)
+		return entry, nil
+	case map[string]any:
+		entry := make(map[string]any, len(typed)+2)
+		for key, value := range typed {
+			entry[key] = value
+		}
+		applyAgentActivityDefaults(entry, defaultCategory, defaultStatus)
+		return entry, nil
+	default:
+		return nil, fmt.Errorf("%w: activities must contain strings or objects", errInvalidAgentActivityRequest)
+	}
+}
+
+func applyAgentActivityDefaults(entry map[string]any, category, status string) {
+	if strings.TrimSpace(category) != "" {
+		if _, ok := entry["category"]; !ok {
+			entry["category"] = category
+		}
+	}
+	if strings.TrimSpace(status) != "" {
+		if _, ok := entry["status"]; !ok {
+			entry["status"] = status
+		}
+		if _, ok := entry["action"]; !ok {
+			entry["action"] = status
+		}
+	}
 }
 
 func meOnboardingPayload(handleConfirmedAt *time.Time) map[string]any {
@@ -627,6 +722,8 @@ func (h *Handler) handleMyAgentProfilePatch(w http.ResponseWriter, r *http.Reque
 				writeError(w, http.StatusBadRequest, "invalid_agent_skills", "metadata.skills must be an array of {name, description, parameters?}; parameters may be markdown or json, must mark required/optional values, and must keep secrets forbidden")
 			case errors.Is(err, store.ErrInvalidSkillDescription):
 				writeError(w, http.StatusBadRequest, "invalid_skill_description", "metadata.skills and metadata.skills[].parameters must not include secret values; parameter docs must clearly forbid passing secrets")
+			case errors.Is(err, store.ErrInvalidAgentActivity):
+				writeError(w, http.StatusBadRequest, "invalid_agent_activity", "activity text must be non-sensitive and must not include secrets, tokens, passwords, keys, or credentials")
 			default:
 				writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
 			}
@@ -1026,6 +1123,8 @@ func (h *Handler) handleAgentMetadataSelfPatch(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusBadRequest, "invalid_agent_skills", "metadata.skills must be an array of {name, description, parameters?}; parameters may be markdown or json, must mark required/optional values, and must keep secrets forbidden")
 			case errors.Is(err, store.ErrInvalidSkillDescription):
 				writeError(w, http.StatusBadRequest, "invalid_skill_description", "metadata.skills and metadata.skills[].parameters must not include secret values; parameter docs must clearly forbid passing secrets")
+			case errors.Is(err, store.ErrInvalidAgentActivity):
+				writeError(w, http.StatusBadRequest, "invalid_agent_activity", "activity text must be non-sensitive and must not include secrets, tokens, passwords, keys, or credentials")
 			default:
 				writeError(w, http.StatusInternalServerError, "store_error", "failed to update agent metadata")
 			}
@@ -1044,6 +1143,56 @@ func (h *Handler) handleAgentMeMetadata(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.handleAgentMetadataSelfPatch(w, r, "")
+}
+
+func (h *Handler) handleAgentMeActivities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	agentUUID, err := h.authenticateAgent(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
+	}
+	if !requireJSONRequestContentType(w, r) {
+		return
+	}
+
+	var req publishAgentActivityRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+		return
+	}
+	agent, err := h.publishAgentActivity(agentUUID, req)
+	if err != nil {
+		h.writeAgentActivityPublishError(w, err)
+		return
+	}
+	writeAgentRuntimeSuccess(w, http.StatusCreated, map[string]any{
+		"agent": h.agentResponsePayload(agent),
+	})
+}
+
+func (h *Handler) publishAgentActivity(agentUUID string, req publishAgentActivityRequest) (model.Agent, error) {
+	patch, err := agentActivityPatchFromRequest(req)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	return h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, patch, h.now().UTC())
+}
+
+func (h *Handler) writeAgentActivityPublishError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrAgentNotFound):
+		writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+	case errors.Is(err, store.ErrInvalidAgentActivity):
+		writeError(w, http.StatusBadRequest, "invalid_agent_activity", "activity text must be non-sensitive and must not include secrets, tokens, passwords, keys, or credentials")
+	case errors.Is(err, errInvalidAgentActivityRequest):
+		writeError(w, http.StatusBadRequest, "invalid_request", strings.TrimPrefix(err.Error(), errInvalidAgentActivityRequest.Error()+": "))
+	default:
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to publish agent activity")
+	}
 }
 
 func (h *Handler) handleAgentMeCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -1589,13 +1738,9 @@ func agentSystemActivityLog(metadata map[string]any) []map[string]any {
 	if len(metadata) == 0 {
 		return nil
 	}
-	raw, ok := metadata[model.AgentMetadataKeySystemActivityLog]
-	if !ok {
-		return nil
-	}
 
 	out := []map[string]any{}
-	appendEntry := func(entry map[string]any) {
+	appendEntry := func(entry map[string]any, defaultSource string) {
 		if entry == nil {
 			return
 		}
@@ -1603,9 +1748,13 @@ func agentSystemActivityLog(metadata map[string]any) []map[string]any {
 		if activity == "" {
 			return
 		}
+		source := metadataStringAliasValue(entry, "source")
+		if source == "" {
+			source = defaultSource
+		}
 		row := map[string]any{
 			"activity": activity,
-			"source":   "system",
+			"source":   source,
 		}
 		if at := metadataStringAliasValue(entry, "at", "timestamp"); at != "" {
 			row["at"] = at
@@ -1616,6 +1765,9 @@ func agentSystemActivityLog(metadata map[string]any) []map[string]any {
 		if action := metadataStringAliasValue(entry, "action"); action != "" {
 			row["action"] = action
 		}
+		if status := metadataStringAliasValue(entry, "status", "state"); status != "" {
+			row["status"] = status
+		}
 		if eventID := metadataStringAliasValue(entry, "event_id"); eventID != "" {
 			row["event_id"] = eventID
 		}
@@ -1625,33 +1777,71 @@ func agentSystemActivityLog(metadata map[string]any) []map[string]any {
 		out = append(out, row)
 	}
 
-	switch typed := raw.(type) {
-	case []map[string]any:
-		for _, entry := range typed {
-			appendEntry(entry)
-		}
-	case []any:
-		for _, value := range typed {
-			switch entry := value.(type) {
-			case map[string]any:
-				appendEntry(entry)
-			case string:
-				text := strings.TrimSpace(entry)
-				if text == "" {
-					continue
+	appendRaw := func(raw any, defaultSource string) {
+		switch typed := raw.(type) {
+		case []map[string]any:
+			for _, entry := range typed {
+				appendEntry(entry, defaultSource)
+			}
+		case []any:
+			for _, value := range typed {
+				switch entry := value.(type) {
+				case map[string]any:
+					appendEntry(entry, defaultSource)
+				case string:
+					text := strings.TrimSpace(entry)
+					if text == "" {
+						continue
+					}
+					appendEntry(map[string]any{"activity": text}, defaultSource)
 				}
-				out = append(out, map[string]any{
-					"activity": text,
-					"source":   "system",
-				})
+			}
+		case map[string]any:
+			appendEntry(typed, defaultSource)
+		case string:
+			text := strings.TrimSpace(typed)
+			if text != "" {
+				appendEntry(map[string]any{"activity": text}, defaultSource)
 			}
 		}
 	}
 
+	appendRaw(metadata[model.AgentMetadataKeySystemActivityLog], "system")
+	appendRaw(metadata[model.AgentMetadataKeyActivities], "agent")
+
 	if len(out) == 0 {
 		return nil
 	}
+	sortActivityLogRows(out)
 	return out
+}
+
+func sortActivityLogRows(rows []map[string]any) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		leftAt, leftOK := parseActivityLogTime(rows[i])
+		rightAt, rightOK := parseActivityLogTime(rows[j])
+		if leftOK && rightOK && !leftAt.Equal(rightAt) {
+			return leftAt.Before(rightAt)
+		}
+		if leftOK != rightOK {
+			return leftOK
+		}
+		return false
+	})
+}
+
+func parseActivityLogTime(row map[string]any) (time.Time, bool) {
+	at := metadataStringAliasValue(row, "at")
+	if at == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse(time.RFC3339, at); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, at); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
 }
 
 func publicAgentSystemActivityLog(metadata map[string]any) []map[string]any {
@@ -1667,7 +1857,10 @@ func publicAgentSystemActivityLog(metadata map[string]any) []map[string]any {
 		}
 		row := map[string]any{
 			"activity": activity,
-			"source":   "system",
+			"source":   metadataStringAliasValue(entry, "source"),
+		}
+		if row["source"] == "" {
+			row["source"] = "system"
 		}
 		if at := metadataStringAliasValue(entry, "at"); at != "" {
 			row["at"] = at

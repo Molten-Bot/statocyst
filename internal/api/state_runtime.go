@@ -76,7 +76,8 @@ func isAgentMetadataClientError(err error) bool {
 	return errors.Is(err, store.ErrAgentNotFound) ||
 		errors.Is(err, store.ErrInvalidAgentType) ||
 		errors.Is(err, store.ErrInvalidAgentSkills) ||
-		errors.Is(err, store.ErrInvalidSkillDescription)
+		errors.Is(err, store.ErrInvalidSkillDescription) ||
+		errors.Is(err, store.ErrInvalidAgentActivity)
 }
 
 func isAgentHandleClientError(err error) bool {

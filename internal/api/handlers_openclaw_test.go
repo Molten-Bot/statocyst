@@ -343,6 +343,53 @@ func TestOpenClawWebSocketUpgradeWithGzipAcceptEncoding(t *testing.T) {
 	}
 }
 
+func TestOpenClawWebSocketActivityCommand(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=activity-main"
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+tokenA)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected websocket dial to succeed, got err=%v", err)
+	}
+	defer conn.Close()
+
+	ready := readWSMessage(t, conn, 5*time.Second)
+	if got := readStringPath(ready, "type"); got != "session_ready" {
+		t.Fatalf("expected initial ws message type=session_ready, got %q payload=%v", got, ready)
+	}
+
+	if err := conn.WriteJSON(map[string]any{
+		"type":       "activity",
+		"request_id": "activity-1",
+		"activity":   "Completed marketing brief",
+		"category":   "marketing",
+		"status":     "completed",
+	}); err != nil {
+		t.Fatalf("expected websocket activity write to succeed, got err=%v", err)
+	}
+
+	resp := waitForWSResponseRequestID(t, conn, "activity-1", 5*time.Second)
+	if ok, _ := resp["ok"].(bool); !ok {
+		t.Fatalf("expected activity response ok=true, got payload=%v", resp)
+	}
+	if gotStatus, _ := resp["status"].(float64); int(gotStatus) != http.StatusCreated {
+		t.Fatalf("expected activity response 201, got payload=%v", resp)
+	}
+	result, _ := resp["result"].(map[string]any)
+	agent, _ := result["agent"].(map[string]any)
+	log, _ := agent["activity_log"].([]any)
+	if !hasAgentActivity(log, "Completed marketing brief", "marketing", "completed") {
+		t.Fatalf("expected activity_log to include websocket agent activity, got %v", log)
+	}
+}
+
 func TestOpenClawOfflineEndpointUpdatesPresenceAndActivityLog(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)

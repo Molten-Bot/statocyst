@@ -3,6 +3,7 @@ package api
 func agentRuntimeEndpoints(apiBase string) map[string]string {
 	return map[string]string{
 		"profile":      apiBase + "/agents/me",
+		"activity":     apiBase + "/agents/me/activities",
 		"manifest":     apiBase + "/agents/me/manifest",
 		"capabilities": apiBase + "/agents/me/capabilities",
 		"skill":        apiBase + "/agents/me/skill",

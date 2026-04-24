@@ -3924,6 +3924,64 @@ func TestAgentSystemActivityLogIncludesPublicReceiverHandle(t *testing.T) {
 	}
 }
 
+func TestAgentActivityPublishEndpointInjectsAgentActivityLog(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+	headers := map[string]string{"Authorization": "Bearer " + tokenA}
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/me/activities", map[string]any{
+		"activity": "Started coding the billing adapter",
+		"category": "coding",
+		"status":   "started",
+	}, headers)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected activity publish 201, got %d %s", resp.Code, resp.Body.String())
+	}
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	result := requireAgentRuntimeSuccessEnvelope(t, payload)
+	agent, _ := result["agent"].(map[string]any)
+	metadata, _ := agent["metadata"].(map[string]any)
+	activities, _ := metadata["activities"].([]any)
+	if len(activities) == 0 {
+		t.Fatalf("expected metadata.activities to include pushed activity, got metadata=%v", metadata)
+	}
+	log, _ := agent["activity_log"].([]any)
+	if !hasAgentActivity(log, "Started coding the billing adapter", "coding", "started") {
+		t.Fatalf("expected activity_log to include pushed agent activity, got %v", log)
+	}
+
+	secretResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/me/activities", map[string]any{
+		"activity": "api key: abc123",
+	}, headers)
+	if secretResp.Code != http.StatusBadRequest {
+		t.Fatalf("expected secret-like activity to be rejected, got %d %s", secretResp.Code, secretResp.Body.String())
+	}
+	secretPayload := decodeJSONMap(t, secretResp.Body.Bytes())
+	if got, _ := secretPayload["error"].(string); got != "invalid_agent_activity" {
+		t.Fatalf("expected invalid_agent_activity, got %q payload=%v", got, secretPayload)
+	}
+}
+
+func hasAgentActivity(log []any, activity, category, action string) bool {
+	for _, raw := range log {
+		row, _ := raw.(map[string]any)
+		if row == nil {
+			continue
+		}
+		source, _ := row["source"].(string)
+		if strings.TrimSpace(source) != "agent" {
+			continue
+		}
+		gotActivity, _ := row["activity"].(string)
+		gotCategory, _ := row["category"].(string)
+		gotAction, _ := row["action"].(string)
+		if strings.TrimSpace(gotActivity) == activity && strings.TrimSpace(gotCategory) == category && strings.TrimSpace(gotAction) == action {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAgentMeMetadataRejectsInvalidAgentType(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)

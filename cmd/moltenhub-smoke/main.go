@@ -64,6 +64,7 @@ func main() {
 		{name: "Alice creates a bind token and the agent adds profile metadata", run: (*runner).stepAgentAddsMetadata},
 		{name: "Alice creates a bind token and the agent changes profile metadata", run: (*runner).stepAgentChangesMetadata},
 		{name: "Alice creates a bind token and the agent clears profile metadata", run: (*runner).stepAgentClearsMetadata},
+		{name: "Agent publishes activities over HTTP and OpenClaw websocket", run: (*runner).stepAgentPublishesActivities},
 		{name: "Alice invites two agents by bind token, binds both agents, and sees both in her list", run: (*runner).stepAliceSeesBothAgents},
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
@@ -378,6 +379,33 @@ func (r *runner) stepAgentClearsMetadata() error {
 	return requireEntityMetadata(payload, "agent", map[string]any{})
 }
 
+func (r *runner) stepAgentPublishesActivities() error {
+	httpActivity := fmt.Sprintf("Started coding smoke activity %d", time.Now().UnixNano())
+	httpAgent, err := r.publishAgentActivityHTTP(r.tokenA, httpActivity, "coding", "started")
+	if err != nil {
+		return err
+	}
+	if !agentActivityLogHas(httpAgent, httpActivity, "coding", "started") {
+		return fmt.Errorf("expected HTTP activity_log to include %q payload=%v", httpActivity, httpAgent)
+	}
+
+	conn, err := r.openOpenClawWebSocket(r.tokenA, fmt.Sprintf("smoke-activity-%d", time.Now().UnixNano()))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	wsActivity := fmt.Sprintf("Completed marketing smoke activity %d", time.Now().UnixNano())
+	wsAgent, err := r.publishAgentActivityWS(conn, wsActivity, "marketing", "completed")
+	if err != nil {
+		return err
+	}
+	if !agentActivityLogHas(wsAgent, wsActivity, "marketing", "completed") {
+		return fmt.Errorf("expected websocket activity_log to include %q payload=%v", wsActivity, wsAgent)
+	}
+	return nil
+}
+
 func (r *runner) stepAliceRevokesFirstAgent() error {
 	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/agents/"+r.agentUUIDA, cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
@@ -658,6 +686,61 @@ func (r *runner) publishOpenClawMessage(token, toAgentUUID, text string) (string
 		return "", fmt.Errorf("expected openclaw publish response to include message_id payload=%v", payload)
 	}
 	return messageID, nil
+}
+
+func (r *runner) publishAgentActivityHTTP(token, activity, category, statusText string) (map[string]any, error) {
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/agents/me/activities", cmdutil.AgentHeaders(token), map[string]any{
+		"activity": activity,
+		"category": category,
+		"status":   statusText,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusCreated {
+		return nil, fmt.Errorf("expected agent activity publish 201, got %d payload=%v", status, payload)
+	}
+	result := runtimeResult(payload)
+	return cmdutil.RequireObject(result, "agent")
+}
+
+func (r *runner) publishAgentActivityWS(conn *websocket.Conn, activity, category, statusText string) (map[string]any, error) {
+	requestID := fmt.Sprintf("smoke-ws-activity-%d", time.Now().UnixNano())
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, fmt.Errorf("set websocket write deadline: %w", err)
+	}
+	if err := conn.WriteJSON(map[string]any{
+		"type":       "activity",
+		"request_id": requestID,
+		"activity":   activity,
+		"category":   category,
+		"status":     statusText,
+	}); err != nil {
+		return nil, fmt.Errorf("write websocket activity frame: %w", err)
+	}
+
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		evt, err := readWSJSON(conn, time.Until(deadline))
+		if err != nil {
+			return nil, err
+		}
+		if readStringPath(evt, "type") == "delivery" {
+			continue
+		}
+		if readStringPath(evt, "type") != "response" || readStringPath(evt, "request_id") != requestID {
+			continue
+		}
+		if readStringPath(evt, "ok") != "true" {
+			return nil, fmt.Errorf("expected websocket activity response ok=true payload=%v", evt)
+		}
+		if got := readStringPath(evt, "status"); got != "201" {
+			return nil, fmt.Errorf("expected websocket activity response status=201, got %q payload=%v", got, evt)
+		}
+		result := runtimeResult(evt)
+		return cmdutil.RequireObject(result, "agent")
+	}
+	return nil, fmt.Errorf("timed out waiting for websocket activity response request_id=%q", requestID)
 }
 
 func (r *runner) pullOpenClawMessage(token, expectedMessageID string, timeout time.Duration) (string, string, error) {
@@ -1086,6 +1169,25 @@ func requireAgentStatus(agents []map[string]any, agentUUID, wantStatus string) e
 		return nil
 	}
 	return fmt.Errorf("agent %q not found in list %v", agentUUID, agents)
+}
+
+func agentActivityLogHas(agent map[string]any, activity, category, action string) bool {
+	log, _ := agent["activity_log"].([]any)
+	for _, raw := range log {
+		row, _ := raw.(map[string]any)
+		if row == nil {
+			continue
+		}
+		if readStringPath(row, "source") != "agent" {
+			continue
+		}
+		if readStringPath(row, "activity") == activity &&
+			readStringPath(row, "category") == category &&
+			readStringPath(row, "action") == action {
+			return true
+		}
+	}
+	return false
 }
 
 func runtimeResult(payload map[string]any) map[string]any {

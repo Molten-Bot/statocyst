@@ -41,6 +41,7 @@ var (
 	ErrInvalidAgentType         = errors.New("invalid agent type")
 	ErrInvalidAgentSkills       = errors.New("invalid agent skills metadata")
 	ErrInvalidSkillDescription  = errors.New("invalid agent skill description")
+	ErrInvalidAgentActivity     = errors.New("invalid agent activity")
 	ErrTrustNotFound            = errors.New("trust edge not found")
 	ErrUnauthorizedRole         = errors.New("unauthorized role")
 	ErrInvalidRole              = errors.New("invalid role")
@@ -1860,7 +1861,10 @@ func normalizeAgentPresence(presence map[string]any) map[string]any {
 func mergeAndNormalizeAgentMetadata(current, patch map[string]any, now time.Time) (map[string]any, error) {
 	merged := mergeMetadataMaps(current, patch)
 	if rawActivities, hasActivitiesUpdate := patch[model.AgentMetadataKeyActivities]; hasActivitiesUpdate {
-		activities := mergeAgentCustomActivities(current[model.AgentMetadataKeyActivities], rawActivities, now)
+		activities, err := mergeAgentCustomActivities(current[model.AgentMetadataKeyActivities], rawActivities, now)
+		if err != nil {
+			return nil, err
+		}
 		if len(activities) == 0 {
 			delete(merged, model.AgentMetadataKeyActivities)
 		} else {
@@ -1898,16 +1902,19 @@ func mergeMetadataMaps(current, patch map[string]any) map[string]any {
 	return merged
 }
 
-func mergeAgentCustomActivities(existingRaw, incomingRaw any, now time.Time) []map[string]any {
+func mergeAgentCustomActivities(existingRaw, incomingRaw any, now time.Time) ([]map[string]any, error) {
 	existing := parseActivityEntries(existingRaw)
-	incoming := normalizeIncomingAgentActivities(incomingRaw, now)
+	incoming, err := normalizeIncomingAgentActivities(incomingRaw, now)
+	if err != nil {
+		return nil, err
+	}
 	if len(existing) == 0 && len(incoming) == 0 {
-		return nil
+		return nil, nil
 	}
 	merged := make([]map[string]any, 0, len(existing)+len(incoming))
 	merged = append(merged, existing...)
 	merged = append(merged, incoming...)
-	return dedupeAndTrimActivityEntries(merged, maxAgentActivityEntries)
+	return dedupeAndTrimActivityEntries(merged, maxAgentActivityEntries), nil
 }
 
 func parseActivityEntries(raw any) []map[string]any {
@@ -1990,10 +1997,10 @@ func parseActivityEntryObject(raw map[string]any) (map[string]any, bool) {
 	return entry, true
 }
 
-func normalizeIncomingAgentActivities(raw any, now time.Time) []map[string]any {
+func normalizeIncomingAgentActivities(raw any, now time.Time) ([]map[string]any, error) {
 	parsed := parseActivityEntries(raw)
 	if len(parsed) == 0 {
-		return nil
+		return nil, nil
 	}
 	defaultAt := now.UTC().Format(time.RFC3339)
 	out := make([]map[string]any, 0, len(parsed))
@@ -2002,13 +2009,34 @@ func normalizeIncomingAgentActivities(raw any, now time.Time) []map[string]any {
 		if activity == "" {
 			continue
 		}
-		out = append(out, map[string]any{
+		if containsStrongSecretMarker(activity) {
+			return nil, ErrInvalidAgentActivity
+		}
+		entry := map[string]any{
 			"activity": activity,
 			"at":       defaultAt,
 			"source":   "agent",
-		})
+		}
+		if category := normalizeActivityQualifier(stringValue(item["category"])); category != "" {
+			entry["category"] = category
+		}
+		status := normalizeActivityQualifier(stringValue(item["status"]))
+		if status == "" {
+			status = normalizeActivityQualifier(stringValue(item["state"]))
+		}
+		if status != "" {
+			entry["status"] = status
+		}
+		action := normalizeActivityQualifier(stringValue(item["action"]))
+		if action == "" {
+			action = status
+		}
+		if action != "" {
+			entry["action"] = action
+		}
+		out = append(out, entry)
 	}
-	return dedupeAndTrimActivityEntries(out, maxAgentActivityEntries)
+	return dedupeAndTrimActivityEntries(out, maxAgentActivityEntries), nil
 }
 
 func normalizeSystemAgentActivityEntry(entry map[string]any, now time.Time) map[string]any {
@@ -2089,7 +2117,12 @@ func activityEntryDedupeKey(entry map[string]any) string {
 	if eventID := stringValue(entry["event_id"]); eventID != "" {
 		return "event:" + eventID
 	}
-	return strings.ToLower(stringValue(entry["source"])) + "|" + stringValue(entry["activity"]) + "|" + stringValue(entry["at"])
+	return strings.ToLower(stringValue(entry["source"])) + "|" +
+		stringValue(entry["activity"]) + "|" +
+		stringValue(entry["at"]) + "|" +
+		stringValue(entry["category"]) + "|" +
+		stringValue(entry["action"]) + "|" +
+		stringValue(entry["status"])
 }
 
 func stringValue(value any) string {
@@ -2110,6 +2143,19 @@ func normalizeActivityText(value string) string {
 		return trimmed
 	}
 	return string(runes[:maxAgentActivityChars])
+}
+
+func normalizeActivityQualifier(value string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "" || containsStrongSecretMarker(trimmed) {
+		return ""
+	}
+	trimmed = strings.Join(strings.Fields(trimmed), "_")
+	runes := []rune(trimmed)
+	if len(runes) <= 64 {
+		return trimmed
+	}
+	return string(runes[:64])
 }
 
 func defaultAgentMetadata() map[string]any {
