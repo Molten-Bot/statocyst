@@ -66,6 +66,7 @@ func main() {
 		{name: "Alice creates a bind token and the agent clears profile metadata", run: (*runner).stepAgentClearsMetadata},
 		{name: "Agent publishes activities over HTTP and OpenClaw websocket", run: (*runner).stepAgentPublishesActivities},
 		{name: "Alice invites two agents by bind token, binds both agents, and sees both in her list", run: (*runner).stepAliceSeesBothAgents},
+		{name: "Agent invites a hosted agent and receives explicit failure details when child invites again", run: (*runner).stepAgentInvitesHostedAgent},
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "A2A send/get/list and legacy pull/ack succeeds between bound agents", run: (*runner).stepA2AStorageDelivery},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
@@ -484,6 +485,76 @@ func (r *runner) stepAliceCreatesAgentTrust() error {
 	}
 	if state := cmdutil.AsString(trust, "state"); state != "active" {
 		return fmt.Errorf("expected trust state active after approve, got %q payload=%v", state, payload)
+	}
+	return nil
+}
+
+func (r *runner) stepAgentInvitesHostedAgent() error {
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/agents/me/bind-tokens", cmdutil.AgentHeaders(r.tokenA), map[string]any{})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated {
+		return fmt.Errorf("expected hosted bind token create 201, got %d payload=%v", status, payload)
+	}
+	result := runtimeResult(payload)
+	bindToken := cmdutil.AsString(result, "bind_token")
+	if bindToken == "" {
+		return fmt.Errorf("expected hosted bind_token payload=%v", payload)
+	}
+	if got := cmdutil.AsString(result, "host_agent_uuid"); got != r.agentUUIDA {
+		return fmt.Errorf("expected host_agent_uuid %q, got %q payload=%v", r.agentUUIDA, got, payload)
+	}
+
+	childHandle := fmt.Sprintf("hosted-smoke-child-%d", time.Now().UnixNano())
+	childToken, err := r.redeemBindToken(bindToken, childHandle)
+	if err != nil {
+		return err
+	}
+	childAgent, err := r.currentAgent(childToken)
+	if err != nil {
+		return err
+	}
+	childUUID := cmdutil.AsString(childAgent, "agent_uuid")
+	if childUUID == "" {
+		return fmt.Errorf("expected child agent_uuid payload=%v", childAgent)
+	}
+	if got := cmdutil.AsString(childAgent, "host_agent_uuid"); got != r.agentUUIDA {
+		return fmt.Errorf("expected child host_agent_uuid %q, got %q payload=%v", r.agentUUIDA, got, childAgent)
+	}
+
+	status, payload, err = r.requestJSON(http.MethodPost, "/v1/messages/publish", cmdutil.AgentHeaders(r.tokenA), map[string]any{
+		"to_agent_uuid": childUUID,
+		"content_type":  "text/plain",
+		"payload":       "hello hosted child",
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusAccepted {
+		return fmt.Errorf("expected host publish to child 202, got %d payload=%v", status, payload)
+	}
+	result = runtimeResult(payload)
+	if got := cmdutil.AsString(result, "status"); got != "queued" {
+		return fmt.Errorf("expected host publish queued, got %q payload=%v", got, payload)
+	}
+
+	status, payload, err = r.requestJSON(http.MethodPost, "/v1/agents/me/bind-tokens", cmdutil.AgentHeaders(childToken), map[string]any{})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusForbidden {
+		return fmt.Errorf("expected child hosted bind token create 403, got %d payload=%v", status, payload)
+	}
+	if err := requireErrorCode(payload, "hosted_agent_restricted"); err != nil {
+		return err
+	}
+	if payload["Failure:"] != true {
+		return fmt.Errorf("expected child invite failure to include Failure: field payload=%v", payload)
+	}
+	errorDetails, ok := payload["Error details:"].(map[string]any)
+	if !ok || errorDetails["code"] != "hosted_agent_restricted" {
+		return fmt.Errorf("expected Error details:.code hosted_agent_restricted payload=%v", payload)
 	}
 	return nil
 }

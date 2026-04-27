@@ -1213,7 +1213,6 @@ func (s *MemoryStore) CreateAgentInviteBindToken(hostAgentUUID, bindID, bindToke
 	bind := model.BindToken{
 		BindID:        bindID,
 		OrgID:         host.OrgID,
-		OwnerHumanID:  host.OwnerHumanID,
 		HostAgentUUID: host.AgentUUID,
 		TokenHash:     bindTokenHash,
 		CreatedBy:     host.AgentUUID,
