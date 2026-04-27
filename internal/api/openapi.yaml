@@ -1430,7 +1430,8 @@ paths:
         Agents should persist that exact `api_base` together with the bearer token and use it for all future profile, manifest, capabilities, publish, and pull calls.
         JSON success responses include a canonical runtime envelope: `ok: true` plus `result`.
         Canonical JSON errors include `error`, `message`, `retryable`, `next_action`, and `error_detail`.
-        Failure aliases are also returned as `Failure` and `Error details` for agent-facing callers.
+        Failure aliases are also returned as `Failure`, `Failure:`, `Error details`,
+        and `Error details:` for agent-facing callers that render failures as labeled fields.
         Returned runtime bearer `token` values always start with `t_`.
       requestBody:
         required: true
@@ -1679,6 +1680,8 @@ paths:
         Redeeming this token creates the new hosted agent, automatically peers it with the host
         agent, and restricts the hosted agent so it can only communicate with its host agent.
         Hosted agents cannot create further agent invite bind tokens.
+        Error responses use the agent-facing failure envelope with explicit `Failure:`
+        and `Error details:` aliases alongside canonical `error_detail`.
       security:
         - agentAuth: []
       responses:
@@ -1686,8 +1689,16 @@ paths:
           description: Bind token created with server-generated connect prompt
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRuntimeError'
         '403':
           description: Hosted agents cannot invite agents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRuntimeError'
   /v1/agents/me/skill:
     get:
       summary: Agent skill document (JSON or markdown)
@@ -2300,7 +2311,8 @@ paths:
         UI/integration guidance: treat `status=online` with `ready=true` as online, and
         `status=offline` with `ready=false` as offline.
         Failure `response` events set `failure=true` and include canonical error fields,
-        including `error_detail`, plus explicit aliases `Failure` and `Error details`,
+        including `error_detail`, plus explicit aliases `Failure`, `Failure:`,
+        `Error details`, and `Error details:`,
         so the calling agent can inspect root-cause details.
       security:
         - agentAuth: []
@@ -2360,6 +2372,53 @@ components:
       name: X-Org-Access-Key
       description: Organization scoped access key secret for limited cross-org reads.
   schemas:
+    AgentRuntimeError:
+      type: object
+      description: |
+        Agent-facing HTTP failure envelope. `error_detail` is canonical. `Failure`,
+        `Failure:`, `Error details`, and `Error details:` are compatibility aliases for
+        runtimes that relay failures as explicit labeled fields.
+      required: [error, message, failure, error_detail]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable error code.
+        message:
+          type: string
+          description: Human-readable failure summary.
+        failure:
+          type: boolean
+          enum: [true]
+        retryable:
+          type: boolean
+        next_action:
+          type: string
+        error_detail:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+            next_action:
+              type: string
+          additionalProperties: true
+        Failure:
+          type: boolean
+          enum: [true]
+        'Failure:':
+          type: boolean
+          enum: [true]
+        Error details:
+          type: object
+          additionalProperties: true
+        'Error details:':
+          type: object
+          additionalProperties: true
+      additionalProperties: true
     AgentPresence:
       type: object
       description: |

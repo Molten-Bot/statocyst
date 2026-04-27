@@ -1245,9 +1245,11 @@ func (e *a2aProtocolError) failureDetails() map[string]any {
 		detail[key] = value
 	}
 	return map[string]any{
-		"failure":       true,
-		"Failure":       true,
-		"Error details": detail,
+		"failure":        true,
+		"Failure":        true,
+		"Failure:":       true,
+		"Error details":  detail,
+		"Error details:": detail,
 	}
 }
 

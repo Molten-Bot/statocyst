@@ -838,7 +838,9 @@ func writeErrorWithHintAndExtras(w http.ResponseWriter, status int, code string,
 	}
 	payload["error_detail"] = detail
 	payload["Failure"] = true
+	payload["Failure:"] = true
 	payload["Error details"] = detail
+	payload["Error details:"] = detail
 	writeJSON(w, status, payload)
 }
 

@@ -140,9 +140,16 @@ func TestOpenClawPublishRequiresMessageObject(t *testing.T) {
 	if failureAlias, _ := payload["Failure"].(bool); !failureAlias {
 		t.Fatalf("expected Failure=true alias, got payload=%v", payload)
 	}
+	if failureAlias, _ := payload["Failure:"].(bool); !failureAlias {
+		t.Fatalf("expected Failure:=true alias, got payload=%v", payload)
+	}
 	errorDetailsAlias, _ := payload["Error details"].(map[string]any)
 	if got, _ := errorDetailsAlias["code"].(string); got != "invalid_request" {
 		t.Fatalf("expected Error details.code=invalid_request, got %q payload=%v", got, payload)
+	}
+	errorDetailsColonAlias, _ := payload["Error details:"].(map[string]any)
+	if got, _ := errorDetailsColonAlias["code"].(string); got != "invalid_request" {
+		t.Fatalf("expected Error details:.code=invalid_request, got %q payload=%v", got, payload)
 	}
 }
 

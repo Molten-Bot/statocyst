@@ -2067,6 +2067,9 @@ func TestAgentInviteBindTokenCreatesHostedPeerAndRestrictsChild(t *testing.T) {
 	if got, _ := childAgent["host_agent_uuid"].(string); got != hostUUID {
 		t.Fatalf("expected child host_agent_uuid %q, got %q agent=%v", hostUUID, got, childAgent)
 	}
+	if got, exists := childAgent["owner_human_id"]; exists && got != nil && got != "" {
+		t.Fatalf("expected hosted child to omit owner_human_id so human agent quota is not consumed, got %v agent=%v", got, childAgent)
+	}
 
 	hostPublish := publish(t, router, hostToken, childUUID, "hello child")
 	if hostPublish.Code != http.StatusAccepted {
@@ -2104,6 +2107,14 @@ func TestAgentInviteBindTokenCreatesHostedPeerAndRestrictsChild(t *testing.T) {
 	})
 	if childInvite.Code != http.StatusForbidden {
 		t.Fatalf("expected child invite forbidden, got %d %s", childInvite.Code, childInvite.Body.String())
+	}
+	childInvitePayload := decodeJSONMap(t, childInvite.Body.Bytes())
+	if childInvitePayload["Failure:"] != true {
+		t.Fatalf("expected child invite failure to include Failure: field, got %v", childInvitePayload)
+	}
+	errorDetails, _ := childInvitePayload["Error details:"].(map[string]any)
+	if errorDetails["code"] != "hosted_agent_restricted" {
+		t.Fatalf("expected Error details:.code hosted_agent_restricted, got %v payload=%v", errorDetails, childInvitePayload)
 	}
 }
 

@@ -327,9 +327,16 @@ func TestA2AJSONRPCNoTrustReturnsFailureDetails(t *testing.T) {
 	if data["Failure"] != true {
 		t.Fatalf("expected Failure=true in A2A error data, got %v", errObj)
 	}
+	if data["Failure:"] != true {
+		t.Fatalf("expected Failure:=true in A2A error data, got %v", errObj)
+	}
 	details, _ := data["Error details"].(map[string]any)
 	if details["code"] != "no_trust_path" {
 		t.Fatalf("expected no_trust_path details, got %v", errObj)
+	}
+	colonDetails, _ := data["Error details:"].(map[string]any)
+	if colonDetails["code"] != "no_trust_path" {
+		t.Fatalf("expected no_trust_path colon details, got %v", errObj)
 	}
 }
 
