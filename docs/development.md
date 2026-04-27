@@ -82,6 +82,13 @@ docker build -t moltenhub:local .
 bash scripts/release/run_container_smoke.sh moltenhub:local
 ```
 
+Run S3-backed container smoke tests with MinIO:
+
+```bash
+docker build -t moltenhub:local .
+bash scripts/release/run_s3_container_smoke.sh moltenhub:local
+```
+
 Run federation smoke tests (two local containers, trust setup, bridged messaging):
 
 ```bash

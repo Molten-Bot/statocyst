@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,10 +39,14 @@ func newSmokeTestRunner(t *testing.T, handler http.HandlerFunc) (*runner, func()
 
 func newSmokeTestServer() *httptest.Server {
 	mem := store.NewMemoryStore()
+	return newSmokeTestServerWithStores(mem, mem, store.DefaultStorageHealthStatus())
+}
+
+func newSmokeTestServerWithStores(control store.ControlPlaneStore, queue store.MessageQueueStore, health store.StorageHealthStatus) *httptest.Server {
 	waiters := longpoll.NewWaiters()
 	handler := api.NewHandler(
-		mem,
-		mem,
+		control,
+		queue,
 		waiters,
 		auth.NewDevHumanAuthProvider(),
 		"https://hub.example.com",
@@ -52,7 +59,108 @@ func newSmokeTestServer() *httptest.Server {
 		15*time.Minute,
 		false,
 	)
+	handler.SetStorageHealth(health)
 	return httptest.NewServer(api.NewRouter(handler))
+}
+
+func newS3SmokeTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	s3Server := newSmokeFakeS3Server(t)
+	t.Setenv("MOLTENHUB_STATE_BACKEND", "s3")
+	t.Setenv("MOLTENHUB_QUEUE_BACKEND", "s3")
+	t.Setenv("MOLTENHUB_STATE_S3_ENDPOINT", s3Server.URL)
+	t.Setenv("MOLTENHUB_STATE_S3_BUCKET", "state-bucket")
+	t.Setenv("MOLTENHUB_STATE_S3_PREFIX", "moltenhub-state")
+	t.Setenv("MOLTENHUB_STATE_S3_PATH_STYLE", "true")
+	t.Setenv("MOLTENHUB_QUEUE_S3_ENDPOINT", s3Server.URL)
+	t.Setenv("MOLTENHUB_QUEUE_S3_BUCKET", "queue-bucket")
+	t.Setenv("MOLTENHUB_QUEUE_S3_PREFIX", "moltenhub-queue")
+	t.Setenv("MOLTENHUB_QUEUE_S3_PATH_STYLE", "true")
+
+	control, queue, health, err := store.NewStoresFromEnvWithMode(store.StorageStartupModeStrict)
+	if err != nil {
+		t.Fatalf("NewStoresFromEnvWithMode(s3) failed: %v", err)
+	}
+	return newSmokeTestServerWithStores(control, queue, health)
+}
+
+func newSmokeFakeS3Server(t *testing.T) *httptest.Server {
+	t.Helper()
+	type obj struct {
+		bucket string
+		key    string
+	}
+	var (
+		mu      sync.Mutex
+		objects = make(map[obj][]byte)
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		bucket, key, hasKey := strings.Cut(path, "/")
+		if bucket != "" && hasKey {
+			objectKey := obj{bucket: bucket, key: key}
+			switch r.Method {
+			case http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				objects[objectKey] = body
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+				return
+			case http.MethodGet:
+				mu.Lock()
+				body, ok := objects[objectKey]
+				mu.Unlock()
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(body)
+				return
+			case http.MethodDelete:
+				mu.Lock()
+				delete(objects, objectKey)
+				mu.Unlock()
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+
+		if bucket != "" && !hasKey && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			prefix := r.URL.Query().Get("prefix")
+			mu.Lock()
+			keys := make([]string, 0)
+			for objectKey := range objects {
+				if objectKey.bucket == bucket && strings.HasPrefix(objectKey.key, prefix) {
+					keys = append(keys, objectKey.key)
+				}
+			}
+			mu.Unlock()
+			sort.Strings(keys)
+
+			type content struct {
+				Key string `xml:"Key"`
+			}
+			type listResult struct {
+				XMLName     xml.Name  `xml:"ListBucketResult"`
+				IsTruncated bool      `xml:"IsTruncated"`
+				Contents    []content `xml:"Contents"`
+			}
+			out := listResult{IsTruncated: false}
+			for _, key := range keys {
+				out.Contents = append(out.Contents, content{Key: key})
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = xml.NewEncoder(w).Encode(out)
+			return
+		}
+
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func TestRunnerLaunchSmokeFlow(t *testing.T) {
@@ -90,6 +198,7 @@ func TestRunnerLaunchSmokeFlow(t *testing.T) {
 		{name: "Agent publishes activities over HTTP and OpenClaw websocket", run: (*runner).stepAgentPublishesActivities},
 		{name: "Alice invites two agents by bind token, binds both agents, and sees both in her list", run: (*runner).stepAliceSeesBothAgents},
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
+		{name: "A2A send/get/list and legacy pull/ack succeeds between bound agents", run: (*runner).stepA2AStorageDelivery},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
 		{name: "OpenClaw HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
 		{name: "OpenClaw polling heartbeat marks runtime presence online", run: (*runner).stepOpenClawPresenceHeartbeat},
@@ -102,6 +211,56 @@ func TestRunnerLaunchSmokeFlow(t *testing.T) {
 		if err := tc.run(r); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
+	}
+}
+
+func TestRunnerA2AStorageSmokeBackends(t *testing.T) {
+	testCases := []struct {
+		name      string
+		newServer func(t *testing.T) *httptest.Server
+	}{
+		{
+			name: "memory",
+			newServer: func(t *testing.T) *httptest.Server {
+				t.Helper()
+				return newSmokeTestServer()
+			},
+		},
+		{
+			name:      "s3",
+			newServer: newS3SmokeTestServer,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			server := tc.newServer(t)
+			defer server.Close()
+
+			r := &runner{
+				baseURL: server.URL,
+				client:  server.Client(),
+			}
+			r.client.Timeout = 15 * time.Second
+
+			steps := []struct {
+				name string
+				run  func(*runner) error
+			}{
+				{name: "alice creates handle", run: (*runner).stepAliceCreatesHandle},
+				{name: "agent binds", run: (*runner).stepAgentBinds},
+				{name: "agent finalizes handle", run: (*runner).stepAgentFinalizesHandle},
+				{name: "second agent binds", run: (*runner).stepAgentDuplicateHandleRejected},
+				{name: "agent trust active", run: (*runner).stepAliceCreatesAgentTrust},
+				{name: "a2a storage delivery", run: (*runner).stepA2AStorageDelivery},
+			}
+			for _, step := range steps {
+				if err := step.run(r); err != nil {
+					t.Fatalf("%s: %v", step.name, err)
+				}
+			}
+		})
 	}
 }
 

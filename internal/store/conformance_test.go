@@ -40,9 +40,14 @@ type publishVectorCase struct {
 	Expect             string `json:"expect"`
 }
 
+type conformanceStore interface {
+	ControlPlaneStore
+	MessageQueueStore
+}
+
 type conformanceBackend struct {
 	Name string
-	New  func(t *testing.T) *MemoryStore
+	New  func(t *testing.T) conformanceStore
 }
 
 func TestMessageQueueConformanceVectors(t *testing.T) {
@@ -198,13 +203,110 @@ func TestCanPublishConformanceVectors(t *testing.T) {
 	}
 }
 
+func TestA2AMessageRecordStorageConformance(t *testing.T) {
+	for _, backend := range conformanceBackends() {
+		backend := backend
+		t.Run(backend.Name, func(t *testing.T) {
+			st := backend.New(t)
+			ids := &idGen{}
+			now := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+
+			_, orgA, agentA := seedOrgAndAgent(t, st, ids, now, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
+			_, orgB, agentB := seedOrgAndAgent(t, st, ids, now, "bob", "bob@b.test", "org-b", "Org B", "agent-b")
+
+			clientMsgID := "a2a-client-message-1"
+			msg := model.Message{
+				MessageID:     ids.MustID(t),
+				FromAgentUUID: agentA.AgentUUID,
+				ToAgentUUID:   agentB.AgentUUID,
+				FromAgentID:   agentA.AgentID,
+				ToAgentID:     agentB.AgentID,
+				SenderOrgID:   orgA.OrgID,
+				ReceiverOrgID: orgB.OrgID,
+				ContentType:   "application/json",
+				Payload:       `{"protocol":"a2a.v1","message":{"messageId":"a2a-client-message-1","role":"ROLE_USER","parts":[{"text":"hello a2a"}]}}`,
+				ClientMsgID:   &clientMsgID,
+				CreatedAt:     now,
+			}
+
+			record, replay, err := st.CreateOrGetMessageRecord(msg, now)
+			if err != nil {
+				t.Fatalf("CreateOrGetMessageRecord failed: %v", err)
+			}
+			if replay {
+				t.Fatalf("expected first CreateOrGetMessageRecord call to not replay")
+			}
+			if record.Status != model.MessageDeliveryQueued {
+				t.Fatalf("expected queued record, got %#v", record)
+			}
+
+			replayed, replay, err := st.CreateOrGetMessageRecord(msg, now.Add(time.Second))
+			if err != nil {
+				t.Fatalf("CreateOrGetMessageRecord replay failed: %v", err)
+			}
+			if !replay || replayed.Message.MessageID != msg.MessageID || replayed.IdempotentReplays != 1 {
+				t.Fatalf("expected idempotent replay of %q, got replay=%v record=%#v", msg.MessageID, replay, replayed)
+			}
+
+			loaded, err := st.GetMessageRecord(msg.MessageID)
+			if err != nil {
+				t.Fatalf("GetMessageRecord failed: %v", err)
+			}
+			if loaded.Message.ClientMsgID == nil || *loaded.Message.ClientMsgID != clientMsgID {
+				t.Fatalf("expected client message id %q, got %#v", clientMsgID, loaded.Message.ClientMsgID)
+			}
+
+			for _, agentUUID := range []string{agentA.AgentUUID, agentB.AgentUUID} {
+				records, err := st.ListMessageRecordsForAgent(agentUUID)
+				if err != nil {
+					t.Fatalf("ListMessageRecordsForAgent(%s) failed: %v", agentUUID, err)
+				}
+				if len(records) != 1 || records[0].Message.MessageID != msg.MessageID {
+					t.Fatalf("expected one visible A2A message record for %s, got %#v", agentUUID, records)
+				}
+			}
+
+			leaseAt := now.Add(2 * time.Second)
+			delivery, leased, err := st.LeaseMessage(msg.MessageID, agentB.AgentUUID, ids.MustID(t), leaseAt, leaseAt.Add(time.Minute))
+			if err != nil {
+				t.Fatalf("LeaseMessage failed: %v", err)
+			}
+			if leased.Status != model.MessageDeliveryLeased || leased.DeliveryAttempts != 1 {
+				t.Fatalf("expected leased record attempt 1, got %#v", leased)
+			}
+
+			acked, err := st.AckMessageDelivery(agentB.AgentUUID, delivery.DeliveryID, leaseAt.Add(time.Second))
+			if err != nil {
+				t.Fatalf("AckMessageDelivery failed: %v", err)
+			}
+			if acked.Status != model.MessageDeliveryAcked || acked.AckedAt == nil {
+				t.Fatalf("expected acked record with ack timestamp, got %#v", acked)
+			}
+		})
+	}
+}
+
 func conformanceBackends() []conformanceBackend {
 	return []conformanceBackend{
 		{
 			Name: "memory",
-			New: func(t *testing.T) *MemoryStore {
+			New: func(t *testing.T) conformanceStore {
 				t.Helper()
 				return NewMemoryStore()
+			},
+		},
+		{
+			Name: "s3_state",
+			New: func(t *testing.T) conformanceStore {
+				t.Helper()
+				fake := newFakeS3State()
+				server := fake.server("state-bucket")
+				t.Cleanup(server.Close)
+				st := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+				if err := st.loadFromS3(context.Background()); err != nil {
+					t.Fatalf("loadFromS3 empty failed: %v", err)
+				}
+				return st
 			},
 		},
 	}
@@ -212,7 +314,7 @@ func conformanceBackends() []conformanceBackend {
 
 func seedOrgAndAgent(
 	t *testing.T,
-	mem *MemoryStore,
+	mem ControlPlaneStore,
 	ids *idGen,
 	now time.Time,
 	humanSubject, humanEmail, orgHandle, orgDisplayName, agentID string,

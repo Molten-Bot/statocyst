@@ -67,6 +67,7 @@ func main() {
 		{name: "Agent publishes activities over HTTP and OpenClaw websocket", run: (*runner).stepAgentPublishesActivities},
 		{name: "Alice invites two agents by bind token, binds both agents, and sees both in her list", run: (*runner).stepAliceSeesBothAgents},
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
+		{name: "A2A send/get/list and legacy pull/ack succeeds between bound agents", run: (*runner).stepA2AStorageDelivery},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
 		{name: "OpenClaw HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
 		{name: "OpenClaw polling heartbeat marks runtime presence online", run: (*runner).stepOpenClawPresenceHeartbeat},
@@ -487,6 +488,86 @@ func (r *runner) stepAliceCreatesAgentTrust() error {
 	return nil
 }
 
+func (r *runner) stepA2AStorageDelivery() error {
+	clientMessageID := fmt.Sprintf("smoke-a2a-%d", time.Now().UnixNano())
+	messageText := fmt.Sprintf("smoke-a2a-rest-%d", time.Now().UnixNano())
+	sendPath := "/v1/a2a/agents/" + url.PathEscape(r.agentUUIDB) + "/message:send"
+	status, payload, err := r.requestJSON(http.MethodPost, sendPath, cmdutil.AgentHeaders(r.tokenA), map[string]any{
+		"message": map[string]any{
+			"messageId": clientMessageID,
+			"role":      "ROLE_USER",
+			"parts": []map[string]any{{
+				"text": messageText,
+			}},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected A2A send 200, got %d payload=%v", status, payload)
+	}
+	task, err := cmdutil.RequireObject(payload, "task")
+	if err != nil {
+		return err
+	}
+	taskID := cmdutil.AsString(task, "id")
+	if taskID == "" {
+		return fmt.Errorf("expected A2A task id payload=%v", payload)
+	}
+	if got := readStringPath(task, "status", "state"); got != "TASK_STATE_SUBMITTED" {
+		return fmt.Errorf("expected A2A task state submitted, got %q payload=%v", got, payload)
+	}
+
+	getPath := "/v1/a2a/agents/" + url.PathEscape(r.agentUUIDB) + "/tasks/" + url.PathEscape(taskID)
+	status, payload, err = r.requestJSON(http.MethodGet, getPath, cmdutil.AgentHeaders(r.tokenA), nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected A2A get task 200, got %d payload=%v", status, payload)
+	}
+	if got := cmdutil.AsString(payload, "id"); got != taskID {
+		return fmt.Errorf("expected A2A get task id %q, got %q payload=%v", taskID, got, payload)
+	}
+
+	listPath := "/v1/a2a/agents/" + url.PathEscape(r.agentUUIDB) + "/tasks?contextId=" + url.QueryEscape(clientMessageID)
+	status, payload, err = r.requestJSON(http.MethodGet, listPath, cmdutil.AgentHeaders(r.tokenA), nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected A2A list tasks 200, got %d payload=%v", status, payload)
+	}
+	tasks, _ := payload["tasks"].([]any)
+	if len(tasks) == 0 {
+		return fmt.Errorf("expected A2A list tasks to include context %q payload=%v", clientMessageID, payload)
+	}
+
+	deliveryID, receivedText, err := r.pullLegacyMessage(r.tokenB, taskID, 12*time.Second)
+	if err != nil {
+		return err
+	}
+	if receivedText != messageText {
+		return fmt.Errorf("expected legacy pull text %q, got %q", messageText, receivedText)
+	}
+	if err := r.ackLegacyDeliveryHTTP(r.tokenB, deliveryID); err != nil {
+		return err
+	}
+
+	status, payload, err = r.requestJSON(http.MethodGet, getPath, cmdutil.AgentHeaders(r.tokenB), nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected A2A get task after ack 200, got %d payload=%v", status, payload)
+	}
+	if got := readStringPath(payload, "status", "state"); got != "TASK_STATE_COMPLETED" {
+		return fmt.Errorf("expected A2A task state completed after legacy ack, got %q payload=%v", got, payload)
+	}
+	return nil
+}
+
 func (r *runner) stepAliceRevokesBothAgents() error {
 	status, payload, err := r.requestJSON(http.MethodDelete, "/v1/agents/"+r.agentUUIDB, cmdutil.HumanHeaders("alice", "alice@a.test"), nil)
 	if err != nil {
@@ -821,6 +902,52 @@ func (r *runner) ackOpenClawDeliveryHTTP(token, deliveryID string) error {
 		return nil
 	}
 	return fmt.Errorf("expected openclaw ack 200, got %d payload=%v", status, payload)
+}
+
+func (r *runner) pullLegacyMessage(token, expectedMessageID string, timeout time.Duration) (string, string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status, payload, err := r.requestJSON(http.MethodGet, "/v1/messages/pull?timeout_ms=1000", cmdutil.AgentHeaders(token), nil)
+		if err != nil {
+			return "", "", err
+		}
+		if status == http.StatusNoContent {
+			continue
+		}
+		if status != http.StatusOK {
+			return "", "", fmt.Errorf("expected legacy pull 200/204, got %d payload=%v", status, payload)
+		}
+
+		result := runtimeResult(payload)
+		messageID := readStringPath(result, "message", "message_id")
+		deliveryID := readStringPath(result, "delivery", "delivery_id")
+		if deliveryID == "" {
+			return "", "", fmt.Errorf("expected legacy pull to include delivery_id payload=%v", payload)
+		}
+		if messageID == expectedMessageID {
+			return deliveryID, readStringPath(result, "message", "payload"), nil
+		}
+		if err := r.ackLegacyDeliveryHTTP(token, deliveryID); err != nil {
+			return "", "", err
+		}
+	}
+	return "", "", fmt.Errorf("timed out waiting for legacy pull message_id=%q", expectedMessageID)
+}
+
+func (r *runner) ackLegacyDeliveryHTTP(token, deliveryID string) error {
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/messages/ack", cmdutil.AgentHeaders(token), map[string]any{
+		"delivery_id": deliveryID,
+	})
+	if err != nil {
+		return err
+	}
+	if status == http.StatusOK {
+		return nil
+	}
+	if status == http.StatusNotFound && cmdutil.AsString(payload, "error") == "unknown_delivery" {
+		return nil
+	}
+	return fmt.Errorf("expected legacy ack 200, got %d payload=%v", status, payload)
 }
 
 func (r *runner) openOpenClawWebSocket(token, sessionKey string) (*websocket.Conn, error) {
