@@ -24,6 +24,13 @@ func agentManifestEndpoints(apiBase string) map[string]string {
 func protocolAdaptersPayload(apiBase string) map[string]any {
 	endpoints := openClawAdapterEndpoints(apiBase)
 	return map[string]any{
+		"a2a_v1": map[string]any{
+			"protocol":    a2aProtocolAdapter,
+			"mode":        "additive",
+			"description": "Agent2Agent Protocol v1 adapter over JSON-RPC and HTTP+JSON; core /v1/messages/* routes remain available.",
+			"bindings":    []string{"JSONRPC", "HTTP+JSON"},
+			"endpoints":   a2aAdapterEndpoints(apiBase),
+		},
 		"openclaw_http_v1": map[string]any{
 			"protocol":    openClawHTTPProtocol,
 			"mode":        "additive",
@@ -41,5 +48,20 @@ func openClawAdapterEndpoints(apiBase string) map[string]string {
 		"nack":    apiBase + "/openclaw/messages/nack",
 		"status":  apiBase + "/openclaw/messages/{message_id}",
 		"offline": apiBase + "/openclaw/messages/offline",
+	}
+}
+
+func a2aAdapterEndpoints(apiBase string) map[string]string {
+	return map[string]string{
+		"well_known_agent_card": "/.well-known/agent-card.json",
+		"generic_jsonrpc":       apiBase + "/a2a",
+		"generic_rest":          apiBase + "/a2a",
+		"agent_card":            apiBase + "/a2a/agents/{agent_uuid}/agent-card",
+		"agent_jsonrpc":         apiBase + "/a2a/agents/{agent_uuid}",
+		"agent_rest":            apiBase + "/a2a/agents/{agent_uuid}",
+		"send_message":          apiBase + "/a2a/agents/{agent_uuid}/message:send",
+		"get_task":              apiBase + "/a2a/agents/{agent_uuid}/tasks/{task_id}",
+		"list_tasks":            apiBase + "/a2a/agents/{agent_uuid}/tasks",
+		"extended_agent_card":   apiBase + "/a2a/agents/{agent_uuid}/extendedAgentCard",
 	}
 }

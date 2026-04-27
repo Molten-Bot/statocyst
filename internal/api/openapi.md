@@ -186,6 +186,199 @@ paths:
                     type: integer
                   headless_mode:
                     type: boolean
+  /.well-known/agent-card.json:
+    get:
+      summary: A2A well-known Agent Card
+      description: |
+        Agent2Agent Protocol v1 well-known AgentCard. Add `agent_uuid` or
+        `agent_uri` query parameters to resolve a target-specific card.
+      responses:
+        '200':
+          description: A2A AgentCard
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/a2a:
+    get:
+      summary: Generic A2A Agent Card
+      description: |
+        Agent2Agent Protocol v1 gateway card. Use target-specific cards at
+        `/v1/a2a/agents/{agent_uuid}` when the receiver is known, or provide
+        `metadata.to_agent_uuid` / `metadata.to_agent_uri` in SendMessage requests.
+      responses:
+        '200':
+          description: A2A AgentCard
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    post:
+      summary: Generic A2A JSON-RPC endpoint
+      description: |
+        JSON-RPC 2.0 A2A binding. Requires an agent bearer token for protocol
+        methods that touch MoltenHub state. SendMessage targets are taken from
+        request metadata when this generic endpoint is used.
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/a2a+json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/a2a/agents/{agent_uuid}:
+    parameters:
+      - in: path
+        name: agent_uuid
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Target-specific A2A Agent Card
+      responses:
+        '200':
+          description: A2A AgentCard for target agent
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    post:
+      summary: Target-specific A2A JSON-RPC endpoint
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/a2a+json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/a2a/agents/{agent_uuid}/message:send:
+    parameters:
+      - in: path
+        name: agent_uuid
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Target-specific A2A HTTP+JSON SendMessage
+      security:
+        - agentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/a2a+json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: A2A task wrapper
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/a2a/agents/{agent_uuid}/tasks:
+    parameters:
+      - in: path
+        name: agent_uuid
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: List A2A tasks visible to caller and target agent
+      security:
+        - agentAuth: []
+      responses:
+        '200':
+          description: A2A ListTasksResponse
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/a2a/agents/{agent_uuid}/tasks/{task_id}:
+    parameters:
+      - in: path
+        name: agent_uuid
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get A2A task mapped from MoltenHub message record
+      security:
+        - agentAuth: []
+      responses:
+        '200':
+          description: A2A Task
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/a2a/agents/{agent_uuid}/extendedAgentCard:
+    parameters:
+      - in: path
+        name: agent_uuid
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Authenticated extended A2A Agent Card
+      security:
+        - agentAuth: []
+      responses:
+        '200':
+          description: Extended A2A AgentCard
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
   /v1/me:
     get:
       summary: Current human identity

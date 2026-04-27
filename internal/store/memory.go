@@ -3406,6 +3406,33 @@ func (s *MemoryStore) GetMessageRecord(messageID string) (model.MessageRecord, e
 	return record, nil
 }
 
+func (s *MemoryStore) ListMessageRecordsForAgent(agentUUID string) ([]model.MessageRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agentUUID = strings.TrimSpace(agentUUID)
+	if agentUUID == "" {
+		return nil, ErrAgentNotFound
+	}
+	if _, ok := s.agents[agentUUID]; !ok {
+		return nil, ErrAgentNotFound
+	}
+	out := make([]model.MessageRecord, 0)
+	for _, record := range s.messageRecords {
+		if record.Message.FromAgentUUID != agentUUID && record.Message.ToAgentUUID != agentUUID {
+			continue
+		}
+		out = append(out, record)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Message.CreatedAt.Equal(out[j].Message.CreatedAt) {
+			return out[i].Message.MessageID > out[j].Message.MessageID
+		}
+		return out[i].Message.CreatedAt.After(out[j].Message.CreatedAt)
+	})
+	return out, nil
+}
+
 func (s *MemoryStore) LeaseMessage(messageID, receiverAgentUUID, deliveryID string, leasedAt, leaseExpiresAt time.Time) (model.MessageDelivery, model.MessageRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -125,10 +125,13 @@ func NewRouter(handler *Handler) http.Handler {
 
 func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/agent-card.json", handler.handleA2AWellKnownAgentCard)
 	mux.HandleFunc("/ping", handlePing)
 	mux.HandleFunc("/health", handler.handleHealthz)
 	mux.HandleFunc("/openapi.yaml", handler.handleOpenAPIYAML)
 	mux.HandleFunc("/openapi.md", handler.handleOpenAPIMarkdown)
+	mux.HandleFunc("/v1/a2a", handler.handleA2ARoot)
+	mux.HandleFunc("/v1/a2a/", handler.handleA2ASubroutes)
 	mux.HandleFunc("/v1/ui/config", handler.handleUIConfig)
 	mux.HandleFunc("/v1/me", handler.handleMe)
 	mux.HandleFunc("/v1/me/metadata", handler.handleMeMetadata)

@@ -22,7 +22,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22.x'
+          go-version-file: go.mod
           cache: false
 
       - name: Verify generated OpenAPI markdown
@@ -66,7 +66,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22.x'
+          go-version-file: go.mod
           cache: false
 
       - name: Setup Docker Buildx
@@ -95,7 +95,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22.x'
+          go-version-file: go.mod
           cache: false
 
       - name: Setup Docker Buildx
