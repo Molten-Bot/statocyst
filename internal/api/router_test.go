@@ -1617,6 +1617,36 @@ func TestInviteCodeRedeemFlow(t *testing.T) {
 	}
 }
 
+func TestOrgInvitesForHumanOmitsExpiredInvites(t *testing.T) {
+	st := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.example.com", "", "", "", "", "example.com", true, 15*time.Minute, false)
+	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
+	h.now = func() time.Time { return now }
+	router := NewRouter(h)
+
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Org Invite Expiry")
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgID+"/invites", map[string]any{
+		"email":           "bob@b.test",
+		"role":            "member",
+		"expires_in_days": 1,
+	}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create invite failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	now = now.Add(48 * time.Hour)
+	listResp := doJSONRequest(t, router, http.MethodGet, "/v1/org-invites", nil, humanHeaders("bob", "bob@b.test"))
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list org invites failed: %d %s", listResp.Code, listResp.Body.String())
+	}
+	payload := decodeJSONMap(t, listResp.Body.Bytes())
+	invites, _ := payload["invites"].([]any)
+	if len(invites) != 0 {
+		t.Fatalf("expected expired invites to be omitted, got %d rows=%v", len(invites), invites)
+	}
+}
+
 func TestInviteCodeRedeemRejectsWrongEmail(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Org Invite Security")

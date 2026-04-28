@@ -134,7 +134,12 @@ func (h *Handler) inviteWithOrgPayload(item model.InviteWithOrg) map[string]any 
 
 func (h *Handler) inviteWithOrgListPayload(items []model.InviteWithOrg) []map[string]any {
 	out := make([]map[string]any, 0, len(items))
+	now := h.now().UTC()
 	for _, item := range items {
+		status := strings.ToLower(strings.TrimSpace(item.Invite.Status))
+		if status == model.StatusExpired || (status == model.StatusPending && !item.Invite.ExpiresAt.IsZero() && now.After(item.Invite.ExpiresAt)) {
+			continue
+		}
 		out = append(out, h.inviteWithOrgPayload(item))
 	}
 	return out
