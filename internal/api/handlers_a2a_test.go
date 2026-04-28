@@ -201,6 +201,84 @@ func TestA2AGoSDKJSONRPCClientDeliversToLegacyPull(t *testing.T) {
 	}
 }
 
+func TestA2AGoSDKGenericJSONRPCClientRoutesWithMessageMetadata(t *testing.T) {
+	router, server, handler := newA2ASDKTestServer(t)
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+	handler.canonicalBaseURL = normalizeCanonicalBaseURL(server.URL)
+
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hello from generic go sdk jsonrpc"))
+	msg.Metadata = map[string]any{
+		"to_agent_uuid": agentUUIDB,
+	}
+
+	client := newA2ASDKGenericClient(t, server, a2a.TransportProtocolJSONRPC)
+	result, err := client.SendMessage(a2aSDKContext(tokenA), &a2a.SendMessageRequest{
+		Message: msg,
+	})
+	if err != nil {
+		t.Fatalf("A2A Go SDK generic JSON-RPC SendMessage failed: %v", err)
+	}
+	task, ok := result.(*a2a.Task)
+	if !ok {
+		t.Fatalf("expected SDK SendMessage result *a2a.Task, got %T", result)
+	}
+	if task.ID == "" || task.Status.State != a2a.TaskStateSubmitted {
+		t.Fatalf("expected submitted SDK task with id, got %#v", task)
+	}
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected legacy pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	message, _ := pullPayload["message"].(map[string]any)
+	if message["message_id"] != string(task.ID) {
+		t.Fatalf("expected pulled message_id %q, got %v", task.ID, message)
+	}
+	if message["content_type"] != "text/plain" || message["payload"] != "hello from generic go sdk jsonrpc" {
+		t.Fatalf("expected legacy text/plain payload from generic SDK A2A send, got %v", message)
+	}
+}
+
+func TestA2AGoSDKGenericRESTClientRoutesWithMessageMetadata(t *testing.T) {
+	router, server, handler := newA2ASDKTestServer(t)
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+	handler.canonicalBaseURL = normalizeCanonicalBaseURL(server.URL)
+
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hello from generic go sdk rest"))
+	msg.Metadata = map[string]any{
+		"to_agent_uuid": agentUUIDB,
+	}
+
+	client := newA2ASDKGenericClient(t, server, a2a.TransportProtocolHTTPJSON)
+	result, err := client.SendMessage(a2aSDKContext(tokenA), &a2a.SendMessageRequest{
+		Message: msg,
+	})
+	if err != nil {
+		t.Fatalf("A2A Go SDK generic REST SendMessage failed: %v", err)
+	}
+	task, ok := result.(*a2a.Task)
+	if !ok {
+		t.Fatalf("expected SDK SendMessage result *a2a.Task, got %T", result)
+	}
+	if task.ID == "" || task.Status.State != a2a.TaskStateSubmitted {
+		t.Fatalf("expected submitted SDK task with id, got %#v", task)
+	}
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected legacy pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	message, _ := pullPayload["message"].(map[string]any)
+	if message["message_id"] != string(task.ID) {
+		t.Fatalf("expected pulled message_id %q, got %v", task.ID, message)
+	}
+	if message["content_type"] != "text/plain" || message["payload"] != "hello from generic go sdk rest" {
+		t.Fatalf("expected legacy text/plain payload from generic SDK A2A send, got %v", message)
+	}
+}
+
 func TestA2AGoSDKRESTClientReadsLegacyTask(t *testing.T) {
 	router, server, handler := newA2ASDKTestServer(t)
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
@@ -487,6 +565,33 @@ func newA2ASDKClient(t *testing.T, server *httptest.Server, agentUUID string, tr
 	t.Cleanup(func() {
 		if err := client.Destroy(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Fatalf("A2A Go SDK client destroy failed: %v", err)
+		}
+	})
+	return client
+}
+
+func newA2ASDKGenericClient(t *testing.T, server *httptest.Server, transport a2a.TransportProtocol) *a2aclient.Client {
+	t.Helper()
+	card, err := agentcard.NewResolver(server.Client()).Resolve(
+		context.Background(),
+		server.URL+"/v1/a2a",
+	)
+	if err != nil {
+		t.Fatalf("A2A Go SDK resolve generic agent card failed: %v", err)
+	}
+	client, err := a2aclient.NewFromCard(
+		context.Background(),
+		card,
+		a2aclient.WithConfig(a2aclient.Config{PreferredTransports: []a2a.TransportProtocol{transport}}),
+		a2aclient.WithJSONRPCTransport(server.Client()),
+		a2aclient.WithRESTTransport(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("A2A Go SDK generic client creation failed: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := client.Destroy(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("A2A Go SDK generic client destroy failed: %v", err)
 		}
 	})
 	return client

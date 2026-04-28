@@ -210,6 +210,10 @@ func (h *Handler) handleA2ASubroutes(w http.ResponseWriter, r *http.Request) {
 			writeA2AMethodNotAllowed(w, http.MethodGet)
 			return
 		}
+		if targetAgentUUID == "" {
+			writeA2AJSON(w, http.StatusOK, h.a2aAgentCard(r, nil))
+			return
+		}
 		target, protocolErr := h.a2aLoadTargetAgent(targetAgentUUID)
 		if protocolErr != nil {
 			writeA2ARESTError(w, protocolErr, "")

@@ -636,6 +636,61 @@ func (r *runner) stepA2AStorageDelivery() error {
 	if got := readStringPath(payload, "status", "state"); got != "TASK_STATE_COMPLETED" {
 		return fmt.Errorf("expected A2A task state completed after legacy ack, got %q payload=%v", got, payload)
 	}
+
+	genericClientMessageID := fmt.Sprintf("smoke-a2a-generic-%d", time.Now().UnixNano())
+	genericMessageText := fmt.Sprintf("smoke-a2a-generic-rest-%d", time.Now().UnixNano())
+	status, payload, err = r.requestJSON(http.MethodPost, "/v1/a2a/message:send", cmdutil.AgentHeaders(r.tokenA), map[string]any{
+		"message": map[string]any{
+			"messageId": genericClientMessageID,
+			"role":      "ROLE_USER",
+			"metadata": map[string]any{
+				"to_agent_uuid": r.agentUUIDB,
+			},
+			"parts": []map[string]any{{
+				"text": genericMessageText,
+			}},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected generic A2A send 200, got %d payload=%v", status, payload)
+	}
+	genericTask, err := cmdutil.RequireObject(payload, "task")
+	if err != nil {
+		return err
+	}
+	genericTaskID := cmdutil.AsString(genericTask, "id")
+	if genericTaskID == "" {
+		return fmt.Errorf("expected generic A2A task id payload=%v", payload)
+	}
+	if got := readStringPath(genericTask, "status", "state"); got != "TASK_STATE_SUBMITTED" {
+		return fmt.Errorf("expected generic A2A task state submitted, got %q payload=%v", got, payload)
+	}
+
+	genericDeliveryID, genericReceivedText, err := r.pullLegacyMessage(r.tokenB, genericTaskID, 12*time.Second)
+	if err != nil {
+		return err
+	}
+	if genericReceivedText != genericMessageText {
+		return fmt.Errorf("expected generic legacy pull text %q, got %q", genericMessageText, genericReceivedText)
+	}
+	if err := r.ackLegacyDeliveryHTTP(r.tokenB, genericDeliveryID); err != nil {
+		return err
+	}
+
+	genericGetPath := "/v1/a2a/agents/" + url.PathEscape(r.agentUUIDB) + "/tasks/" + url.PathEscape(genericTaskID)
+	status, payload, err = r.requestJSON(http.MethodGet, genericGetPath, cmdutil.AgentHeaders(r.tokenB), nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected generic A2A get task after ack 200, got %d payload=%v", status, payload)
+	}
+	if got := readStringPath(payload, "status", "state"); got != "TASK_STATE_COMPLETED" {
+		return fmt.Errorf("expected generic A2A task state completed after legacy ack, got %q payload=%v", got, payload)
+	}
 	return nil
 }
 
