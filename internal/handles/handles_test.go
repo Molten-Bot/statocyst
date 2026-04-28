@@ -17,7 +17,10 @@ func TestNormalize_Table(t *testing.T) {
 		{name: "collapses repeated separators", in: "__Alpha---Beta..", want: "alpha-beta"},
 		{name: "trims edge separators", in: "---alpha---", want: "alpha"},
 		{name: "non ascii normalized", in: "Cafe Team", want: "cafe-team"},
+		{name: "empty input", in: " \t ", want: ""},
+		{name: "only separators", in: "___", want: ""},
 		{name: "max length 64", in: strings.Repeat("a", 70), want: strings.Repeat("a", 64)},
+		{name: "trim separator after truncation", in: strings.Repeat("a", 63) + "-" + "b", want: strings.Repeat("a", 63)},
 	}
 
 	for _, tc := range cases {
@@ -74,6 +77,7 @@ func TestNormalizeAgentRef_Table(t *testing.T) {
 		want string
 	}{
 		{name: "single handle", in: "  AGENT  ", want: "agent"},
+		{name: "empty", in: " \t ", want: ""},
 		{name: "org slash agent", in: "Org Name/Agent.Name", want: "org-name/agent.name"},
 		{name: "org slash human slash agent", in: "Org/Human Name/Agent", want: "org/human-name/agent"},
 		{name: "extra slashes trimmed", in: "//Org//Human//Agent//", want: "org/human/agent"},
@@ -129,6 +133,10 @@ func TestBuildAgentURI(t *testing.T) {
 	if got := BuildAgentURI("Org", nil, "Agent"); got != "org/agent" {
 		t.Fatalf("unexpected org-owned URI: %q", got)
 	}
+	blank := "  "
+	if got := BuildAgentURI("Org", &blank, "Agent"); got != "org/agent" {
+		t.Fatalf("unexpected blank-human URI: %q", got)
+	}
 	h := "Human"
 	if got := BuildAgentURI("Org", &h, "Agent"); got != "org/human/agent" {
 		t.Fatalf("unexpected human-owned URI: %q", got)
@@ -151,6 +159,8 @@ func TestIsBlocked(t *testing.T) {
 		want bool
 	}{
 		{in: "fuck", want: true},
+		{in: " \t ", want: false},
+		{in: "!!!", want: false},
 		{in: "f.u.c.k", want: true},
 		{in: "f-u-c-k", want: true},
 		{in: "safe-name", want: false},
@@ -159,5 +169,19 @@ func TestIsBlocked(t *testing.T) {
 		if got := IsBlocked(tc.in); got != tc.want {
 			t.Fatalf("IsBlocked(%q)=%v want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestHandleTokenHelpers(t *testing.T) {
+	t.Parallel()
+
+	if got := splitAlphaNumTokens("..."); len(got) != 0 {
+		t.Fatalf("expected no tokens, got %#v", got)
+	}
+	if got := splitAlphaNumTokens("a..b__c"); strings.Join(got, ",") != "a,b,c" {
+		t.Fatalf("unexpected tokens: %#v", got)
+	}
+	if got := compactAlphaNum("..."); got != "" {
+		t.Fatalf("expected empty compact value, got %q", got)
 	}
 }
