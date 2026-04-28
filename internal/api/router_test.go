@@ -3775,6 +3775,113 @@ func TestHumanManagedAgentDisconnectMarksPresenceOffline(t *testing.T) {
 	}
 }
 
+func TestHumanManagedAgentDispatchQueuesSkillActivation(t *testing.T) {
+	router := newTestRouter()
+	token, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-dispatch")
+
+	patchResp := doJSONRequest(t, router, http.MethodPatch, "/v1/me/agents/"+agentUUID, map[string]any{
+		"metadata": map[string]any{
+			"skills": []any{
+				map[string]any{
+					"name":        "weather_lookup",
+					"description": "Looks up weather for a location.",
+					"parameters": map[string]any{
+						"format": "json",
+						"required": []any{
+							map[string]any{"name": "location", "description": "City and region. Do not pass secrets."},
+						},
+						"secret_policy": "forbidden",
+					},
+				},
+			},
+		},
+	}, humanHeaders("alice", "alice@a.test"))
+	if patchResp.Code != http.StatusOK {
+		t.Fatalf("expected agent metadata patch 200, got %d %s", patchResp.Code, patchResp.Body.String())
+	}
+
+	taskEnvelope := `{"type":"skill_request","request_id":"human-req-1","skill_name":"weather_lookup","payload":{"location":"Seattle, WA"},"payload_format":"json","reply_required":false}`
+	dispatchResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/"+agentUUID+"/dispatch", map[string]any{
+		"content_type":  "application/json",
+		"payload":       taskEnvelope,
+		"client_msg_id": "human-client-1",
+	}, humanHeaders("alice", "alice@a.test"))
+	if dispatchResp.Code != http.StatusAccepted {
+		t.Fatalf("expected dispatch 202, got %d %s", dispatchResp.Code, dispatchResp.Body.String())
+	}
+	dispatchPayload := decodeJSONMap(t, dispatchResp.Body.Bytes())
+	dispatchResult := requireAgentRuntimeSuccessEnvelope(t, dispatchPayload)
+	if got, _ := dispatchResult["dispatched_by_human_id"].(string); strings.TrimSpace(got) == "" {
+		t.Fatalf("expected dispatched_by_human_id, got %q payload=%v", got, dispatchPayload)
+	}
+
+	pullResp := pull(t, router, token, 1000)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected dispatched task pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
+	message, _ := pullResult["message"].(map[string]any)
+	if got, _ := message["to_agent_uuid"].(string); got != agentUUID {
+		t.Fatalf("expected message.to_agent_uuid=%q, got %q payload=%v", agentUUID, got, pullPayload)
+	}
+	if got, _ := message["content_type"].(string); got != "application/json" {
+		t.Fatalf("expected application/json content_type, got %q payload=%v", got, pullPayload)
+	}
+	if got, _ := message["payload"].(string); got != taskEnvelope {
+		t.Fatalf("expected dispatched skill payload, got %q payload=%v", got, pullPayload)
+	}
+}
+
+func TestHumanManagedAgentDispatchSkillFailureIncludesDetails(t *testing.T) {
+	router := newTestRouter()
+	_, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-dispatch-failure")
+
+	patchResp := doJSONRequest(t, router, http.MethodPatch, "/v1/me/agents/"+agentUUID, map[string]any{
+		"metadata": map[string]any{
+			"skills": []any{
+				map[string]any{
+					"name":        "weather_lookup",
+					"description": "Looks up weather for a location.",
+					"parameters": map[string]any{
+						"format": "json",
+						"required": []any{
+							map[string]any{"name": "location", "description": "City and region. Do not pass secrets."},
+						},
+						"secret_policy": "forbidden",
+					},
+				},
+			},
+		},
+	}, humanHeaders("alice", "alice@a.test"))
+	if patchResp.Code != http.StatusOK {
+		t.Fatalf("expected agent metadata patch 200, got %d %s", patchResp.Code, patchResp.Body.String())
+	}
+
+	dispatchResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/"+agentUUID+"/dispatch", map[string]any{
+		"content_type": "application/json",
+		"payload":      `{"type":"skill_request","request_id":"human-req-bad","skill_name":"weather_lookup","payload":{},"payload_format":"json","reply_required":false}`,
+	}, humanHeaders("alice", "alice@a.test"))
+	if dispatchResp.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid dispatch 400, got %d %s", dispatchResp.Code, dispatchResp.Body.String())
+	}
+	payload := decodeJSONMap(t, dispatchResp.Body.Bytes())
+	if got, _ := payload["error"].(string); got != "invalid_skill_request" {
+		t.Fatalf("expected invalid_skill_request, got %q payload=%v", got, payload)
+	}
+	if payload["Failure:"] != true {
+		t.Fatalf("expected Failure: field, got payload=%v", payload)
+	}
+	detail, _ := payload["Error details:"].(map[string]any)
+	if got, _ := detail["code"].(string); got != "invalid_skill_request" {
+		t.Fatalf("expected Error details:.code invalid_skill_request, got %q payload=%v", got, payload)
+	}
+	validationErrors, _ := detail["validation_errors"].([]any)
+	if len(validationErrors) == 0 {
+		t.Fatalf("expected validation_errors in Error details:, got payload=%v", payload)
+	}
+}
+
 func TestHumanManagedAgentRoutesRejectUnmanageableAgent(t *testing.T) {
 	router := newTestRouter()
 	_, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-owned")

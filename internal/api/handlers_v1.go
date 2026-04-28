@@ -76,6 +76,12 @@ type publishAgentActivityRequest struct {
 	State      string          `json:"state,omitempty"`
 }
 
+type dispatchAgentTaskRequest struct {
+	ContentType string  `json:"content_type"`
+	Payload     string  `json:"payload"`
+	ClientMsgID *string `json:"client_msg_id,omitempty"`
+}
+
 var errInvalidAgentActivityRequest = errors.New("invalid agent activity request")
 
 type trustOrgRequest struct {
@@ -628,6 +634,9 @@ func (h *Handler) handleMyAgentSubroutes(w http.ResponseWriter, r *http.Request)
 	if r.Method == http.MethodPost && strings.HasSuffix(tail, "/disconnect") {
 		action = "disconnect"
 		agentRef = strings.Trim(strings.TrimSuffix(tail, "/disconnect"), "/")
+	} else if r.Method == http.MethodPost && strings.HasSuffix(tail, "/dispatch") {
+		action = "dispatch"
+		agentRef = strings.Trim(strings.TrimSuffix(tail, "/dispatch"), "/")
 	}
 
 	agentUUID := normalizeUUID(agentRef)
@@ -665,6 +674,9 @@ func (h *Handler) handleMyAgentSubroutes(w http.ResponseWriter, r *http.Request)
 		return
 	case r.Method == http.MethodPost && action == "disconnect":
 		h.handleMyAgentDisconnect(w, r, agent)
+		return
+	case r.Method == http.MethodPost && action == "dispatch":
+		h.handleMyAgentDispatch(w, r, actor, agent)
 		return
 	default:
 		writeMethodNotAllowed(w)
@@ -779,6 +791,103 @@ func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request
 		payload["presence"] = presence
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *Handler) handleMyAgentDispatch(w http.ResponseWriter, r *http.Request, actor humanActor, agent model.Agent) {
+	if !requireJSONRequestContentType(w, r) {
+		return
+	}
+
+	var req dispatchAgentTaskRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+		return
+	}
+	result, handlerErr := h.dispatchTaskToOwnedAgent(r.Context(), actor, agent, req)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
+		return
+	}
+	writeAgentRuntimeSuccess(w, http.StatusAccepted, result)
+}
+
+func (h *Handler) dispatchTaskToOwnedAgent(ctx context.Context, actor humanActor, agent model.Agent, req dispatchAgentTaskRequest) (map[string]any, *runtimeHandlerError) {
+	req.ContentType = strings.TrimSpace(req.ContentType)
+	if _, ok := allowedContentTypes[req.ContentType]; !ok {
+		return nil, &runtimeHandlerError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_content_type",
+			message: "content_type must be one of: text/plain, application/json",
+		}
+	}
+	if validationErr := validateSkillActivationRequest(agent, req.ContentType, req.Payload); validationErr != nil {
+		return nil, validationErr
+	}
+
+	messageID, err := newUUIDv7()
+	if err != nil {
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "id_generation_failed",
+			message: "failed to create message_id",
+		}
+	}
+
+	now := h.now().UTC()
+	message := model.Message{
+		MessageID:     messageID,
+		FromAgentUUID: agent.AgentUUID,
+		ToAgentUUID:   agent.AgentUUID,
+		FromAgentID:   agent.AgentID,
+		ToAgentID:     agent.AgentID,
+		FromAgentURI:  h.agentURI(agent),
+		ToAgentURI:    h.agentURI(agent),
+		SenderOrgID:   agent.OrgID,
+		ReceiverOrgID: agent.OrgID,
+		ContentType:   req.ContentType,
+		Payload:       req.Payload,
+		ClientMsgID:   req.ClientMsgID,
+		CreatedAt:     now,
+	}
+	record, replay, err := h.control.CreateOrGetMessageRecord(message, now)
+	if err != nil {
+		h.setStateRuntimeError(stateRuntimeFailureSummary("message register", err))
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to register message",
+		}
+	}
+	h.clearStateRuntimeError()
+	if replay {
+		result := publishResponse(record, true)
+		result["dispatched_by_human_id"] = actor.Human.HumanID
+		return result, nil
+	}
+
+	if err := h.queue.Enqueue(ctx, message); err != nil {
+		_ = h.control.AbortMessageRecord(message.MessageID)
+		h.setQueueRuntimeError(queueRuntimeFailureSummary("enqueue", err))
+		if errors.Is(err, store.ErrAgentNotFound) {
+			return nil, &runtimeHandlerError{
+				status:  http.StatusNotFound,
+				code:    "unknown_agent",
+				message: "agent_uuid is not registered",
+			}
+		}
+		return nil, &runtimeHandlerError{
+			status:  http.StatusInternalServerError,
+			code:    "store_error",
+			message: "failed to enqueue message",
+		}
+	}
+
+	h.clearQueueRuntimeError()
+	h.control.RecordMessageQueued(agent.OrgID)
+	h.waiters.Notify(agent.AgentUUID)
+	result := publishResponse(record, false)
+	result["dispatched_by_human_id"] = actor.Human.HumanID
+	return result, nil
 }
 
 func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request) {

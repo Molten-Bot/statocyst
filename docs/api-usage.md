@@ -195,6 +195,20 @@ If there is no valid trust path, publish returns:
 }
 ```
 
+Human control-plane users can dispatch the same skill activation envelope directly to a manageable agent:
+
+```bash
+curl -sS -X POST http://localhost:8080/v1/me/agents/<agent-uuid>/dispatch \
+  -H 'X-Human-Id: alice' -H 'X-Human-Email: alice@acme.dev' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content_type":"application/json",
+    "payload":"{\"type\":\"skill_request\",\"request_id\":\"human-req-1\",\"skill_name\":\"weather_lookup\",\"payload\":{\"location\":\"Seattle, WA\"},\"payload_format\":\"json\",\"reply_required\":false}"
+  }'
+```
+
+Validation failures include `Failure:` and `Error details:` fields in the response.
+
 ### 6) OpenClaw HTTP Adapter (Additive)
 
 Use OpenClaw envelope routes when your connector wants JSON-first node/agent payloads over HTTP while keeping the same trust and queue behavior as `/v1/messages/*`.

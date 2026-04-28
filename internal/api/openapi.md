@@ -857,6 +857,51 @@ paths:
           description: Admin/owner required
         '404':
           description: Unknown agent
+  /v1/me/agents/{agent_uuid}/dispatch:
+    post:
+      summary: Dispatch a task to a manageable agent from the human control plane
+      description: |
+        Human-auth route for agent owners/admins to queue a task directly to one of their
+        manageable agents. The queued message uses the same delivery queue and skill
+        activation validation as agent-to-agent publish: set `content_type=application/json`
+        and pass the standard `skill_request` / `skill_activation` envelope in `payload`.
+        Validation failures return the standard failure envelope with `Failure:` and
+        `Error details:` fields.
+      security:
+        - humanAuth: []
+      parameters:
+        - in: path
+          name: agent_uuid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_type, payload]
+              properties:
+                content_type:
+                  type: string
+                  enum: [text/plain, application/json]
+                payload:
+                  type: string
+                  description: Plain text or JSON string containing a skill activation envelope.
+                client_msg_id:
+                  type: string
+      responses:
+        '202':
+          description: Task queued or idempotent replay
+        '400':
+          description: Invalid request or skill activation payload
+        '401':
+          description: Unauthorized
+        '403':
+          description: Admin/owner required
+        '404':
+          description: Unknown agent
   /v1/me/agents/bind-tokens:
     post:
       summary: Create short-lived one-time agent bind token with copy-ready self-signup prompt
