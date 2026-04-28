@@ -2071,9 +2071,7 @@ func (s *s3StateStore) ExpireMessageLeases(now time.Time) ([]model.Message, erro
 	if len(messages) == 0 {
 		return nil, nil
 	}
-	if err := s.persistAll(context.Background()); err != nil {
-		return nil, err
-	}
+	s.persistAllBestEffortLocked()
 	return messages, nil
 }
 

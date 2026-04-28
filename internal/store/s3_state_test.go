@@ -18,9 +18,10 @@ import (
 )
 
 type fakeS3State struct {
-	mu      sync.Mutex
-	objects map[string][]byte
-	counts  fakeS3Counts
+	mu       sync.Mutex
+	objects  map[string][]byte
+	counts   fakeS3Counts
+	putDelay time.Duration
 }
 
 type fakeS3Counts struct {
@@ -48,7 +49,13 @@ func (f *fakeS3State) server(bucket string) *httptest.Server {
 			case http.MethodPut:
 				body, _ := io.ReadAll(r.Body)
 				f.mu.Lock()
+				delay := f.putDelay
 				f.counts.put++
+				f.mu.Unlock()
+				if delay > 0 {
+					time.Sleep(delay)
+				}
+				f.mu.Lock()
 				f.objects[key] = body
 				f.mu.Unlock()
 				w.WriteHeader(http.StatusOK)
@@ -143,6 +150,12 @@ func (f *fakeS3State) resetCounts() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.counts = fakeS3Counts{}
+}
+
+func (f *fakeS3State) setPutDelay(delay time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.putDelay = delay
 }
 
 func (f *fakeS3State) currentCounts() fakeS3Counts {
@@ -875,6 +888,83 @@ func TestS3StateStore_BestEffortPersistUsesShortTimeout(t *testing.T) {
 	elapsed := time.Since(start)
 	if elapsed > 750*time.Millisecond {
 		t.Fatalf("expected best-effort persist to return quickly, took %s", elapsed)
+	}
+}
+
+func TestS3StateStore_ExpireMessageLeasesUsesBestEffortPersistence(t *testing.T) {
+	fake := newFakeS3State()
+	server := fake.server("state-bucket")
+	defer server.Close()
+
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	if err := store.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("loadFromS3 empty failed: %v", err)
+	}
+
+	now := time.Date(2026, 3, 7, 8, 0, 0, 0, time.UTC)
+	id := &idGen{}
+	human, err := store.UpsertHuman("dev", "lease-sub", "lease@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	org, _, err := store.CreateOrg("lease-org", "Lease Org", human.HumanID, id.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	owner := human.HumanID
+	agentA, err := store.RegisterAgent(org.OrgID, "lease-agent-a", &owner, "lease-token-a", human.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent(agent-a) failed: %v", err)
+	}
+	agentB, err := store.RegisterAgent(org.OrgID, "lease-agent-b", &owner, "lease-token-b", human.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent(agent-b) failed: %v", err)
+	}
+
+	message := model.Message{
+		MessageID:     "expired-lease-message",
+		FromAgentUUID: agentA.AgentUUID,
+		ToAgentUUID:   agentB.AgentUUID,
+		FromAgentID:   agentA.AgentID,
+		ToAgentID:     agentB.AgentID,
+		SenderOrgID:   org.OrgID,
+		ReceiverOrgID: org.OrgID,
+		ContentType:   "text/plain",
+		Payload:       "hello expired lease",
+		CreatedAt:     now.Add(time.Minute),
+	}
+	if _, _, err := store.CreateOrGetMessageRecord(message, now.Add(time.Minute)); err != nil {
+		t.Fatalf("CreateOrGetMessageRecord failed: %v", err)
+	}
+	leasedAt := now.Add(2 * time.Minute)
+	if _, _, err := store.LeaseMessage(message.MessageID, agentB.AgentUUID, "expired-delivery", leasedAt, leasedAt.Add(time.Second)); err != nil {
+		t.Fatalf("LeaseMessage failed: %v", err)
+	}
+
+	store.bestEffortPersistTimeout = 50 * time.Millisecond
+	store.persistTimeout = 5 * time.Second
+	fake.setPutDelay(500 * time.Millisecond)
+
+	start := time.Now()
+	expired, err := store.ExpireMessageLeases(leasedAt.Add(time.Minute))
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("ExpireMessageLeases returned error: %v", err)
+	}
+	if len(expired) != 1 || expired[0].MessageID != message.MessageID {
+		t.Fatalf("expected one expired message %q, got %+v", message.MessageID, expired)
+	}
+	if elapsed > 750*time.Millisecond {
+		t.Fatalf("expected best-effort lease expiry persistence to return quickly, took %s", elapsed)
+	}
+
+	record, err := store.GetMessageRecord(message.MessageID)
+	if err != nil {
+		t.Fatalf("GetMessageRecord failed: %v", err)
+	}
+	if record.Status != model.MessageDeliveryQueued {
+		t.Fatalf("expected in-memory record to be queued after expiry, got %q", record.Status)
 	}
 }
 
