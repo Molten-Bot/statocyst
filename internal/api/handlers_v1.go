@@ -1831,10 +1831,44 @@ func entityMetadataForRender(metadata map[string]any) map[string]any {
 	return out
 }
 
+func humanMetadataForRender(metadata map[string]any) map[string]any {
+	out := entityMetadataForRender(metadata)
+	delete(out, model.HumanMetadataKeyPresence)
+	return out
+}
+
 func agentMetadataForRender(metadata map[string]any) map[string]any {
 	out := entityMetadataForRender(metadata)
 	delete(out, model.AgentMetadataKeyPresence)
 	return out
+}
+
+func (h *Handler) touchHumanPresenceOnline(humanID string) {
+	now := h.now().UTC()
+	humanID = strings.TrimSpace(humanID)
+	if humanID == "" {
+		return
+	}
+	presence := map[string]any{
+		"status":     openClawPresenceStatusOnline,
+		"ready":      true,
+		"updated_at": now.Format(time.RFC3339),
+	}
+	_, _, _ = h.control.SetHumanPresence(humanID, presence, now)
+}
+
+func (h *Handler) currentHumanPresence(humanID string, _ map[string]any) map[string]any {
+	humanID = strings.TrimSpace(humanID)
+	if humanID != "" {
+		if presence, ok, err := h.control.GetHumanPresence(humanID); err == nil && ok {
+			return openClawPresenceFromMetadataAt(
+				map[string]any{model.HumanMetadataKeyPresence: presence},
+				h.now().UTC(),
+				openClawPresenceOfflineAfter,
+			)
+		}
+	}
+	return nil
 }
 
 func (h *Handler) currentAgentPresence(agentUUID string, fallbackMetadata map[string]any) map[string]any {

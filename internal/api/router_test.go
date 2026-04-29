@@ -3087,6 +3087,50 @@ func TestHumanCanSetHandleAndMetadata(t *testing.T) {
 	}
 }
 
+func TestHumanPresenceIsServerManaged(t *testing.T) {
+	router := newTestRouter()
+	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
+
+	metadataResp := doJSONRequest(t, router, http.MethodPatch, "/v1/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"public": true,
+			"presence": map[string]any{
+				"status": "offline",
+				"ready":  false,
+			},
+		},
+	}, humanHeaders("alice", "alice@a.test"))
+	if metadataResp.Code != http.StatusOK {
+		t.Fatalf("expected metadata patch 200, got %d %s", metadataResp.Code, metadataResp.Body.String())
+	}
+
+	payload := decodeJSONMap(t, metadataResp.Body.Bytes())
+	human, _ := payload["human"].(map[string]any)
+	metadata, _ := human["metadata"].(map[string]any)
+	presence, _ := metadata["presence"].(map[string]any)
+	if got, _ := presence["status"].(string); got != "online" {
+		t.Fatalf("expected server-managed human presence.status online, got %q payload=%v", got, payload)
+	}
+	if ready, ok := presence["ready"].(bool); !ok || !ready {
+		t.Fatalf("expected server-managed human presence.ready true, got %v payload=%v", presence["ready"], payload)
+	}
+	if metadata["public"] != true {
+		t.Fatalf("expected human metadata.public true, got %v payload=%v", metadata["public"], payload)
+	}
+
+	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/me", nil, humanHeaders("alice", "alice@a.test"))
+	if meResp.Code != http.StatusOK {
+		t.Fatalf("expected /v1/me 200, got %d %s", meResp.Code, meResp.Body.String())
+	}
+	mePayload := decodeJSONMap(t, meResp.Body.Bytes())
+	meHuman, _ := mePayload["human"].(map[string]any)
+	meMetadata, _ := meHuman["metadata"].(map[string]any)
+	mePresence, _ := meMetadata["presence"].(map[string]any)
+	if got, _ := mePresence["status"].(string); got != "online" {
+		t.Fatalf("expected /v1/me human presence.status online, got %q payload=%v", got, mePayload)
+	}
+}
+
 func TestHumanHandleMustBeUnique(t *testing.T) {
 	router := newTestRouter()
 

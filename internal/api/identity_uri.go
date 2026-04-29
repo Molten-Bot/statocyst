@@ -83,6 +83,10 @@ func (h *Handler) organizationPayload(org model.Organization) map[string]any {
 }
 
 func (h *Handler) humanPayload(human model.Human) map[string]any {
+	metadata := humanMetadataForRender(human.Metadata)
+	if presence := h.currentHumanPresence(human.HumanID, human.Metadata); presence != nil {
+		metadata[model.HumanMetadataKeyPresence] = presence
+	}
 	return map[string]any{
 		"human_id":            human.HumanID,
 		"handle":              human.Handle,
@@ -92,12 +96,16 @@ func (h *Handler) humanPayload(human model.Human) map[string]any {
 		"auth_subject":        human.AuthSubject,
 		"email":               human.Email,
 		"email_verified":      human.EmailVerified,
-		"metadata":            human.Metadata,
+		"metadata":            metadata,
 		"created_at":          human.CreatedAt,
 	}
 }
 
 func (h *Handler) adminSnapshotHumanPayload(human model.Human) map[string]any {
+	metadata := humanMetadataForRender(human.Metadata)
+	if presence := h.currentHumanPresence(human.HumanID, human.Metadata); presence != nil {
+		metadata[model.HumanMetadataKeyPresence] = presence
+	}
 	return map[string]any{
 		"human_id":            human.HumanID,
 		"handle":              human.Handle,
@@ -105,7 +113,7 @@ func (h *Handler) adminSnapshotHumanPayload(human model.Human) map[string]any {
 		"handle_confirmed_at": human.HandleConfirmedAt,
 		"auth_provider":       human.AuthProvider,
 		"email_verified":      human.EmailVerified,
-		"metadata":            human.Metadata,
+		"metadata":            metadata,
 		"created_at":          human.CreatedAt,
 	}
 }
@@ -146,6 +154,10 @@ func (h *Handler) inviteWithOrgListPayload(items []model.InviteWithOrg) []map[st
 }
 
 func (h *Handler) orgHumanViewPayload(view model.OrgHumanView) map[string]any {
+	metadata := humanMetadataForRender(view.Metadata)
+	if presence := h.currentHumanPresence(view.HumanID, view.Metadata); presence != nil {
+		metadata[model.HumanMetadataKeyPresence] = presence
+	}
 	return map[string]any{
 		"human_id":      view.HumanID,
 		"handle":        view.Handle,
@@ -154,7 +166,7 @@ func (h *Handler) orgHumanViewPayload(view model.OrgHumanView) map[string]any {
 		"role":          view.Role,
 		"status":        view.Status,
 		"auth_provider": view.AuthProvider,
-		"metadata":      view.Metadata,
+		"metadata":      metadata,
 	}
 }
 

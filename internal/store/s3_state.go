@@ -54,7 +54,7 @@ type s3StateStore struct {
 	// persistedObjects tracks the last successfully persisted object bodies by key.
 	// It lets us write only changed keys instead of full-prefix rewrites.
 	persistedObjects map[string][]byte
-	// presenceLastPersist tracks successful per-agent heartbeat snapshot persistence.
+	// presenceLastPersist tracks successful heartbeat snapshot persistence.
 	presenceLastPersist map[string]time.Time
 	// hydrationPrefetch is populated only while loadFromS3 is running to avoid repeated list/get calls.
 	hydrationPrefetch map[string]map[string][]byte
@@ -347,6 +347,58 @@ func (s *s3StateStore) UpdateHumanMetadata(humanID string, metadata map[string]a
 		return model.Human{}, err
 	}
 	return human, nil
+}
+
+func (s *s3StateStore) SetHumanPresence(humanID string, presence map[string]any, now time.Time) (model.Human, bool, error) {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	human, changedStatus, err := s.MemoryStore.SetHumanPresence(humanID, presence, now)
+	if err != nil {
+		return model.Human{}, false, err
+	}
+	storedPresence, ok, readErr := s.MemoryStore.GetHumanPresence(humanID)
+	if readErr != nil || !ok {
+		return human, changedStatus, nil
+	}
+	interval := s.presencePersistInterval
+	if interval <= 0 {
+		interval = defaultS3StatePresencePersistInterval
+	}
+	lastPersistKey := "human:" + humanID
+	if !changedStatus && interval > 0 {
+		if last, hasLast := s.presenceLastPersist[lastPersistKey]; hasLast && now.UTC().Sub(last) < interval {
+			return human, changedStatus, nil
+		}
+	}
+
+	key := s.humanPresenceObjectKey(humanID)
+	body, marshalErr := json.Marshal(normalizeHumanPresence(storedPresence))
+	if marshalErr != nil {
+		return human, changedStatus, nil
+	}
+
+	timeout := s.bestEffortPersistTimeout
+	if timeout <= 0 {
+		timeout = defaultS3StateBestEffortPersistTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if putErr := s.putObject(ctx, key, body); putErr == nil {
+		if s.persistedObjects == nil {
+			s.persistedObjects = make(map[string][]byte)
+		}
+		s.persistedObjects[key] = body
+		if s.presenceLastPersist == nil {
+			s.presenceLastPersist = make(map[string]time.Time)
+		}
+		s.presenceLastPersist[lastPersistKey] = now.UTC()
+	}
+	return human, changedStatus, nil
+}
+
+func (s *s3StateStore) GetHumanPresence(humanID string) (map[string]any, bool, error) {
+	return s.MemoryStore.GetHumanPresence(humanID)
 }
 
 func (s *s3StateStore) CreateOrg(handle, displayName string, creatorHumanID string, orgID string, now time.Time) (model.Organization, model.Membership, error) {
@@ -962,6 +1014,7 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	pOrgTrusts := s.prefixed("state/org_trusts")
 	pAgentTrusts := s.prefixed("state/agent_trusts")
 	pPresence := s.prefixed("state/presence")
+	pHumanPresence := s.prefixed("state/human_presence")
 	pStats := s.prefixed("state/stats")
 	pStatsDaily := s.prefixed("state/stats_daily")
 	pAudit := s.prefixed("state/audit")
@@ -1012,6 +1065,9 @@ func (s *s3StateStore) buildDesiredObjects() map[string]map[string][]byte {
 	}
 	for agentUUID, presence := range s.MemoryStore.agentPresence {
 		add(pPresence, s.objectKey(pPresence, escapeKeySegment(agentUUID)+".json"), normalizeAgentPresence(presence))
+	}
+	for humanID, presence := range s.MemoryStore.humanPresence {
+		add(pHumanPresence, s.objectKey(pHumanPresence, escapeKeySegment(humanID)+".json"), normalizeHumanPresence(presence))
 	}
 	for orgID, stats := range s.MemoryStore.statsByOrg {
 		add(pStats, s.objectKey(pStats, escapeKeySegment(orgID)+".json"), stats)
@@ -1079,6 +1135,7 @@ func (s *s3StateStore) persistedPrefixes() []s3KeyDescriptor {
 		{Prefix: s.prefixed("state/org_trusts")},
 		{Prefix: s.prefixed("state/agent_trusts")},
 		{Prefix: s.prefixed("state/presence")},
+		{Prefix: s.prefixed("state/human_presence")},
 		{Prefix: s.prefixed("state/stats")},
 		{Prefix: s.prefixed("state/stats_daily")},
 		{Prefix: s.prefixed("state/audit")},
@@ -1109,6 +1166,7 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 	pOrgTrusts := s.prefixed("state/org_trusts")
 	pAgentTrusts := s.prefixed("state/agent_trusts")
 	pPresence := s.prefixed("state/presence")
+	pHumanPresence := s.prefixed("state/human_presence")
 	pStats := s.prefixed("state/stats")
 	pStatsDaily := s.prefixed("state/stats_daily")
 	pAudit := s.prefixed("state/audit")
@@ -1134,6 +1192,7 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 		pOrgTrusts,
 		pAgentTrusts,
 		pPresence,
+		pHumanPresence,
 		pStats,
 		pStatsDaily,
 		pAudit,
@@ -1315,6 +1374,29 @@ func (s *s3StateStore) loadFromS3(ctx context.Context) error {
 			return err
 		}
 		loaded.agentPresence[agentUUID] = normalizeAgentPresence(value)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := s.loadTypedObjects(ctx, pHumanPresence, func(key string, body []byte) error {
+		relative, ok := trimObjectKeyPrefix(key, pHumanPresence)
+		if !ok {
+			return nil
+		}
+		humanObject := strings.TrimSpace(relative)
+		if humanObject == "" {
+			return nil
+		}
+		humanIDRaw := strings.TrimSuffix(humanObject, ".json")
+		humanID, err := url.PathUnescape(strings.TrimSpace(humanIDRaw))
+		if err != nil || strings.TrimSpace(humanID) == "" {
+			return nil
+		}
+		var value map[string]any
+		if err := json.Unmarshal(body, &value); err != nil {
+			return err
+		}
+		loaded.humanPresence[humanID] = normalizeHumanPresence(value)
 		return nil
 	}); err != nil {
 		return err
@@ -1578,6 +1660,12 @@ func rebuildStateIndexesLocked(mem *MemoryStore) {
 	}
 	if mem.remoteAgentTrusts == nil {
 		mem.remoteAgentTrusts = make(map[string]model.RemoteAgentTrust)
+	}
+	if mem.humanPresence == nil {
+		mem.humanPresence = make(map[string]map[string]any)
+	}
+	if mem.agentPresence == nil {
+		mem.agentPresence = make(map[string]map[string]any)
 	}
 	if mem.peerOutbounds == nil {
 		mem.peerOutbounds = make(map[string]model.PeerOutboundMessage)
@@ -2174,6 +2262,11 @@ func (s *s3StateStore) objectKey(parts ...string) string {
 func (s *s3StateStore) presenceObjectKey(agentUUID string) string {
 	prefix := s.prefixed("state/presence")
 	return s.objectKey(prefix, escapeKeySegment(agentUUID)+".json")
+}
+
+func (s *s3StateStore) humanPresenceObjectKey(humanID string) string {
+	prefix := s.prefixed("state/human_presence")
+	return s.objectKey(prefix, escapeKeySegment(humanID)+".json")
 }
 
 func trimObjectKeyPrefix(key, prefix string) (string, bool) {

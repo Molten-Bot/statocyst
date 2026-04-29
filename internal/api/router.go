@@ -1089,6 +1089,7 @@ func (h *Handler) authenticateHuman(r *http.Request) (humanActor, error) {
 	if err != nil {
 		return humanActor{}, err
 	}
+	h.touchHumanPresenceOnline(human.HumanID)
 	return humanActor{
 		Human:        human,
 		IsSuperAdmin: h.isSuperAdmin(identity),
