@@ -458,6 +458,79 @@ func TestS3StateStore_ReloadRebuildsIndexesFromPrimaryState(t *testing.T) {
 	}
 }
 
+func TestS3StateStore_ReloadRebuildsArchivedHandleReservations(t *testing.T) {
+	fake := newFakeS3State()
+	server := fake.server("state-bucket")
+	defer server.Close()
+
+	store := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	if err := store.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("loadFromS3 empty failed: %v", err)
+	}
+
+	now := time.Date(2026, 3, 5, 14, 30, 0, 0, time.UTC)
+	id := &idGen{}
+	alice, err := store.UpsertHuman("dev", "alice-sub", "alice@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	alice, err = store.UpdateHumanProfile(alice.HumanID, "alice", true, now)
+	if err != nil {
+		t.Fatalf("UpdateHumanProfile failed: %v", err)
+	}
+	org, _, err := store.CreateOrg("org-a", "Org A", alice.HumanID, id.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	owner := alice.HumanID
+	agent, err := store.RegisterAgent(org.OrgID, "agent-a", &owner, "agent-token-hash", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+	if err := store.DeleteAgent(agent.AgentUUID, alice.HumanID, now.Add(time.Minute), false); err != nil {
+		t.Fatalf("DeleteAgent failed: %v", err)
+	}
+
+	deletedOrg, _, err := store.CreateOrg("org-deleted", "Deleted Org", alice.HumanID, id.MustID(t), now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("CreateOrg deleted fixture failed: %v", err)
+	}
+	if err := store.DeleteOrg(deletedOrg.OrgID, alice.HumanID, false, now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("DeleteOrg failed: %v", err)
+	}
+
+	reloaded := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	if err := reloaded.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("reload loadFromS3 failed: %v", err)
+	}
+
+	if _, err := reloaded.RegisterAgent(org.OrgID, "agent-a", &owner, "agent-token-hash-2", alice.HumanID, now.Add(4*time.Minute), false); !errors.Is(err, ErrAgentExists) {
+		t.Fatalf("expected archived agent handle to remain reserved after reload with ErrAgentExists, got %v", err)
+	}
+	if _, _, err := reloaded.CreateOrg("org-deleted", "Takeover Org", alice.HumanID, id.MustID(t), now.Add(5*time.Minute)); !errors.Is(err, ErrOrgHandleTaken) {
+		t.Fatalf("expected archived org handle to remain reserved after reload with ErrOrgHandleTaken, got %v", err)
+	}
+}
+
+func TestRebuildStateIndexesReservesArchivedHumanHandles(t *testing.T) {
+	mem := NewMemoryStore()
+	mem.archivedHumans["deleted-human"] = model.Human{
+		HumanID: "deleted-human",
+		Handle:  "alice",
+	}
+	rebuildStateIndexesLocked(mem)
+
+	now := time.Date(2026, 3, 5, 15, 0, 0, 0, time.UTC)
+	id := &idGen{}
+	human, err := mem.UpsertHuman("dev", "alice", "alice@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	if human.Handle == "alice" {
+		t.Fatalf("expected archived human handle to remain reserved, got reused handle %q", human.Handle)
+	}
+}
+
 func TestS3StateStore_PersistsQueueRoundTripAndDeletePurge(t *testing.T) {
 	fake := newFakeS3State()
 	server := fake.server("state-bucket")

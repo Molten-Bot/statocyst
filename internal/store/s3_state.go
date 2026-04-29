@@ -1583,8 +1583,16 @@ func rebuildStateIndexesLocked(mem *MemoryStore) {
 		mem.peerOutbounds = make(map[string]model.PeerOutboundMessage)
 	}
 
+	for orgID, org := range mem.archivedOrgs {
+		mem.orgByHandle[normalizeOrgHandleKey(org.Handle)] = orgID
+	}
 	for orgID, org := range mem.orgs {
 		mem.orgByHandle[normalizeOrgHandleKey(org.Handle)] = orgID
+	}
+	for humanID, human := range mem.archivedHumans {
+		if human.Handle != "" {
+			mem.humanByHandle[normalizeHumanHandleCandidate(human.Handle)] = humanID
+		}
 	}
 	for humanID, human := range mem.humans {
 		mem.humanByAuthKey[authKey(human.AuthProvider, human.AuthSubject)] = humanID
@@ -1608,6 +1616,16 @@ func rebuildStateIndexesLocked(mem *MemoryStore) {
 			continue
 		}
 		mem.orgAccessKeyByHash[key.TokenHash] = keyID
+	}
+	for agentUUID, agent := range mem.archivedAgents {
+		if strings.TrimSpace(agent.AgentID) != "" {
+			mem.agentByURI[agent.AgentID] = agentUUID
+		}
+		if agent.OwnerHumanID != nil {
+			mem.humanOwnedAgentNameIdx[humanOwnedAgentNameKey(agent.OrgID, *agent.OwnerHumanID, agent.Handle)] = agentUUID
+		} else {
+			mem.orgOwnedAgentNameIdx[orgOwnedAgentNameKey(agent.OrgID, agent.Handle)] = agentUUID
+		}
 	}
 	for agentUUID, agent := range mem.agents {
 		normalizedMetadata, err := validateAndNormalizeAgentMetadata(agent.Metadata)

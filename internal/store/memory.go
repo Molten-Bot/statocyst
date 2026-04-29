@@ -91,8 +91,8 @@ type MemoryStore struct {
 
 	agents               map[string]model.Agent // key: agent_uuid
 	archivedAgents       map[string]model.Agent
-	agentByURI           map[string]string      // uri -> agent_uuid
-	agentTokenIdx        map[string]string      // token hash -> agent_uuid
+	agentByURI           map[string]string // uri -> agent_uuid
+	agentTokenIdx        map[string]string // token hash -> agent_uuid
 	orgOwnedAgentNameIdx map[string]string
 	// humanOwnedAgentNameIdx enforces unique human-owned agent names within org+human scope.
 	humanOwnedAgentNameIdx map[string]string
@@ -332,13 +332,7 @@ func (s *MemoryStore) DeleteOrg(orgID, actorHumanID string, isSuperAdmin bool, n
 		revokedAt := now
 		agent.RevokedAt = &revokedAt
 		s.archivedAgents[agentUUID] = agent
-		if agent.OwnerHumanID != nil {
-			delete(s.humanOwnedAgentNameIdx, humanOwnedAgentNameKey(agent.OrgID, *agent.OwnerHumanID, agent.Handle))
-		} else {
-			delete(s.orgOwnedAgentNameIdx, orgOwnedAgentNameKey(agent.OrgID, agent.Handle))
-		}
 		delete(s.agentTokenIdx, agent.TokenHash)
-		delete(s.agentByURI, agent.AgentID)
 		delete(s.agentPresence, agentUUID)
 		delete(s.agents, agentUUID)
 		deletedAgents[agentUUID] = struct{}{}
@@ -426,7 +420,6 @@ func (s *MemoryStore) DeleteOrg(orgID, actorHumanID string, isSuperAdmin bool, n
 	}, now)
 	org.Metadata = copyMetadata(org.Metadata)
 	s.archivedOrgs[orgID] = org
-	delete(s.orgByHandle, normalizeOrgHandleKey(org.Handle))
 	delete(s.orgs, orgID)
 	return nil
 }
@@ -1487,12 +1480,6 @@ func (s *MemoryStore) DeleteAgent(agentUUID, actorHumanID string, now time.Time,
 	s.archivedAgents[agentUUID] = archivedAgent
 
 	delete(s.agentTokenIdx, agent.TokenHash)
-	if agent.OwnerHumanID != nil {
-		delete(s.humanOwnedAgentNameIdx, humanOwnedAgentNameKey(agent.OrgID, *agent.OwnerHumanID, agent.Handle))
-	} else {
-		delete(s.orgOwnedAgentNameIdx, orgOwnedAgentNameKey(agent.OrgID, agent.Handle))
-	}
-	delete(s.agentByURI, agent.AgentID)
 	delete(s.agentPresence, agentUUID)
 	delete(s.agents, agentUUID)
 

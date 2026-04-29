@@ -565,6 +565,34 @@ func TestMemoryStoreDeleteAgentPurgesTrustAndQueuedMessages(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreDeletedHandlesRemainReserved(t *testing.T) {
+	now := time.Date(2026, 3, 8, 2, 0, 0, 0, time.UTC)
+	ids := &seqID{}
+	mem := NewMemoryStore()
+
+	alice := mustCreateHuman(t, mem, ids, "alice", "alice@a.test", "alice", now)
+	org := mustCreateOrg(t, mem, ids, alice, "org-a", "Org A", now)
+
+	agent, err := mem.RegisterAgent(org.OrgID, "agent-a", &alice.HumanID, "tok-agent-a", alice.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+	if err := mem.DeleteAgent(agent.AgentUUID, alice.HumanID, now.Add(time.Minute), false); err != nil {
+		t.Fatalf("DeleteAgent failed: %v", err)
+	}
+	if _, err := mem.RegisterAgent(org.OrgID, "agent-a", &alice.HumanID, "tok-agent-a-2", alice.HumanID, now.Add(2*time.Minute), false); !errors.Is(err, ErrAgentExists) {
+		t.Fatalf("expected deleted agent handle to remain reserved with ErrAgentExists, got %v", err)
+	}
+
+	deletedOrg := mustCreateOrg(t, mem, ids, alice, "org-deleted", "Deleted Org", now.Add(3*time.Minute))
+	if err := mem.DeleteOrg(deletedOrg.OrgID, alice.HumanID, false, now.Add(4*time.Minute)); err != nil {
+		t.Fatalf("DeleteOrg failed: %v", err)
+	}
+	if _, _, err := mem.CreateOrg("org-deleted", "Takeover Org", alice.HumanID, ids.mustID(t), now.Add(5*time.Minute)); !errors.Is(err, ErrOrgHandleTaken) {
+		t.Fatalf("expected deleted org handle to remain reserved with ErrOrgHandleTaken, got %v", err)
+	}
+}
+
 func TestMemoryStoreHandleValidationAcrossEntities(t *testing.T) {
 	now := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
 	ids := &seqID{}
