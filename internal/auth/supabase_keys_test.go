@@ -10,6 +10,7 @@ func TestIsSafeSupabaseBrowserKey(t *testing.T) {
 		key  string
 		want bool
 	}{
+		// Fake secret-shaped fixtures; required to verify secret-class Supabase keys are rejected.
 		{name: "empty", key: "", want: false},
 		{name: "publishable prefix", key: "sb_publishable_abcd", want: true},
 		{name: "sbp publishable prefix", key: "sbp_abcd", want: true},

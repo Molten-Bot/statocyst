@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"net/http"
@@ -13,7 +15,6 @@ import (
 
 const (
 	peerID       = "alpha-beta"
-	peerSecret   = "local-federation-shared-secret"
 	alphaPeerURL = "http://moltenhub-alpha:8080"
 	betaPeerURL  = "http://moltenhub-beta:8080"
 )
@@ -34,6 +35,8 @@ type runner struct {
 	betaToken     string
 	betaAgentUUID string
 	betaAgentURI  string
+
+	peerSecret string
 }
 
 type step struct {
@@ -46,12 +49,19 @@ func main() {
 	betaBaseURL := flag.String("beta-base-url", "http://127.0.0.1:18081", "Beta MoltenHub base URL")
 	flag.Parse()
 
+	peerSecret, err := generateSharedSecret()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL generate federation peer secret: %v\n", err)
+		os.Exit(1)
+	}
+
 	r := &runner{
 		alphaBaseURL: strings.TrimRight(*alphaBaseURL, "/"),
 		betaBaseURL:  strings.TrimRight(*betaBaseURL, "/"),
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		peerSecret: peerSecret,
 	}
 
 	steps := []step{
@@ -71,6 +81,14 @@ func main() {
 		}
 		fmt.Printf("PASS %s\n", st.name)
 	}
+}
+
+func generateSharedSecret() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func (r *runner) stepHealth() error {
@@ -305,7 +323,7 @@ func (r *runner) createPeer(baseURL, canonicalBaseURL, deliveryBaseURL string) e
 		"peer_id":            peerID,
 		"canonical_base_url": canonicalBaseURL,
 		"delivery_base_url":  deliveryBaseURL,
-		"shared_secret":      peerSecret,
+		"shared_secret":      r.peerSecret,
 	})
 	if err != nil {
 		return err

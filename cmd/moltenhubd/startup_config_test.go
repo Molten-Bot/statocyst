@@ -32,6 +32,7 @@ func TestCollectLaunchDiagnostics_FailsWhenSupabaseRequiredVarsMissing(t *testin
 }
 
 func TestCollectLaunchDiagnostics_WarnsWhenSupabaseAnonKeyIsSecretLike(t *testing.T) {
+	// Fake secret-shaped fixture; required to verify secret-class Supabase keys stay redacted.
 	diagnostics, err := collectLaunchDiagnostics(mapLookup(map[string]string{
 		"HUMAN_AUTH_PROVIDER": "supabase",
 		"SUPABASE_URL":        "https://example.supabase.co",
@@ -142,6 +143,7 @@ func TestCollectLaunchDiagnostics_AcceptsHostShorthandCORSAllowedOrigins(t *test
 }
 
 func TestDiagnosticLogValueRedactsSensitiveValues(t *testing.T) {
+	// Fake secret-shaped fixture; required to verify diagnostic logging redaction.
 	if got := diagnosticLogValue("SUPABASE_ANON_KEY", "secret-value"); got != "<redacted>" {
 		t.Fatalf("expected sensitive config to be redacted, got %q", got)
 	}

@@ -200,6 +200,7 @@ func TestFederatedPublishRoutesByCanonicalAgentURI(t *testing.T) {
 	agentURIB, _ := agentB["uri"].(string)
 
 	const peerID = "alpha-beta"
+	// Fake shared-secret fixture; required to pair in-memory federated test servers.
 	const secret = "peer-shared-secret"
 	createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
 	createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)
@@ -280,6 +281,7 @@ func TestFederatedPublishDropsWithoutRemoteTrust(t *testing.T) {
 	agentURIB, _ := currentAgent(t, beta.router, tokenB)["uri"].(string)
 
 	const peerID = "alpha-beta"
+	// Fake shared-secret fixture; required to pair in-memory federated test servers.
 	const secret = "peer-shared-secret"
 	createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
 	createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)
@@ -313,6 +315,7 @@ func TestFederatedPublishRoutesForHumanOwnedAgentsWithMutualRemoteAgentTrust(t *
 	agentURIB, _ := agentB["uri"].(string)
 
 	const peerID = "alpha-beta"
+	// Fake shared-secret fixture; required to pair in-memory federated test servers.
 	const secret = "peer-shared-secret"
 	createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
 	createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)
@@ -362,6 +365,7 @@ func TestFederatedPublishStillRequiresRemoteOrgTrustForOrgScopedAgents(t *testin
 	agentURIB, _ := currentAgent(t, beta.router, tokenB)["uri"].(string)
 
 	const peerID = "alpha-beta"
+	// Fake shared-secret fixture; required to pair in-memory federated test servers.
 	const secret = "peer-shared-secret"
 	createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
 	createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)
@@ -396,6 +400,7 @@ func TestFederatedPublishHumanOwnedRequiresMutualRemoteTrustBeforeDelivery(t *te
 	agentURIB, _ := agentB["uri"].(string)
 
 	const peerID = "alpha-beta"
+	// Fake shared-secret fixture; required to pair in-memory federated test servers.
 	const secret = "peer-shared-secret"
 	createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
 	createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)

@@ -825,6 +825,7 @@ func TestUIConfigExposesAuthAndRedactsPrivilegedFields(t *testing.T) {
 		auth.NewDevHumanAuthProvider(),
 		"https://hub.example.com",
 		"https://example.supabase.co",
+		// Fake secret-shaped fixture; required to verify UI config redaction.
 		"should-not-leak",
 		"",
 		"admin1@example.com,admin2@example.com",
@@ -875,6 +876,7 @@ func TestUIConfigExposesAuthAndRedactsPrivilegedFields(t *testing.T) {
 func TestUIConfigReturnsSensitiveFieldsWithPrivilegedKey(t *testing.T) {
 	t.Setenv("DEV_LOGIN_HUMAN_ID", "dev-human")
 	t.Setenv("DEV_LOGIN_HUMAN_EMAIL", "dev@local.test")
+	// Fake secret-shaped fixture; required to verify privileged UI config access.
 	t.Setenv("UI_CONFIG_API_KEY", "ui-config-secret")
 
 	mem := store.NewMemoryStore()
@@ -886,6 +888,7 @@ func TestUIConfigReturnsSensitiveFieldsWithPrivilegedKey(t *testing.T) {
 		auth.NewDevHumanAuthProvider(),
 		"https://hub.example.com",
 		"https://example.supabase.co",
+		// Fake secret-shaped fixture; required to verify privileged UI config exposure.
 		"should-leak-only-to-privileged-caller",
 		"",
 		"admin1@example.com,admin2@example.com",
@@ -924,6 +927,7 @@ func TestUIConfigReturnsSensitiveFieldsWithPrivilegedKey(t *testing.T) {
 
 func TestUIConfigKeepsPrivilegedFieldsRedactedWithWrongPrivilegedKey(t *testing.T) {
 	t.Setenv("DEV_LOGIN_HUMAN_EMAIL", "dev@local.test")
+	// Fake secret-shaped fixture; required to verify wrong-key redaction.
 	t.Setenv("UI_CONFIG_API_KEY", "ui-config-secret")
 
 	mem := store.NewMemoryStore()
@@ -935,6 +939,7 @@ func TestUIConfigKeepsPrivilegedFieldsRedactedWithWrongPrivilegedKey(t *testing.
 		auth.NewDevHumanAuthProvider(),
 		"https://hub.example.com",
 		"https://example.supabase.co",
+		// Fake secret-shaped fixture; required to verify wrong-key UI config redaction.
 		"should-not-leak",
 		"",
 		"admin1@example.com,admin2@example.com",
@@ -965,6 +970,7 @@ func TestUIConfigKeepsPrivilegedFieldsRedactedWithWrongPrivilegedKey(t *testing.
 func TestUIConfigSupabaseOmitsSecretKey(t *testing.T) {
 	mem := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
+	// Fake secret-shaped fixture; required to verify secret-class Supabase keys stay omitted.
 	h := NewHandler(
 		mem,
 		mem,
@@ -3562,6 +3568,7 @@ func TestAgentCapabilitiesTalkablePeersIncludesRemoteURIOnlyEntry(t *testing.T) 
 	_, _, tokenA, _, _, _, agentUUIDA, _ := setupTrustedAgents(t, router)
 
 	const peerID = "peer-remote"
+	// Fake shared-secret fixture; required to create a hosted peer in this test.
 	createPeer(t, router, peerID, "https://remote.example", "https://remote.example", "peer-secret")
 
 	const remoteURI = "https://remote.example/human/remote/agent/assistant"
@@ -4969,6 +4976,7 @@ func TestAdminSnapshotIncludesAgentCreationActivity(t *testing.T) {
 func TestAdminSnapshotHeaderKeyAccess(t *testing.T) {
 	st := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
+	// Fake secret-shaped fixture; required to verify snapshot header key auth.
 	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.example.com", "", "", "snapshot-secret", "", "example.com", true, 15*time.Minute, false)
 	router := NewRouter(h)
 

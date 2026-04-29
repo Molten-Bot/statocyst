@@ -15,7 +15,17 @@ HUB_CONTAINER="moltenhub-s3-smoke-hub-${HOST_PORT}"
 MINIO_IMAGE="${MINIO_IMAGE:-quay.io/minio/minio:latest}"
 MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}"
-MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-}"
+if [[ -z "${MINIO_ROOT_PASSWORD}" ]]; then
+  MINIO_ROOT_PASSWORD="$(python3 - <<'PY'
+import secrets
+import string
+
+alphabet = string.ascii_letters + string.digits
+print("".join(secrets.choice(alphabet) for _ in range(32)))
+PY
+)"
+fi
 STATE_BUCKET="${MOLTENHUB_STATE_S3_BUCKET:-moltenhub-state-smoke}"
 QUEUE_BUCKET="${MOLTENHUB_QUEUE_S3_BUCKET:-moltenhub-queue-smoke}"
 

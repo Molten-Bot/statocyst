@@ -426,6 +426,7 @@ func TestLaunchSmoke(t *testing.T) {
 		agentURIB := asString(t, agentB, "uri")
 
 		const peerID = "alpha-beta"
+		// Fake shared-secret fixture; required to pair in-memory federated test servers.
 		const secret = "peer-shared-secret"
 		createPeer(t, alpha.router, peerID, beta.canonicalBase, beta.server.URL, secret)
 		createPeer(t, beta.router, peerID, alpha.canonicalBase, alpha.server.URL, secret)
