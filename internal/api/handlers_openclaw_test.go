@@ -359,6 +359,81 @@ func TestOpenClawWebSocketDeliveryAndAckFlow(t *testing.T) {
 	}
 }
 
+func TestOpenClawWebSocketDeliversMessageQueuedWhileAgentOffline(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	offlineResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+		"session_key": "offline-queue",
+		"reason":      "offline queue regression",
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if offlineResp.Code != http.StatusOK {
+		t.Fatalf("expected openclaw offline 200, got %d %s", offlineResp.Code, offlineResp.Body.String())
+	}
+
+	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+		"to_agent_uuid": agentUUIDB,
+		"message": map[string]any{
+			"kind": "offline_queue_probe",
+			"text": "queued while offline",
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if publishResp.Code != http.StatusAccepted {
+		t.Fatalf("expected publish 202 while receiver offline, got %d %s", publishResp.Code, publishResp.Body.String())
+	}
+	publishPayload := decodeJSONMap(t, publishResp.Body.Bytes())
+	publishResult := requireAgentRuntimeSuccessEnvelope(t, publishPayload)
+	if got, _ := publishResult["status"].(string); got != "queued" {
+		t.Fatalf("expected offline receiver message to be queued, got %q payload=%v", got, publishPayload)
+	}
+	messageID, _ := publishResult["message_id"].(string)
+	if messageID == "" {
+		t.Fatalf("expected queued message_id, got payload=%v", publishPayload)
+	}
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=offline-queue"
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+tokenB)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected websocket dial to succeed, got err=%v", err)
+	}
+	defer conn.Close()
+
+	ready := readWSMessage(t, conn, 5*time.Second)
+	if got := readStringPath(ready, "type"); got != "session_ready" {
+		t.Fatalf("expected initial ws message type=session_ready, got %q payload=%v", got, ready)
+	}
+
+	delivery := waitForWSMessageType(t, conn, "delivery", 10*time.Second)
+	if got := readStringPath(delivery, "result", "message", "message_id"); got != messageID {
+		t.Fatalf("expected queued offline message_id %q, got %q payload=%v", messageID, got, delivery)
+	}
+	if got := readStringPath(delivery, "result", "openclaw_message", "text"); got != "queued while offline" {
+		t.Fatalf("expected queued offline payload text, got %q payload=%v", got, delivery)
+	}
+	deliveryID := readStringPath(delivery, "result", "delivery", "delivery_id")
+	if deliveryID == "" {
+		t.Fatalf("expected delivery_id in websocket delivery payload=%v", delivery)
+	}
+
+	if err := conn.WriteJSON(map[string]any{
+		"type":        "ack",
+		"request_id":  "offline-queue-ack",
+		"delivery_id": deliveryID,
+	}); err != nil {
+		t.Fatalf("expected websocket ack write to succeed, got err=%v", err)
+	}
+	ackResp := waitForWSResponseRequestID(t, conn, "offline-queue-ack", 5*time.Second)
+	if ok, _ := ackResp["ok"].(bool); !ok {
+		t.Fatalf("expected ws ack response ok=true, got payload=%v", ackResp)
+	}
+}
+
 func TestOpenClawWebSocketUpgradeWithGzipAcceptEncoding(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)

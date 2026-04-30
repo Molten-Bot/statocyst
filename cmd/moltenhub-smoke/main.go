@@ -72,6 +72,7 @@ func main() {
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
 		{name: "OpenClaw HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
 		{name: "OpenClaw polling heartbeat marks runtime presence online", run: (*runner).stepOpenClawPresenceHeartbeat},
+		{name: "OpenClaw queued offline message dispatches on websocket reconnect", run: (*runner).stepOpenClawQueuedOfflineWebSocketDelivery},
 		{name: "OpenClaw websocket delivery and ack succeeds", run: (*runner).stepOpenClawWebSocketDelivery},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},
@@ -812,6 +813,49 @@ func (r *runner) stepOpenClawWebSocketDelivery() error {
 	if err != nil {
 		return err
 	}
+
+	deliveryID, receivedText, err := r.waitForOpenClawWSDelivery(conn, messageID, 12*time.Second)
+	if err != nil {
+		return err
+	}
+	if receivedText != messageText {
+		return fmt.Errorf("expected websocket delivery text %q, got %q", messageText, receivedText)
+	}
+	return r.ackOpenClawDeliveryWS(conn, deliveryID)
+}
+
+func (r *runner) stepOpenClawQueuedOfflineWebSocketDelivery() error {
+	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+		return err
+	}
+
+	sessionKey := fmt.Sprintf("smoke-offline-queue-%d", time.Now().UnixNano())
+	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/offline", cmdutil.AgentHeaders(r.tokenB), map[string]any{
+		"session_key": sessionKey,
+		"reason":      "smoke offline queue baseline",
+	})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("expected openclaw offline 200, got %d payload=%v", status, payload)
+	}
+	result := runtimeResult(payload)
+	if got := readStringPath(result, "presence", "status"); got != "offline" {
+		return fmt.Errorf("expected presence status offline before queued publish, got %q payload=%v", got, payload)
+	}
+
+	messageText := fmt.Sprintf("smoke-openclaw-offline-queue-%d", time.Now().UnixNano())
+	messageID, err := r.publishOpenClawMessage(r.tokenA, r.agentUUIDB, messageText)
+	if err != nil {
+		return err
+	}
+
+	conn, err := r.openOpenClawWebSocket(r.tokenB, sessionKey)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
 
 	deliveryID, receivedText, err := r.waitForOpenClawWSDelivery(conn, messageID, 12*time.Second)
 	if err != nil {
