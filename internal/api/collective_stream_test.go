@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,33 @@ func TestCollectiveStreamAgentSeesTrustedPeerPublish(t *testing.T) {
 		}
 	}
 	t.Fatalf("timed out waiting for collective publish event")
+}
+
+func TestCollectiveStreamAcceptsQueryAccessToken(t *testing.T) {
+	router := newTestRouter()
+	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/collective/stream?access_token=" + url.QueryEscape(tokenB)
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("dial collective stream with query token failed: status=%d err=%v", status, err)
+	}
+	defer conn.Close()
+
+	var ready map[string]any
+	if err := conn.ReadJSON(&ready); err != nil {
+		t.Fatalf("read ready event: %v", err)
+	}
+	viewer, _ := ready["viewer"].(map[string]any)
+	if got, _ := viewer["kind"].(string); got != "agent" {
+		t.Fatalf("expected query token to authenticate agent stream, got ready=%v", ready)
+	}
 }
 
 func TestCollectiveStreamOrgScopeRequiresOwner(t *testing.T) {

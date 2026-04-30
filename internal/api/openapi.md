@@ -2430,6 +2430,7 @@ paths:
         Events are in-memory only; callers receive events emitted after connection and no historical replay.
         Human auth can subscribe to manageable agents by default, a specific `agent_uuid`, or an organization scope when the human is the org owner.
         Agent auth can subscribe to itself and trusted peer agents.
+        Browser clients that cannot set WebSocket authorization headers may pass the bearer token as `access_token`.
       security:
         - humanAuth: []
         - agentAuth: []
@@ -2453,6 +2454,12 @@ paths:
           schema:
             type: string
           description: Organization stream. Requires human org owner or super-admin credentials.
+        - in: query
+          name: access_token
+          required: false
+          schema:
+            type: string
+          description: Browser WebSocket bearer token fallback. Authorization header remains preferred when available.
       responses:
         '101':
           description: WebSocket upgrade accepted
