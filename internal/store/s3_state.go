@@ -398,7 +398,36 @@ func (s *s3StateStore) SetHumanPresence(humanID string, presence map[string]any,
 }
 
 func (s *s3StateStore) GetHumanPresence(humanID string) (map[string]any, bool, error) {
-	return s.MemoryStore.GetHumanPresence(humanID)
+	humanID = strings.TrimSpace(humanID)
+	local, localOK, err := s.MemoryStore.GetHumanPresence(humanID)
+	if err != nil {
+		return nil, false, err
+	}
+	remote, body, remoteOK := s.readPresenceObjectBestEffort(s.humanPresenceObjectKey(humanID), normalizeHumanPresence)
+	if !remoteOK || !preferRemotePresence(local, localOK, remote) {
+		return local, localOK, nil
+	}
+
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	s.MemoryStore.mu.Lock()
+	defer s.MemoryStore.mu.Unlock()
+
+	if _, ok := s.MemoryStore.humans[humanID]; !ok {
+		return nil, false, ErrHumanNotFound
+	}
+	current := copyMetadata(s.MemoryStore.humanPresence[humanID])
+	currentOK := len(current) > 0
+	if !preferRemotePresence(current, currentOK, remote) {
+		return current, currentOK, nil
+	}
+	s.MemoryStore.humanPresence[humanID] = copyMetadata(remote)
+	if s.persistedObjects == nil {
+		s.persistedObjects = make(map[string][]byte)
+	}
+	s.persistedObjects[s.humanPresenceObjectKey(humanID)] = body
+	return copyMetadata(remote), true, nil
 }
 
 func (s *s3StateStore) CreateOrg(handle, displayName string, creatorHumanID string, orgID string, now time.Time) (model.Organization, model.Membership, error) {
@@ -727,7 +756,37 @@ func (s *s3StateStore) SetAgentPresence(agentUUID string, presence map[string]an
 }
 
 func (s *s3StateStore) GetAgentPresence(agentUUID string) (map[string]any, bool, error) {
-	return s.MemoryStore.GetAgentPresence(agentUUID)
+	agentUUID = strings.TrimSpace(agentUUID)
+	local, localOK, err := s.MemoryStore.GetAgentPresence(agentUUID)
+	if err != nil {
+		return nil, false, err
+	}
+	remote, body, remoteOK := s.readPresenceObjectBestEffort(s.presenceObjectKey(agentUUID), normalizeAgentPresence)
+	if !remoteOK || !preferRemotePresence(local, localOK, remote) {
+		return local, localOK, nil
+	}
+
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	s.MemoryStore.mu.Lock()
+	defer s.MemoryStore.mu.Unlock()
+
+	agent, ok := s.MemoryStore.agents[agentUUID]
+	if !ok || agent.Status == model.StatusRevoked {
+		return nil, false, ErrAgentNotFound
+	}
+	current := copyMetadata(s.MemoryStore.agentPresence[agentUUID])
+	currentOK := len(current) > 0
+	if !preferRemotePresence(current, currentOK, remote) {
+		return current, currentOK, nil
+	}
+	s.MemoryStore.agentPresence[agentUUID] = copyMetadata(remote)
+	if s.persistedObjects == nil {
+		s.persistedObjects = make(map[string][]byte)
+	}
+	s.persistedObjects[s.presenceObjectKey(agentUUID)] = body
+	return copyMetadata(remote), true, nil
 }
 
 func (s *s3StateStore) UpdateAgentMetadataSelfBestEffort(agentUUID string, metadata map[string]any, now time.Time) (model.Agent, error) {
@@ -1622,6 +1681,69 @@ func cloneS3Objects(objects map[string][]byte) map[string][]byte {
 		out[key] = append([]byte(nil), body...)
 	}
 	return out
+}
+
+func (s *s3StateStore) readPresenceObjectBestEffort(
+	key string,
+	normalize func(map[string]any) map[string]any,
+) (map[string]any, []byte, bool) {
+	timeout := s.bestEffortPersistTimeout
+	if timeout <= 0 {
+		timeout = defaultS3StateBestEffortPersistTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	body, found, err := s.getObject(ctx, key)
+	if err != nil || !found {
+		return nil, nil, false
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, nil, false
+	}
+	presence := normalize(raw)
+	if len(presence) == 0 {
+		return nil, nil, false
+	}
+	normalizedBody, err := json.Marshal(presence)
+	if err != nil {
+		return nil, nil, false
+	}
+	return presence, normalizedBody, true
+}
+
+func preferRemotePresence(local map[string]any, localOK bool, remote map[string]any) bool {
+	if len(remote) == 0 {
+		return false
+	}
+	if !localOK || len(local) == 0 {
+		return true
+	}
+	remoteAt, remoteAtOK := presenceUpdatedAt(remote)
+	localAt, localAtOK := presenceUpdatedAt(local)
+	switch {
+	case remoteAtOK && localAtOK:
+		return !remoteAt.Before(localAt)
+	case remoteAtOK && !localAtOK:
+		return true
+	default:
+		return false
+	}
+}
+
+func presenceUpdatedAt(presence map[string]any) (time.Time, bool) {
+	raw := strings.TrimSpace(stringValue(presence["updated_at"]))
+	if raw == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return parsed.UTC(), true
+	}
+	if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+		return parsed.UTC(), true
+	}
+	return time.Time{}, false
 }
 
 func rebuildStateIndexesLocked(mem *MemoryStore) {
