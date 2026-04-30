@@ -1150,3 +1150,81 @@ func TestS3StateStore_SetAgentPresenceThrottlesHeartbeatPersistence(t *testing.T
 		t.Fatalf("expected status transition to persist immediately, got %+v", counts)
 	}
 }
+
+func TestS3StateStore_GetAgentPresenceRefreshesFromS3(t *testing.T) {
+	fake := newFakeS3State()
+	server := fake.server("state-bucket")
+	defer server.Close()
+
+	writer := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+
+	now := time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC)
+	id := &idGen{}
+	human, err := writer.UpsertHuman("dev", "presence-reader-sub", "presence-reader@a.test", true, now, id.Next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	org, _, err := writer.CreateOrg("presence-reader-org", "Presence Reader Org", human.HumanID, id.MustID(t), now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	owner := human.HumanID
+	agent, err := writer.RegisterAgent(org.OrgID, "presence-reader-agent", &owner, "presence-reader-token", human.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+
+	reader := newTestS3StateStore(t, server.Client(), server.URL, "state-bucket", "moltenhub-state")
+	if err := reader.loadFromS3(context.Background()); err != nil {
+		t.Fatalf("reader loadFromS3 failed: %v", err)
+	}
+	if presence, ok, err := reader.GetAgentPresence(agent.AgentUUID); err != nil || ok || presence != nil {
+		t.Fatalf("expected no reader presence before writer update, got presence=%v ok=%v err=%v", presence, ok, err)
+	}
+
+	if _, _, err := writer.SetAgentPresence(agent.AgentUUID, map[string]any{
+		"status":      "online",
+		"ready":       true,
+		"transport":   "websocket",
+		"session_key": "main",
+	}, now.Add(1*time.Second)); err != nil {
+		t.Fatalf("writer SetAgentPresence online failed: %v", err)
+	}
+
+	presence, ok, err := reader.GetAgentPresence(agent.AgentUUID)
+	if err != nil {
+		t.Fatalf("reader GetAgentPresence online failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected reader presence after writer update")
+	}
+	if got := stringValue(presence["status"]); got != "online" {
+		t.Fatalf("expected reader to refresh online presence, got %q payload=%v", got, presence)
+	}
+	if ready, _ := presence["ready"].(bool); !ready {
+		t.Fatalf("expected reader ready=true, got payload=%v", presence)
+	}
+
+	if _, _, err := writer.SetAgentPresence(agent.AgentUUID, map[string]any{
+		"status":      "offline",
+		"ready":       false,
+		"transport":   "websocket",
+		"session_key": "main",
+	}, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("writer SetAgentPresence offline failed: %v", err)
+	}
+
+	presence, ok, err = reader.GetAgentPresence(agent.AgentUUID)
+	if err != nil {
+		t.Fatalf("reader GetAgentPresence offline failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected reader offline presence after writer update")
+	}
+	if got := stringValue(presence["status"]); got != "offline" {
+		t.Fatalf("expected reader to refresh offline presence, got %q payload=%v", got, presence)
+	}
+	if ready, _ := presence["ready"].(bool); ready {
+		t.Fatalf("expected reader ready=false, got payload=%v", presence)
+	}
+}
