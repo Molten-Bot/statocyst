@@ -130,6 +130,7 @@ func (h *Handler) handleCollectiveStream(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) authorizeCollectiveStream(r *http.Request) (func(collectiveStreamEvent) bool, map[string]any, error) {
+	r = requestWithCollectiveStreamBearer(r)
 	if agentUUID, err := h.authenticateAgent(r); err == nil {
 		return h.authorizeAgentCollectiveStream(agentUUID, r)
 	}
@@ -138,6 +139,25 @@ func (h *Handler) authorizeCollectiveStream(r *http.Request) (func(collectiveStr
 		return nil, nil, err
 	}
 	return h.authorizeHumanCollectiveStream(actor, r)
+}
+
+func requestWithCollectiveStreamBearer(r *http.Request) *http.Request {
+	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+		return r
+	}
+
+	token := strings.TrimSpace(r.URL.Query().Get("access_token"))
+	if token == "" {
+		token = strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	if token == "" {
+		return r
+	}
+
+	clone := r.Clone(r.Context())
+	clone.Header = r.Header.Clone()
+	clone.Header.Set("Authorization", "Bearer "+token)
+	return clone
 }
 
 func (h *Handler) authorizeAgentCollectiveStream(agentUUID string, r *http.Request) (func(collectiveStreamEvent) bool, map[string]any, error) {
