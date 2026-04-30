@@ -517,6 +517,127 @@ func TestLegacyPublishVisibleAsA2ATask(t *testing.T) {
 	}
 }
 
+func TestOpenClawPublishVisibleAsA2ATaskWithDispatcherCorrelation(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	childRequestID := "dispatch-child-1"
+	parentRequestID := "dispatch-parent-1"
+	metadataPatch := doJSONRequest(t, router, http.MethodPatch, "/v1/agents/me/metadata", map[string]any{
+		"metadata": map[string]any{
+			"skills": []map[string]any{{
+				"name":        "code_for_me",
+				"description": "Run a coding task.",
+			}},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if metadataPatch.Code != http.StatusOK {
+		t.Fatalf("metadata patch failed: %d %s", metadataPatch.Code, metadataPatch.Body.String())
+	}
+
+	pubResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+		"to_agent_uuid": agentUUIDB,
+		"client_msg_id": childRequestID,
+		"message": map[string]any{
+			"type":                "skill_request",
+			"skill_name":          "code_for_me",
+			"request_id":          childRequestID,
+			"reply_to_request_id": parentRequestID,
+			"payload_format":      "json",
+			"payload": map[string]any{
+				"repo":   "git@github.com:Molten-Bot/moltenhub-code.git",
+				"prompt": "wire task correlation",
+			},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if pubResp.Code != http.StatusAccepted {
+		t.Fatalf("expected OpenClaw publish 202, got %d %s", pubResp.Code, pubResp.Body.String())
+	}
+	pubPayload := decodeJSONMap(t, pubResp.Body.Bytes())
+	result, _ := pubPayload["result"].(map[string]any)
+	messageID, _ := result["message_id"].(string)
+	if messageID == "" {
+		t.Fatalf("expected message_id, got %v", pubPayload)
+	}
+
+	taskResp := doJSONRequest(t, router, http.MethodGet, "/v1/a2a/agents/"+agentUUIDB+"/tasks/"+messageID, nil, map[string]string{
+		"Authorization": "Bearer " + tokenB,
+	})
+	if taskResp.Code != http.StatusOK {
+		t.Fatalf("expected A2A get task 200, got %d %s", taskResp.Code, taskResp.Body.String())
+	}
+	task := decodeJSONMap(t, taskResp.Body.Bytes())
+	if got := task["contextId"]; got != childRequestID {
+		t.Fatalf("expected task contextId %q, got %v task=%v", childRequestID, got, task)
+	}
+	if got := readStringPath(task, "metadata", "moltenhub", "client_msg_id"); got != childRequestID {
+		t.Fatalf("expected moltenhub client_msg_id %q, got %q task=%v", childRequestID, got, task)
+	}
+	if got := readStringPath(task, "metadata", "openclaw", "request_id"); got != childRequestID {
+		t.Fatalf("expected openclaw request_id %q, got %q task=%v", childRequestID, got, task)
+	}
+	if got := readStringPath(task, "metadata", "openclaw", "reply_to_request_id"); got != parentRequestID {
+		t.Fatalf("expected openclaw reply_to_request_id %q, got %q task=%v", parentRequestID, got, task)
+	}
+	if got := readStringPath(task, "metadata", "openclaw", "skill_name"); got != "code_for_me" {
+		t.Fatalf("expected openclaw skill_name code_for_me, got %q task=%v", got, task)
+	}
+}
+
+func TestA2ATextSendPreservesTaskCorrelationFields(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	sendResp := doJSONRequest(t, router, http.MethodPost, "/v1/a2a/agents/"+agentUUIDB+"/message:send", map[string]any{
+		"message": map[string]any{
+			"messageId":        "a2a-correlated-message",
+			"contextId":        "dispatcher-context-1",
+			"referenceTaskIds": []string{"dispatcher-task-1"},
+			"role":             "ROLE_USER",
+			"metadata": map[string]any{
+				"trace_id": "trace-1",
+			},
+			"parts": []map[string]any{{
+				"text": "hello with task correlation",
+			}},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if sendResp.Code != http.StatusOK {
+		t.Fatalf("expected A2A send 200, got %d %s", sendResp.Code, sendResp.Body.String())
+	}
+	sendPayload := decodeJSONMap(t, sendResp.Body.Bytes())
+	task, _ := sendPayload["task"].(map[string]any)
+	taskID, _ := task["id"].(string)
+	if taskID == "" {
+		t.Fatalf("expected task id, got %v", sendPayload)
+	}
+	if got := task["contextId"]; got != "dispatcher-context-1" {
+		t.Fatalf("expected contextId from A2A message, got %v task=%v", got, task)
+	}
+	if got := readStringPath(task, "metadata", "a2a", "context_id"); got != "dispatcher-context-1" {
+		t.Fatalf("expected metadata a2a context_id, got %q task=%v", got, task)
+	}
+	metadata, _ := task["metadata"].(map[string]any)
+	a2aMeta, _ := metadata["a2a"].(map[string]any)
+	refs, _ := a2aMeta["reference_task_ids"].([]any)
+	if len(refs) != 1 || refs[0] != "dispatcher-task-1" {
+		t.Fatalf("expected reference_task_ids to contain dispatcher-task-1, got %v task=%v", refs, task)
+	}
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected legacy pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	message, _ := pullPayload["message"].(map[string]any)
+	if message["message_id"] != taskID {
+		t.Fatalf("expected pulled message_id %q, got %v", taskID, message)
+	}
+	if message["content_type"] != "application/json" {
+		t.Fatalf("expected correlated A2A text message to preserve JSON envelope, got %v", message)
+	}
+}
+
 func TestA2AJSONRPCNoTrustReturnsFailureDetails(t *testing.T) {
 	router := newTestRouter()
 	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
