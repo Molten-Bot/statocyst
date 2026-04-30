@@ -558,7 +558,7 @@ func a2aMessagePayload(req a2aSendMessageRequest) (string, string, *a2aProtocolE
 		}
 		textParts = append(textParts, *part.Text)
 	}
-	if allText {
+	if allText && !a2aMessageNeedsJSONEnvelope(req) {
 		return a2aMIMEText, strings.Join(textParts, "\n"), nil
 	}
 	envelope := map[string]any{
@@ -579,6 +579,41 @@ func a2aMessagePayload(req a2aSendMessageRequest) (string, string, *a2aProtocolE
 		return "", "", a2aInvalidParams("invalid_message", "message could not be encoded", map[string]any{"error": err.Error()})
 	}
 	return a2aMIMEJSON, string(raw), nil
+}
+
+func a2aMessageNeedsJSONEnvelope(req a2aSendMessageRequest) bool {
+	if req.Message == nil {
+		return false
+	}
+	if strings.TrimSpace(req.Message.ContextID) != "" || strings.TrimSpace(req.Message.TaskID) != "" {
+		return true
+	}
+	if len(req.Message.ReferenceTasks) > 0 || len(req.Message.Extensions) > 0 {
+		return true
+	}
+	if len(req.Metadata) > 0 && !a2aMetadataOnlyRouting(req.Metadata) {
+		return true
+	}
+	if len(req.Message.Metadata) > 0 && !a2aMetadataOnlyRouting(req.Message.Metadata) {
+		return true
+	}
+	return false
+}
+
+func a2aMetadataOnlyRouting(metadata map[string]any) bool {
+	if len(metadata) == 0 {
+		return true
+	}
+	for key := range metadata {
+		switch key {
+		case "to_agent_uuid", "toAgentUuid", "target_agent_uuid", "targetAgentUuid",
+			"to_agent_uri", "toAgentUri", "target_agent_uri", "targetAgentUri":
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) a2aGetTask(r *http.Request, targetAgentUUID string, raw json.RawMessage) (map[string]any, *a2aProtocolError) {
@@ -863,24 +898,7 @@ func (h *Handler) a2aTaskFromRecord(record model.MessageRecord, historyLength *i
 			"state":     a2aTaskState(record),
 			"timestamp": record.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		},
-		"metadata": map[string]any{
-			"moltenhub": map[string]any{
-				"message_id":          record.Message.MessageID,
-				"status":              record.Status,
-				"from_agent_uuid":     record.Message.FromAgentUUID,
-				"to_agent_uuid":       record.Message.ToAgentUUID,
-				"from_agent_id":       record.Message.FromAgentID,
-				"to_agent_id":         record.Message.ToAgentID,
-				"from_agent_uri":      record.Message.FromAgentURI,
-				"to_agent_uri":        record.Message.ToAgentURI,
-				"sender_org_id":       record.Message.SenderOrgID,
-				"receiver_org_id":     record.Message.ReceiverOrgID,
-				"content_type":        record.Message.ContentType,
-				"delivery_attempts":   record.DeliveryAttempts,
-				"idempotent_replays":  record.IdempotentReplays,
-				"last_failure_reason": record.LastFailureReason,
-			},
-		},
+		"metadata": a2aTaskMetadataFromRecord(record, contextID),
 	}
 	if historyLength == nil || *historyLength != 0 {
 		task["history"] = []map[string]any{h.a2aMessageFromRecord(record, contextID)}
@@ -898,6 +916,121 @@ func (h *Handler) a2aTaskFromRecord(record model.MessageRecord, historyLength *i
 		}
 	}
 	return task
+}
+
+func a2aTaskMetadataFromRecord(record model.MessageRecord, contextID string) map[string]any {
+	moltenhub := map[string]any{
+		"message_id":          record.Message.MessageID,
+		"task_id":             record.Message.MessageID,
+		"context_id":          contextID,
+		"status":              record.Status,
+		"from_agent_uuid":     record.Message.FromAgentUUID,
+		"to_agent_uuid":       record.Message.ToAgentUUID,
+		"from_agent_id":       record.Message.FromAgentID,
+		"to_agent_id":         record.Message.ToAgentID,
+		"from_agent_uri":      record.Message.FromAgentURI,
+		"to_agent_uri":        record.Message.ToAgentURI,
+		"sender_org_id":       record.Message.SenderOrgID,
+		"receiver_org_id":     record.Message.ReceiverOrgID,
+		"content_type":        record.Message.ContentType,
+		"delivery_attempts":   record.DeliveryAttempts,
+		"idempotent_replays":  record.IdempotentReplays,
+		"last_failure_reason": record.LastFailureReason,
+	}
+	if record.Message.ClientMsgID != nil && strings.TrimSpace(*record.Message.ClientMsgID) != "" {
+		moltenhub["client_msg_id"] = strings.TrimSpace(*record.Message.ClientMsgID)
+	}
+	metadata := map[string]any{"moltenhub": moltenhub}
+	if a2aMeta := a2aProtocolTaskMetadata(record.Message.Payload); len(a2aMeta) > 0 {
+		metadata["a2a"] = a2aMeta
+	}
+	if openClawMeta := openClawTaskMetadata(record.Message.Payload); len(openClawMeta) > 0 {
+		metadata["openclaw"] = openClawMeta
+	}
+	return metadata
+}
+
+func a2aProtocolTaskMetadata(payload string) map[string]any {
+	envelope := a2aEnvelopePayload(payload)
+	if len(envelope) == 0 || strings.TrimSpace(a2aReadStringPath(envelope, "protocol")) != a2aProtocolAdapter {
+		return nil
+	}
+	msg, _ := envelope["message"].(map[string]any)
+	if len(msg) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	copyMetadataString(out, msg, "messageId", "message_id")
+	copyMetadataString(out, msg, "contextId", "context_id")
+	copyMetadataString(out, msg, "taskId", "task_id")
+	copyMetadataString(out, msg, "role", "role")
+	if refs := stringSliceFromAny(msg["referenceTaskIds"]); len(refs) > 0 {
+		out["reference_task_ids"] = refs
+	}
+	if request, ok := envelope["request"].(map[string]any); ok {
+		if requestMeta, ok := request["metadata"].(map[string]any); ok && len(requestMeta) > 0 {
+			out["request_metadata"] = cloneStringAnyMap(requestMeta)
+		}
+	}
+	if envelopeMeta, ok := envelope["metadata"].(map[string]any); ok && len(envelopeMeta) > 0 {
+		out["metadata"] = cloneStringAnyMap(envelopeMeta)
+	}
+	return out
+}
+
+func openClawTaskMetadata(payload string) map[string]any {
+	envelope := openClawEnvelopePayload(payload)
+	if len(envelope) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	for _, key := range []string{
+		"protocol",
+		"kind",
+		"type",
+		"request_id",
+		"reply_to_request_id",
+		"reply_target",
+		"skill_name",
+		"payload_format",
+		"status",
+	} {
+		copyMetadataString(out, envelope, key, key)
+	}
+	return out
+}
+
+func copyMetadataString(out, source map[string]any, sourceKey, targetKey string) {
+	if out == nil || source == nil {
+		return
+	}
+	value := strings.TrimSpace(asStringAny(source[sourceKey]))
+	if value != "" {
+		out[targetKey] = value
+	}
+}
+
+func stringSliceFromAny(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if trimmed := strings.TrimSpace(item); trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if trimmed := strings.TrimSpace(asStringAny(item)); trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func (h *Handler) a2aMessageFromRecord(record model.MessageRecord, contextID string) map[string]any {
@@ -945,10 +1078,7 @@ func (h *Handler) a2aMessageFromRecord(record model.MessageRecord, contextID str
 }
 
 func a2aEnvelopeMessage(payload string) map[string]any {
-	var envelope map[string]any
-	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
-		return nil
-	}
+	envelope := a2aEnvelopePayload(payload)
 	msg, ok := envelope["message"].(map[string]any)
 	if ok {
 		return cloneStringAnyMap(msg)
@@ -964,10 +1094,45 @@ func a2aEnvelopeMessage(payload string) map[string]any {
 	return cloneStringAnyMap(msg)
 }
 
+func a2aEnvelopePayload(payload string) map[string]any {
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(asStringAny(envelope["protocol"])) == a2aProtocolAdapter {
+		return envelope
+	}
+	if _, ok := envelope["message"].(map[string]any); ok {
+		return envelope
+	}
+	if request, ok := envelope["request"].(map[string]any); ok {
+		if _, ok := request["message"].(map[string]any); ok {
+			return envelope
+		}
+	}
+	return nil
+}
+
+func openClawEnvelopePayload(payload string) map[string]any {
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(asStringAny(envelope["protocol"])) != openClawHTTPProtocol {
+		return nil
+	}
+	return envelope
+}
+
 func a2aContextIDFromRecord(record model.MessageRecord) string {
 	if msg := a2aEnvelopeMessage(record.Message.Payload); msg != nil {
 		if contextID := strings.TrimSpace(a2aReadStringPath(msg, "contextId")); contextID != "" {
 			return contextID
+		}
+	}
+	if openClaw := openClawEnvelopePayload(record.Message.Payload); len(openClaw) > 0 {
+		if requestID := strings.TrimSpace(asStringAny(openClaw["request_id"])); requestID != "" {
+			return requestID
 		}
 	}
 	if record.Message.ClientMsgID != nil && strings.TrimSpace(*record.Message.ClientMsgID) != "" {
