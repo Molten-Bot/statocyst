@@ -12,6 +12,8 @@ type ControlPlaneStore interface {
 	UpsertHuman(provider, subject, email string, emailVerified bool, now time.Time, idFactory func() (string, error)) (model.Human, error)
 	UpdateHumanProfile(humanID, handle string, confirmHandle bool, now time.Time) (model.Human, error)
 	UpdateHumanMetadata(humanID string, metadata map[string]any, now time.Time) (model.Human, error)
+	SetHumanPresence(humanID string, presence map[string]any, now time.Time) (model.Human, bool, error)
+	GetHumanPresence(humanID string) (map[string]any, bool, error)
 	CreateOrg(handle, displayName string, creatorHumanID string, orgID string, now time.Time) (model.Organization, model.Membership, error)
 	DeleteOrg(orgID, actorHumanID string, isSuperAdmin bool, now time.Time) error
 	EnsurePersonalOrg(humanID string, now time.Time, idFactory func() (string, error)) (model.Organization, error)

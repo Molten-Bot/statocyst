@@ -30,6 +30,7 @@ const (
 	AgentMetadataKeyActivities = "activities"
 	AgentMetadataKeyHireMe     = "hire_me"
 	AgentMetadataKeyPresence   = "presence"
+	HumanMetadataKeyPresence   = "presence"
 	// AgentMetadataKeySystemActivityLog is internal server-managed activity history.
 	// It is append-only and ignored for client-provided metadata updates.
 	AgentMetadataKeySystemActivityLog = "_system_activity_log"

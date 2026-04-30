@@ -80,6 +80,7 @@ type MemoryStore struct {
 	humanByAuthKey map[string]string
 	humanByHandle  map[string]string
 	archivedHumans map[string]model.Human
+	humanPresence  map[string]map[string]any
 
 	memberships         map[string]model.Membership
 	membershipByOrgUser map[string]string
@@ -138,6 +139,7 @@ func NewMemoryStore() *MemoryStore {
 		humanByAuthKey:         make(map[string]string),
 		humanByHandle:          make(map[string]string),
 		archivedHumans:         make(map[string]model.Human),
+		humanPresence:          make(map[string]map[string]any),
 		memberships:            make(map[string]model.Membership),
 		membershipByOrgUser:    make(map[string]string),
 		invites:                make(map[string]model.Invite),
@@ -259,8 +261,44 @@ func (s *MemoryStore) UpdateHumanMetadata(humanID string, metadata map[string]an
 		return model.Human{}, ErrHumanNotFound
 	}
 	h.Metadata = copyMetadata(metadata)
+	delete(h.Metadata, model.HumanMetadataKeyPresence)
 	s.humans[humanID] = h
 	return h, nil
+}
+
+func (s *MemoryStore) SetHumanPresence(humanID string, presence map[string]any, now time.Time) (model.Human, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	human, ok := s.humans[humanID]
+	if !ok {
+		return model.Human{}, false, ErrHumanNotFound
+	}
+	next := normalizeHumanPresence(presence)
+	if _, ok := next["updated_at"]; !ok {
+		next["updated_at"] = now.UTC().Format(time.RFC3339)
+	}
+	previous := copyMetadata(s.humanPresence[humanID])
+	s.humanPresence[humanID] = next
+
+	prevStatus := strings.ToLower(strings.TrimSpace(stringValue(previous["status"])))
+	nextStatus := strings.ToLower(strings.TrimSpace(stringValue(next["status"])))
+	changedStatus := prevStatus != nextStatus && nextStatus != ""
+	return human, changedStatus, nil
+}
+
+func (s *MemoryStore) GetHumanPresence(humanID string) (map[string]any, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if _, ok := s.humans[humanID]; !ok {
+		return nil, false, ErrHumanNotFound
+	}
+	presence, ok := s.humanPresence[humanID]
+	if !ok || len(presence) == 0 {
+		return nil, false, nil
+	}
+	return copyMetadata(presence), true, nil
 }
 
 func (s *MemoryStore) CreateOrg(handle, displayName string, creatorHumanID string, orgID string, now time.Time) (model.Organization, model.Membership, error) {
@@ -1928,6 +1966,10 @@ func normalizeAgentPresence(presence map[string]any) map[string]any {
 		out["ready"] = ready
 	}
 	return out
+}
+
+func normalizeHumanPresence(presence map[string]any) map[string]any {
+	return normalizeAgentPresence(presence)
 }
 
 func mergeAndNormalizeAgentMetadata(current, patch map[string]any, now time.Time) (map[string]any, error) {
