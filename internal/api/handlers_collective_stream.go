@@ -218,7 +218,7 @@ func (h *Handler) authorizeHumanCollectiveStream(actor humanActor, r *http.Reque
 		if !validateUUID(targetAgentUUID) {
 			return nil, nil, errInvalidCollectiveTarget
 		}
-		if !actor.IsSuperAdmin && !h.humanCanManageAgent(actor.Human.HumanID, targetAgentUUID) {
+		if !actor.IsSuperAdmin && !h.humanCanViewCollectiveAgent(actor.Human.HumanID, targetAgentUUID) {
 			return nil, nil, store.ErrUnauthorizedRole
 		}
 		return collectiveAgentFilter(map[string]struct{}{targetAgentUUID: {}}), map[string]any{
@@ -231,7 +231,9 @@ func (h *Handler) authorizeHumanCollectiveStream(actor humanActor, r *http.Reque
 	agents := h.control.ListHumanAgents(actor.Human.HumanID)
 	allowed := map[string]struct{}{}
 	for _, agent := range agents {
-		allowed[agent.AgentUUID] = struct{}{}
+		if h.humanCanViewCollectiveAgent(actor.Human.HumanID, agent.AgentUUID) {
+			allowed[agent.AgentUUID] = struct{}{}
+		}
 	}
 	if actor.IsSuperAdmin {
 		return func(collectiveStreamEvent) bool { return true }, map[string]any{
@@ -265,6 +267,20 @@ func (h *Handler) humanOwnsOrg(humanID, orgID string) bool {
 		if membership.Membership.OrgID == orgID && membership.Membership.Role == model.RoleOwner && membership.Membership.Status == model.StatusActive {
 			return true
 		}
+	}
+	return false
+}
+
+func (h *Handler) humanCanViewCollectiveAgent(humanID, agentUUID string) bool {
+	agent, err := h.control.GetAgentByUUID(agentUUID)
+	if err != nil {
+		return false
+	}
+	if agent.OwnerHumanID != nil && strings.TrimSpace(*agent.OwnerHumanID) == strings.TrimSpace(humanID) {
+		return true
+	}
+	if strings.TrimSpace(agent.OrgID) != "" && h.humanOwnsOrg(humanID, agent.OrgID) {
+		return true
 	}
 	return false
 }

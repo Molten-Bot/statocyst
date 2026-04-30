@@ -136,3 +136,49 @@ func TestCollectiveStreamOrgScopeRequiresOwner(t *testing.T) {
 		t.Fatalf("expected non-owner 403, got status=%d err=%v", status, err)
 	}
 }
+
+func TestCollectiveStreamAgentScopeRequiresOwnerOrOrgOwner(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Collective Agent Wall")
+	charlieHumanID := currentHumanID(t, router, "charlie", "charlie@c.test")
+
+	adminInviteID := createInvite(t, router, "alice", "alice@a.test", orgID, "bob@b.test", "admin")
+	acceptInvite(t, router, "bob", "bob@b.test", adminInviteID)
+	memberInviteID := createInvite(t, router, "alice", "alice@a.test", orgID, "charlie@c.test", "member")
+	acceptInvite(t, router, "charlie", "charlie@c.test", memberInviteID)
+
+	_, agentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "charlie-owned", charlieHumanID)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/collective/stream?agent_uuid=" + agentUUID
+	for _, tc := range []struct {
+		name    string
+		headers http.Header
+	}{
+		{name: "direct owner", headers: http.Header{"X-Human-Id": []string{"charlie"}, "X-Human-Email": []string{"charlie@c.test"}}},
+		{name: "org owner", headers: http.Header{"X-Human-Id": []string{"alice"}, "X-Human-Email": []string{"alice@a.test"}}},
+	} {
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, tc.headers)
+		if err != nil {
+			t.Fatalf("expected %s collective stream dial to succeed: %v", tc.name, err)
+		}
+		_ = conn.Close()
+	}
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{
+		"X-Human-Id":    []string{"bob"},
+		"X-Human-Email": []string{"bob@b.test"},
+	})
+	if err == nil {
+		_ = conn.Close()
+		t.Fatalf("expected org admin collective stream dial to fail")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("expected org admin 403, got status=%d err=%v", status, err)
+	}
+}
