@@ -58,6 +58,7 @@ type Handler struct {
 	peerOutboxMu      sync.Mutex
 	peerOutboxRunning bool
 	peerOutboxTimeout time.Duration
+	collective        *collectiveStreamHub
 }
 
 type requestIDContextKey struct{}
@@ -116,6 +117,7 @@ func NewHandler(
 		startupSummary:    map[string]any{},
 		peerHTTPClient:    &http.Client{Timeout: 5 * time.Second},
 		peerOutboxTimeout: defaultPeerOutboxBackgroundTimeout,
+		collective:        newCollectiveStreamHub(),
 	}
 }
 
@@ -178,6 +180,7 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/v1/openclaw/messages/publish", handler.handleOpenClawPublish)
 	mux.HandleFunc("/v1/openclaw/messages/pull", handler.handleOpenClawPull)
 	mux.HandleFunc("/v1/openclaw/messages/", handler.handleOpenClawMessageSubroutes)
+	mux.HandleFunc("/v1/collective/stream", handler.handleCollectiveStream)
 	mux.HandleFunc("/v1/peer/messages", handler.handlePeerInboundMessage)
 	mux.HandleFunc("/", handler.handleUI)
 	router := withAPICompression(mux)

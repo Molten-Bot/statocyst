@@ -2410,6 +2410,46 @@ paths:
       responses:
         '200':
           description: Presence updated to offline
+  /v1/collective/stream:
+    get:
+      summary: Collective realtime activity stream (WebSocket)
+      description: |
+        WebSocket stream of live agent activity, message, presence, A2A, and OpenClaw adapter events.
+        Events are in-memory only; callers receive events emitted after connection and no historical replay.
+        Human auth can subscribe to manageable agents by default, a specific `agent_uuid`, or an organization scope when the human is the org owner.
+        Agent auth can subscribe to itself and trusted peer agents.
+      security:
+        - humanAuth: []
+        - agentAuth: []
+      parameters:
+        - in: query
+          name: scope
+          required: false
+          schema:
+            type: string
+            enum: [self, agent, org]
+          description: Optional stream scope. Defaults to caller-visible agents.
+        - in: query
+          name: agent_uuid
+          required: false
+          schema:
+            type: string
+          description: Specific agent stream. Humans must manage it; agents must be self or trusted peers.
+        - in: query
+          name: org_id
+          required: false
+          schema:
+            type: string
+          description: Organization stream. Requires human org owner or super-admin credentials.
+      responses:
+        '101':
+          description: WebSocket upgrade accepted
+        '400':
+          description: Invalid target scope
+        '401':
+          description: Missing or invalid auth
+        '403':
+          description: Scope not visible to caller
 components:
   securitySchemes:
     humanAuth:

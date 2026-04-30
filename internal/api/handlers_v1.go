@@ -1290,7 +1290,18 @@ func (h *Handler) publishAgentActivity(agentUUID string, req publishAgentActivit
 	if err != nil {
 		return model.Agent{}, err
 	}
-	return h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, patch, h.now().UTC())
+	agent, err := h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, patch, h.now().UTC())
+	if err != nil {
+		return model.Agent{}, err
+	}
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		Category:  "agent_activity",
+		Action:    "published",
+		AgentUUID: agent.AgentUUID,
+		OrgID:     agent.OrgID,
+		Details:   map[string]any{"activity": req.Activity, "category": req.Category, "status": req.Status, "state": req.State},
+	})
+	return agent, nil
 }
 
 func (h *Handler) writeAgentActivityPublishError(w http.ResponseWriter, err error) {

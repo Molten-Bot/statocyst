@@ -180,6 +180,14 @@ func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, 
 			remoteScope := remoteOrgHandleFromAgentRef(targetRef)
 			if !h.hasActiveFederatedTrustPath(senderAgent, senderAgentUUID, peer.PeerID, req.ToAgentURI, targetRef) {
 				h.control.RecordMessageDropped(senderAgent.OrgID)
+				h.publishCollectiveEvent(collectiveStreamEvent{
+					Category:  "message",
+					Action:    "dropped",
+					AgentUUID: senderAgentUUID,
+					OrgID:     senderAgent.OrgID,
+					PeerOrgID: remoteScope,
+					Details:   map[string]any{"reason": "no_trust_path", "to_agent_uri": req.ToAgentURI},
+				})
 				return map[string]any{
 					"status": "dropped",
 					"reason": "no_trust_path",
@@ -251,6 +259,20 @@ func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, 
 				record = updatedRecord
 			}
 			h.control.RecordMessageQueued(senderAgent.OrgID)
+			h.publishCollectiveEvent(collectiveStreamEvent{
+				At:        message.CreatedAt,
+				Category:  "message",
+				Action:    "published",
+				AgentUUID: senderAgentUUID,
+				OrgID:     senderAgent.OrgID,
+				PeerOrgID: remoteScope,
+				MessageID: message.MessageID,
+				Details: map[string]any{
+					"to_agent_uri": req.ToAgentURI,
+					"peer_id":      peer.PeerID,
+					"status":       record.Status,
+				},
+			})
 			return publishResponse(record, false), nil
 		}
 		if req.ToAgentUUID == "" {
@@ -317,6 +339,15 @@ func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, 
 			}
 		case errors.Is(err, store.ErrNoTrustPath):
 			h.control.RecordMessageDropped(senderOrgID)
+			h.publishCollectiveEvent(collectiveStreamEvent{
+				Category:      "message",
+				Action:        "dropped",
+				AgentUUID:     senderAgentUUID,
+				PeerAgentUUID: targetAgent.AgentUUID,
+				OrgID:         senderOrgID,
+				PeerOrgID:     receiverOrgID,
+				Details:       map[string]any{"reason": "no_trust_path"},
+			})
 			return map[string]any{
 				"status": "dropped",
 				"reason": "no_trust_path",
@@ -405,6 +436,17 @@ func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, 
 	h.clearQueueRuntimeError()
 	h.control.RecordMessageQueued(senderOrgID)
 	h.waiters.Notify(targetAgent.AgentUUID)
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		At:            message.CreatedAt,
+		Category:      "message",
+		Action:        "published",
+		AgentUUID:     senderAgentUUID,
+		PeerAgentUUID: targetAgent.AgentUUID,
+		OrgID:         senderOrgID,
+		PeerOrgID:     receiverOrgID,
+		MessageID:     message.MessageID,
+		Details:       map[string]any{"status": record.Status},
+	})
 	return publishResponse(record, false), nil
 }
 
@@ -742,6 +784,16 @@ func (h *Handler) ackDeliveryForAgent(receiverAgentUUID, deliveryID string) (mod
 			}
 		}
 	}
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		Category:      "message",
+		Action:        "acked",
+		AgentUUID:     receiverAgentUUID,
+		PeerAgentUUID: record.Message.FromAgentUUID,
+		OrgID:         record.Message.ReceiverOrgID,
+		PeerOrgID:     record.Message.SenderOrgID,
+		MessageID:     record.Message.MessageID,
+		DeliveryID:    deliveryID,
+	})
 	return record, nil
 }
 
@@ -779,6 +831,16 @@ func (h *Handler) nackDeliveryForAgent(ctx context.Context, receiverAgentUUID, d
 	}
 	h.clearQueueRuntimeError()
 	h.waiters.Notify(receiverAgentUUID)
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		Category:      "message",
+		Action:        "nacked",
+		AgentUUID:     receiverAgentUUID,
+		PeerAgentUUID: record.Message.FromAgentUUID,
+		OrgID:         record.Message.ReceiverOrgID,
+		PeerOrgID:     record.Message.SenderOrgID,
+		MessageID:     record.Message.MessageID,
+		DeliveryID:    deliveryID,
+	})
 	return record, nil
 }
 
@@ -862,6 +924,17 @@ func (h *Handler) claimMessageForAgent(ctx context.Context, receiverAgentUUID st
 			message: "failed to lease message",
 		}
 	}
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		At:            leasedAt,
+		Category:      "message",
+		Action:        "delivered",
+		AgentUUID:     receiverAgentUUID,
+		PeerAgentUUID: record.Message.FromAgentUUID,
+		OrgID:         record.Message.ReceiverOrgID,
+		PeerOrgID:     record.Message.SenderOrgID,
+		MessageID:     record.Message.MessageID,
+		DeliveryID:    delivery.DeliveryID,
+	})
 	return deliveryResponse(record, delivery), nil
 }
 

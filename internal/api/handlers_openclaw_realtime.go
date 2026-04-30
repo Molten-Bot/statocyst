@@ -165,6 +165,14 @@ func (h *Handler) handleOpenClawRegisterPlugin(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "store_error", "failed to register plugin activity")
 		return
 	}
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		At:        now,
+		Category:  "openclaw_plugin",
+		Action:    "register",
+		AgentUUID: agent.AgentUUID,
+		OrgID:     agent.OrgID,
+		Details:   map[string]any{"plugin_id": pluginID, "session_key": sessionKey, "transport": transport},
+	})
 
 	writeAgentRuntimeSuccess(w, http.StatusOK, map[string]any{
 		"agent":  h.agentResponsePayload(agent),
@@ -666,7 +674,19 @@ func (h *Handler) recordOpenClawAdapterUsage(agentUUID, action string, details m
 		}
 		entry[k] = v
 	}
-	_, _ = h.control.RecordAgentSystemActivity(agentUUID, entry, h.now().UTC())
+	now := h.now().UTC()
+	agent, err := h.control.RecordAgentSystemActivity(agentUUID, entry, now)
+	if err != nil {
+		return
+	}
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		At:        now,
+		Category:  "openclaw_adapter",
+		Action:    action,
+		AgentUUID: agent.AgentUUID,
+		OrgID:     agent.OrgID,
+		Details:   details,
+	})
 }
 
 func (h *Handler) touchAgentPresenceOnline(agentUUID, sessionKey, transport string) *runtimeHandlerError {
@@ -711,6 +731,14 @@ func (h *Handler) touchAgentPresenceOnline(agentUUID, sessionKey, transport stri
 		}
 		if recorded, recordErr := h.control.RecordAgentSystemActivity(agent.AgentUUID, entry, now); recordErr == nil {
 			agent = recorded
+			h.publishCollectiveEvent(collectiveStreamEvent{
+				At:        now,
+				Category:  "agent_presence",
+				Action:    openClawPresenceStatusOnline,
+				AgentUUID: agent.AgentUUID,
+				OrgID:     agent.OrgID,
+				Details:   map[string]any{"session_key": normalizeOpenClawSessionKey(sessionKey), "transport": transport},
+			})
 		}
 	}
 	return nil
@@ -787,6 +815,14 @@ func (h *Handler) setOpenClawWebSocketPresence(agentUUID, sessionKey, status, re
 		}
 		if recorded, recordErr := h.control.RecordAgentSystemActivity(agentUUID, entry, now); recordErr == nil {
 			agent = recorded
+			h.publishCollectiveEvent(collectiveStreamEvent{
+				At:        now,
+				Category:  "agent_presence",
+				Action:    status,
+				AgentUUID: agent.AgentUUID,
+				OrgID:     agent.OrgID,
+				Details:   map[string]any{"session_key": sessionKey, "reason": strings.TrimSpace(reason), "transport": "websocket"},
+			})
 		}
 	}
 	return agent, nil

@@ -34,8 +34,8 @@ func TestA2AAgentCardAdvertisesJSONRPCAndREST(t *testing.T) {
 		t.Fatalf("expected agent card name, got %v", card)
 	}
 	interfaces, _ := card["supportedInterfaces"].([]any)
-	if len(interfaces) != 2 {
-		t.Fatalf("expected JSONRPC and HTTP+JSON interfaces, got %v", card["supportedInterfaces"])
+	if len(interfaces) != 3 {
+		t.Fatalf("expected JSONRPC, HTTP+JSON, and WebSocket interfaces, got %v", card["supportedInterfaces"])
 	}
 	bindings := map[string]bool{}
 	for _, raw := range interfaces {
@@ -46,8 +46,8 @@ func TestA2AAgentCardAdvertisesJSONRPCAndREST(t *testing.T) {
 			t.Fatalf("expected protocolVersion %q, got %v", a2aProtocolVersion, item)
 		}
 	}
-	if !bindings["JSONRPC"] || !bindings["HTTP+JSON"] {
-		t.Fatalf("expected JSONRPC and HTTP+JSON bindings, got %v", bindings)
+	if !bindings["JSONRPC"] || !bindings["HTTP+JSON"] || !bindings["WebSocket"] {
+		t.Fatalf("expected JSONRPC, HTTP+JSON, and WebSocket bindings, got %v", bindings)
 	}
 	requirements, _ := card["securityRequirements"].([]any)
 	if len(requirements) != 1 {
