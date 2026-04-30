@@ -21,16 +21,17 @@ Hosted environment deployment is managed in the separate infra repository (`molt
   - Runs tests and Docker build checks on PRs and `main`.
 - `.github/workflows/deploy-vnext.yml`
   - Auto-publishes the VNext image on pushes to `main`.
+  - Runs Go tests before build and container smoke checks after publish.
   - Builds and pushes:
     - `docker.io/<dockerhub-username>/moltenhub:vnext`
     - `docker.io/<dockerhub-username>/moltenhub:vnext-<yyyymmdd>`
-  - Runs container smoke checks before publish.
 - `.github/workflows/deploy-prod.yml`
   - Manual only (`workflow_dispatch`), restricted to `main`.
   - Promotes the current `vnext` digest (no rebuild) to:
     - `docker.io/<dockerhub-username>/moltenhub:<yyyymmdd>`
     - `docker.io/<dockerhub-username>/moltenhub:latest`
-  - Runs container smoke checks before promotion.
+  - Does not rerun tests or container smoke checks because production promotion only retags the already tested `vnext` digest.
+  - Verifies the promoted tag digest matches the source `vnext` digest.
 
 ### Docker Hub Credentials
 
