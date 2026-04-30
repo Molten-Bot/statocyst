@@ -780,6 +780,7 @@ func (h *Handler) a2aAgentCard(r *http.Request, target *model.Agent) map[string]
 			"streaming":         false,
 			"pushNotifications": false,
 			"extendedAgentCard": true,
+			"collectiveStream":  true,
 		},
 		"securitySchemes": map[string]any{
 			a2aSecuritySchemeBearer: map[string]any{
@@ -804,6 +805,11 @@ func (h *Handler) a2aAgentCard(r *http.Request, target *model.Agent) map[string]
 			{
 				"url":             a2aURL,
 				"protocolBinding": "HTTP+JSON",
+				"protocolVersion": a2aProtocolVersion,
+			},
+			{
+				"url":             apiBase + "/collective/stream",
+				"protocolBinding": "WebSocket",
 				"protocolVersion": a2aProtocolVersion,
 			},
 		},
@@ -1411,7 +1417,19 @@ func (h *Handler) recordA2AAdapterUsage(agentUUID, action string, details map[st
 	for key, value := range details {
 		entry[key] = value
 	}
-	_, _ = h.control.RecordAgentSystemActivity(agentUUID, entry, h.now().UTC())
+	now := h.now().UTC()
+	agent, err := h.control.RecordAgentSystemActivity(agentUUID, entry, now)
+	if err != nil {
+		return
+	}
+	h.publishCollectiveEvent(collectiveStreamEvent{
+		At:        now,
+		Category:  "a2a_adapter",
+		Action:    action,
+		AgentUUID: agent.AgentUUID,
+		OrgID:     agent.OrgID,
+		Details:   details,
+	})
 }
 
 func a2aReadStringPath(root map[string]any, path string) string {
