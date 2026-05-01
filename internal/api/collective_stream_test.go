@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -181,4 +182,105 @@ func TestCollectiveStreamAgentScopeRequiresOwnerOrOrgOwner(t *testing.T) {
 		}
 		t.Fatalf("expected org admin 403, got status=%d err=%v", status, err)
 	}
+}
+
+func TestCollectiveStreamHumanDefaultScopeFiltersByOwnerPermissions(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Collective Default Wall")
+	charlieHumanID := currentHumanID(t, router, "charlie", "charlie@c.test")
+
+	adminInviteID := createInvite(t, router, "alice", "alice@a.test", orgID, "bob@b.test", "admin")
+	acceptInvite(t, router, "bob", "bob@b.test", adminInviteID)
+	memberInviteID := createInvite(t, router, "alice", "alice@a.test", orgID, "charlie@c.test", "member")
+	acceptInvite(t, router, "charlie", "charlie@c.test", memberInviteID)
+
+	agentToken, agentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "charlie-default-owned", charlieHumanID)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	ownerConn := dialCollectiveStreamForHuman(t, server.URL, "alice", "alice@a.test")
+	defer ownerConn.Close()
+	adminConn := dialCollectiveStreamForHuman(t, server.URL, "bob", "bob@b.test")
+	defer adminConn.Close()
+
+	publishActivityToServer(t, server, agentToken, "Started private default stream coverage")
+
+	event := readCollectiveEventWithin(t, ownerConn, 2*time.Second, func(event map[string]any) bool {
+		return event["category"] == "agent_activity" && event["action"] == "published" && event["agent_uuid"] == agentUUID
+	})
+	if event == nil {
+		t.Fatalf("expected org owner to see agent activity for %q", agentUUID)
+	}
+	if leaked := readCollectiveEventWithin(t, adminConn, 500*time.Millisecond, func(event map[string]any) bool {
+		return event["category"] == "agent_activity" && event["action"] == "published" && event["agent_uuid"] == agentUUID
+	}); leaked != nil {
+		t.Fatalf("expected org admin default stream to hide unowned agent %q, got event=%v", agentUUID, leaked)
+	}
+}
+
+func dialCollectiveStreamForHuman(t *testing.T, serverURL, humanID, email string) *websocket.Conn {
+	t.Helper()
+	wsURL := "ws" + strings.TrimPrefix(serverURL, "http") + "/v1/collective/stream"
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{
+		"X-Human-Id":    []string{humanID},
+		"X-Human-Email": []string{email},
+	})
+	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("dial collective stream for %s failed: status=%d err=%v", humanID, status, err)
+	}
+	var ready map[string]any
+	if err := conn.ReadJSON(&ready); err != nil {
+		_ = conn.Close()
+		t.Fatalf("read ready event for %s: %v", humanID, err)
+	}
+	if got, _ := ready["type"].(string); got != "session_ready" {
+		_ = conn.Close()
+		t.Fatalf("expected session_ready for %s, got %v", humanID, ready)
+	}
+	return conn
+}
+
+func publishActivityToServer(t *testing.T, server *httptest.Server, agentToken, activity string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"activity": activity,
+		"category": "coding",
+		"status":   "started",
+	})
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/agents/me/activities", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build activity request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("publish activity request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected activity publish 201, got %d", resp.StatusCode)
+	}
+}
+
+func readCollectiveEventWithin(t *testing.T, conn *websocket.Conn, timeout time.Duration, match func(map[string]any) bool) map[string]any {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	for {
+		var event map[string]any
+		if err := conn.ReadJSON(&event); err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				return nil
+			}
+			return nil
+		}
+		if event["type"] == collectiveStreamEventType && match(event) {
+			return event
+		}
+	}
+	return nil
 }
