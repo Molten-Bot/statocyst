@@ -1391,6 +1391,7 @@ func writeA2ARESTError(w http.ResponseWriter, protocolErr *a2aProtocolError, tas
 	if protocolErr == nil {
 		protocolErr = a2aInternal("internal_error", "internal error", nil)
 	}
+	failureDetails := protocolErr.failureDetails()
 	details := []any{
 		map[string]any{
 			"@type":    "type.googleapis.com/google.rpc.ErrorInfo",
@@ -1398,16 +1399,20 @@ func writeA2ARESTError(w http.ResponseWriter, protocolErr *a2aProtocolError, tas
 			"domain":   "a2a-protocol.org",
 			"metadata": a2aRESTErrorMetadata(protocolErr, taskID),
 		},
-		protocolErr.failureDetails(),
+		failureDetails,
 	}
-	writeA2AJSON(w, protocolErr.httpStatus, map[string]any{
+	payload := map[string]any{
 		"error": map[string]any{
 			"code":    protocolErr.httpStatus,
 			"status":  protocolErr.status,
 			"message": protocolErr.message,
 			"details": details,
 		},
-	})
+	}
+	for key, value := range failureDetails {
+		payload[key] = value
+	}
+	writeA2AJSON(w, protocolErr.httpStatus, payload)
 }
 
 func a2aRESTErrorMetadata(protocolErr *a2aProtocolError, taskID string) map[string]string {

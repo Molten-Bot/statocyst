@@ -686,6 +686,44 @@ func TestA2AJSONRPCNoTrustReturnsFailureDetails(t *testing.T) {
 	}
 }
 
+func TestA2ARESTNoTrustReturnsTopLevelFailureDetails(t *testing.T) {
+	router := newTestRouter()
+	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	bobHumanID := currentHumanID(t, router, "bob", "bob@b.test")
+	orgA := createOrg(t, router, "alice", "alice@a.test", "A2A REST No Trust A")
+	orgB := createOrg(t, router, "bob", "bob@b.test", "A2A REST No Trust B")
+	tokenA, _ := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgA, "a2a-rest-no-trust-a", aliceHumanID)
+	_, agentUUIDB := registerAgentWithUUID(t, router, "bob", "bob@b.test", orgB, "a2a-rest-no-trust-b", bobHumanID)
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/a2a/agents/"+agentUUIDB+"/message:send", map[string]any{
+		"message": map[string]any{
+			"messageId": "a2a-rest-no-trust-msg",
+			"role":      "ROLE_USER",
+			"parts": []map[string]any{{
+				"text": "no trust",
+			}},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("expected REST HTTP 403, got %d %s", resp.Code, resp.Body.String())
+	}
+	payload := decodeJSONMap(t, resp.Body.Bytes())
+	if payload["Failure"] != true {
+		t.Fatalf("expected top-level Failure=true in A2A REST error, got %v", payload)
+	}
+	if payload["Failure:"] != true {
+		t.Fatalf("expected top-level Failure:=true in A2A REST error, got %v", payload)
+	}
+	details, _ := payload["Error details"].(map[string]any)
+	if details["code"] != "no_trust_path" {
+		t.Fatalf("expected top-level Error details.code no_trust_path, got %v", payload)
+	}
+	colonDetails, _ := payload["Error details:"].(map[string]any)
+	if colonDetails["code"] != "no_trust_path" {
+		t.Fatalf("expected top-level Error details:.code no_trust_path, got %v", payload)
+	}
+}
+
 func TestA2AJSONRPCContentTypeFailureIncludesDetails(t *testing.T) {
 	router := newTestRouter()
 	req := httptest.NewRequest(http.MethodPost, "/v1/a2a", strings.NewReader(`{"jsonrpc":"2.0","id":"bad-content-type","method":"ListTasks"}`))
