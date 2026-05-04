@@ -812,6 +812,15 @@ func (h *Handler) handleMyAgentDispatch(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *Handler) dispatchTaskToOwnedAgent(ctx context.Context, actor humanActor, agent model.Agent, req dispatchAgentTaskRequest) (map[string]any, *runtimeHandlerError) {
+	result, handlerErr := h.dispatchTaskToAgent(ctx, agent, req)
+	if handlerErr != nil {
+		return nil, handlerErr
+	}
+	result["dispatched_by_human_id"] = actor.Human.HumanID
+	return result, nil
+}
+
+func (h *Handler) dispatchTaskToAgent(ctx context.Context, agent model.Agent, req dispatchAgentTaskRequest) (map[string]any, *runtimeHandlerError) {
 	req.ContentType = strings.TrimSpace(req.ContentType)
 	if _, ok := allowedContentTypes[req.ContentType]; !ok {
 		return nil, &runtimeHandlerError{
@@ -860,9 +869,7 @@ func (h *Handler) dispatchTaskToOwnedAgent(ctx context.Context, actor humanActor
 	}
 	h.clearStateRuntimeError()
 	if replay {
-		result := publishResponse(record, true)
-		result["dispatched_by_human_id"] = actor.Human.HumanID
-		return result, nil
+		return publishResponse(record, true), nil
 	}
 
 	if err := h.queue.Enqueue(ctx, message); err != nil {
@@ -885,9 +892,82 @@ func (h *Handler) dispatchTaskToOwnedAgent(ctx context.Context, actor humanActor
 	h.clearQueueRuntimeError()
 	h.control.RecordMessageQueued(agent.OrgID)
 	h.waiters.Notify(agent.AgentUUID)
-	result := publishResponse(record, false)
-	result["dispatched_by_human_id"] = actor.Human.HumanID
-	return result, nil
+	return publishResponse(record, false), nil
+}
+
+func (h *Handler) handleSchedulerAgentSubroutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	const prefix = "/v1/scheduler/agents/"
+	if !strings.HasPrefix(path, prefix) {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+
+	tail := strings.Trim(strings.TrimPrefix(path, prefix), "/")
+	if r.Method != http.MethodPost || !strings.HasSuffix(tail, "/dispatch") {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	if !h.authenticateScheduler(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid scheduler api key")
+		return
+	}
+
+	agentRef := strings.Trim(strings.TrimSuffix(tail, "/dispatch"), "/")
+	agentUUID := normalizeUUID(agentRef)
+	if !validateUUID(agentUUID) {
+		writeError(w, http.StatusBadRequest, "invalid_agent_uuid", "agent_uuid must be a valid UUID")
+		return
+	}
+
+	agent, err := h.control.GetAgentByUUID(agentUUID)
+	if err != nil {
+		if errors.Is(err, store.ErrAgentNotFound) {
+			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "store_error", "failed to load agent")
+		return
+	}
+
+	h.handleSchedulerAgentDispatch(w, r, agent)
+}
+
+func (h *Handler) authenticateScheduler(r *http.Request) bool {
+	if len(h.schedulerAPIKeyHashes) == 0 {
+		return false
+	}
+	token, err := auth.ExtractBearerToken(r.Header.Get("Authorization"))
+	if err != nil {
+		return false
+	}
+	tokenHash := auth.HashToken(token)
+	for _, candidate := range h.schedulerAPIKeyHashes {
+		if len(candidate) == len(tokenHash) && subtle.ConstantTimeCompare([]byte(candidate), []byte(tokenHash)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) handleSchedulerAgentDispatch(w http.ResponseWriter, r *http.Request, agent model.Agent) {
+	if !requireJSONRequestContentType(w, r) {
+		return
+	}
+
+	var req dispatchAgentTaskRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+		return
+	}
+	result, handlerErr := h.dispatchTaskToAgent(r.Context(), agent, req)
+	if handlerErr != nil {
+		writeRuntimeHandlerError(w, handlerErr)
+		return
+	}
+	result["dispatched_by_scheduler"] = true
+	writeAgentRuntimeSuccess(w, http.StatusAccepted, result)
 }
 
 func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request) {

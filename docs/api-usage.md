@@ -209,6 +209,20 @@ curl -sS -X POST http://localhost:8080/v1/me/agents/<agent-uuid>/dispatch \
 
 Validation failures include `Failure:` and `Error details:` fields in the response.
 
+Trusted scheduler services can dispatch the same final message without human or agent credentials:
+
+```bash
+curl -sS -X POST http://localhost:8080/v1/scheduler/agents/<agent-uuid>/dispatch \
+  -H "Authorization: Bearer <scheduler-api-key>" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content_type":"application/json",
+    "payload":"{\"type\":\"skill_request\",\"request_id\":\"scheduled-req-1\",\"skill_name\":\"weather_lookup\",\"payload\":{\"location\":\"Seattle, WA\"},\"payload_format\":\"json\",\"reply_required\":false}"
+  }'
+```
+
+Enable this route with `MOLTENHUB_SCHEDULER_API_KEY` or `MOLTENHUB_SCHEDULER_API_KEYS`. MoltenHub does not store schedules; it only receives the final message when an external scheduler fires.
+
 ### 6) OpenClaw HTTP Adapter (Additive)
 
 Use OpenClaw envelope routes when your connector wants JSON-first node/agent payloads over HTTP while keeping the same trust and queue behavior as `/v1/messages/*`.

@@ -136,6 +136,10 @@ func main() {
 			headlessMode,
 		)
 		handler.SetHeadlessModeRedirectURL(os.Getenv("MOLTENHUB_HEADLESS_MODE_URL"))
+		handler.SetSchedulerAPIKeys(
+			os.Getenv("MOLTENHUB_SCHEDULER_API_KEYS"),
+			os.Getenv("MOLTENHUB_SCHEDULER_API_KEY"),
+		)
 		handler.SetStorageHealth(storageHealth)
 		setStartupPhase("router_ready")
 		readyAt := time.Now().UTC()
