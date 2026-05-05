@@ -163,6 +163,13 @@ func collectLaunchDiagnostics(lookup func(string) (string, bool)) ([]launchDiagn
 		warnIfUnset(lookup, "UI_CONFIG_API_KEY", "<unset>", "privileged /v1/ui/config responses stay disabled"),
 		warnIfUnset(lookup, "MOLTENHUB_ENTITIES_METADATA_KEY", "<unset>", "the entities metadata endpoint cannot be called with a shared system key"),
 	)
+	if envValue(lookup, "MOLTENHUB_SCHEDULER_API_KEYS") == "" && envValue(lookup, "MOLTENHUB_SCHEDULER_API_KEY") == "" {
+		diagnostics = appendOptionalWarnings(diagnostics, warnUnset(
+			"MOLTENHUB_SCHEDULER_API_KEYS",
+			"<unset>",
+			"scheduler dispatch endpoint stays disabled unless a scheduler key is configured",
+		))
+	}
 
 	headlessMode := strings.EqualFold(envValue(lookup, "MOLTENHUB_HEADLESS_MODE"), "true")
 	if raw := envValue(lookup, "MOLTENHUB_CORS_ALLOWED_ORIGINS"); raw != "" {

@@ -890,6 +890,52 @@ paths:
           description: Admin/owner required
         '404':
           description: Unknown agent
+  /v1/scheduler/agents/{agent_uuid}/dispatch:
+    post:
+      summary: Dispatch a scheduled task to an agent
+      description: |
+        Machine-to-machine route for an external scheduler service to queue a task
+        directly to a target agent. The Hub remains blind to schedule persistence and
+        timing; callers present a scheduler API key and provide the final message
+        payload when the schedule fires.
+
+        The queued message uses the same delivery queue and skill activation
+        validation as human dispatch and agent-to-agent publish. Set
+        `content_type=application/json` and pass the standard `skill_request` /
+        `skill_activation` envelope in `payload` for skill invocations.
+      security:
+        - schedulerAuth: []
+      parameters:
+        - in: path
+          name: agent_uuid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_type, payload]
+              properties:
+                content_type:
+                  type: string
+                  enum: [text/plain, application/json]
+                payload:
+                  type: string
+                  description: Plain text or JSON string containing a skill activation envelope.
+                client_msg_id:
+                  type: string
+      responses:
+        '202':
+          description: Task queued or idempotent replay
+        '400':
+          description: Invalid request or skill activation payload
+        '401':
+          description: Missing or invalid scheduler API key
+        '404':
+          description: Unknown agent
   /v1/me/agents/bind-tokens:
     post:
       summary: Create short-lived one-time agent bind token with copy-ready self-signup prompt
@@ -2468,6 +2514,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: AgentToken
+    schedulerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: SchedulerAPIKey
+      description: Shared scheduler API key for trusted external scheduler services.
     orgAccessKey:
       type: apiKey
       in: header

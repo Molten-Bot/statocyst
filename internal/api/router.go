@@ -33,32 +33,33 @@ const (
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 type Handler struct {
-	control           store.ControlPlaneStore
-	queue             store.MessageQueueStore
-	waiters           *longpoll.Waiters
-	humanAuth         auth.HumanAuthProvider
-	now               func() time.Time
-	idFactory         func() (string, error)
-	canonicalBaseURL  string
-	supabaseURL       string
-	supabaseAnonKey   string
-	adminSnapshotKey  string
-	superAdminEmails  map[string]struct{}
-	superAdminDomains map[string]struct{}
-	superAdminReview  bool
-	bindTokenTTL      time.Duration
-	headlessMode      bool
-	headlessModeURL   string
-	storageHealthMu   sync.RWMutex
-	storageHealth     store.StorageHealthStatus
-	startupSummary    map[string]any
-	stateRuntimeError string
-	queueRuntimeError string
-	peerHTTPClient    *http.Client
-	peerOutboxMu      sync.Mutex
-	peerOutboxRunning bool
-	peerOutboxTimeout time.Duration
-	collective        *collectiveStreamHub
+	control               store.ControlPlaneStore
+	queue                 store.MessageQueueStore
+	waiters               *longpoll.Waiters
+	humanAuth             auth.HumanAuthProvider
+	now                   func() time.Time
+	idFactory             func() (string, error)
+	canonicalBaseURL      string
+	supabaseURL           string
+	supabaseAnonKey       string
+	adminSnapshotKey      string
+	schedulerAPIKeyHashes []string
+	superAdminEmails      map[string]struct{}
+	superAdminDomains     map[string]struct{}
+	superAdminReview      bool
+	bindTokenTTL          time.Duration
+	headlessMode          bool
+	headlessModeURL       string
+	storageHealthMu       sync.RWMutex
+	storageHealth         store.StorageHealthStatus
+	startupSummary        map[string]any
+	stateRuntimeError     string
+	queueRuntimeError     string
+	peerHTTPClient        *http.Client
+	peerOutboxMu          sync.Mutex
+	peerOutboxRunning     bool
+	peerOutboxTimeout     time.Duration
+	collective            *collectiveStreamHub
 }
 
 type requestIDContextKey struct{}
@@ -143,6 +144,7 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/v1/me/agents/bind-token", handler.handleMyAgentBindToken)
 	mux.HandleFunc("/v1/me/agents/bind-tokens", handler.handleMyAgentBindTokens)
 	mux.HandleFunc("/v1/me/agent-trusts", handler.handleMyAgentTrusts)
+	mux.HandleFunc("/v1/scheduler/agents/", handler.handleSchedulerAgentSubroutes)
 	mux.HandleFunc("/v1/admin/snapshot", handler.handleAdminSnapshot)
 	mux.HandleFunc("/v1/admin/peers", handler.handleAdminPeers)
 	mux.HandleFunc("/v1/admin/peers/", handler.handleAdminPeerByID)
@@ -194,6 +196,22 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 
 func (h *Handler) SetHeadlessModeRedirectURL(raw string) {
 	h.headlessModeURL = strings.TrimSpace(raw)
+}
+
+func (h *Handler) SetSchedulerAPIKeys(rawValues ...string) {
+	var hashes []string
+	for _, raw := range rawValues {
+		for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == '\n' || r == '\r' || r == '\t'
+		}) {
+			key := strings.TrimSpace(entry)
+			if key == "" {
+				continue
+			}
+			hashes = append(hashes, auth.HashToken(key))
+		}
+	}
+	h.schedulerAPIKeyHashes = hashes
 }
 
 func withPeerOutboxProcessing(handler *Handler, next http.Handler) http.Handler {

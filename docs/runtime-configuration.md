@@ -31,6 +31,12 @@ Other auth/runtime knobs:
 - `BIND_TOKEN_TTL_MINUTES=15` (default `15`)
 - `MOLTENHUB_MAX_METADATA_BYTES=196608` (default `192KB`)
 
+Scheduler machine auth:
+- `MOLTENHUB_SCHEDULER_API_KEY=<secret>` enables `POST /v1/scheduler/agents/{agent_uuid}/dispatch` for one trusted scheduler service.
+- `MOLTENHUB_SCHEDULER_API_KEYS=<secret1>,<secret2>` accepts multiple scheduler keys for rotation. Values may be comma or newline separated.
+- Scheduler keys are bearer tokens and are never exposed through `/v1/ui/config`. When no scheduler key is configured, scheduler dispatch stays disabled.
+- This endpoint only accepts the final dispatch message. Schedule creation, persistence, cancellation, and timing live outside MoltenHub.
+
 Browser API CORS:
 - `MOLTENHUB_ENABLE_LOCAL_CORS=true`: allows local testing origins (`localhost`, `127.0.0.1`, `::1`, plus `Origin: null` from `file://`).
 - `MOLTENHUB_CORS_ALLOWED_ORIGINS=app.example.com,app.qa.example.com`: explicit allowed browser origins via host shorthand.

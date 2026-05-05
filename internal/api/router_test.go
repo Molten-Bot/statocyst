@@ -29,6 +29,14 @@ func newTestRouter() http.Handler {
 	return NewRouter(h)
 }
 
+func newTestRouterWithSchedulerAPIKey(key string) http.Handler {
+	st := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.example.com", "", "", "", "", "example.com", true, 15*time.Minute, false)
+	h.SetSchedulerAPIKeys(key)
+	return NewRouter(h)
+}
+
 func TestHandlerWiringWithInterfaceStores(t *testing.T) {
 	mem := store.NewMemoryStore()
 	var control store.ControlPlaneStore = mem
@@ -3911,6 +3919,93 @@ func TestHumanManagedAgentDispatchQueuesSkillActivation(t *testing.T) {
 	}
 	if got, _ := message["payload"].(string); got != taskEnvelope {
 		t.Fatalf("expected dispatched skill payload, got %q payload=%v", got, pullPayload)
+	}
+}
+
+func TestSchedulerAgentDispatchQueuesSkillActivation(t *testing.T) {
+	router := newTestRouterWithSchedulerAPIKey("scheduler-test-key")
+	token, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-scheduler-dispatch")
+
+	patchResp := doJSONRequest(t, router, http.MethodPatch, "/v1/me/agents/"+agentUUID, map[string]any{
+		"metadata": map[string]any{
+			"skills": []any{
+				map[string]any{
+					"name":        "weather_lookup",
+					"description": "Looks up weather for a location.",
+					"parameters": map[string]any{
+						"format": "json",
+						"required": []any{
+							map[string]any{"name": "location", "description": "City and region. Do not pass secrets."},
+						},
+						"secret_policy": "forbidden",
+					},
+				},
+			},
+		},
+	}, humanHeaders("alice", "alice@a.test"))
+	if patchResp.Code != http.StatusOK {
+		t.Fatalf("expected agent metadata patch 200, got %d %s", patchResp.Code, patchResp.Body.String())
+	}
+
+	taskEnvelope := `{"type":"skill_request","request_id":"scheduler-req-1","skill_name":"weather_lookup","payload":{"location":"Vancouver, BC"},"payload_format":"json","reply_required":false}`
+	dispatchResp := doJSONRequest(t, router, http.MethodPost, "/v1/scheduler/agents/"+agentUUID+"/dispatch", map[string]any{
+		"content_type":  "application/json",
+		"payload":       taskEnvelope,
+		"client_msg_id": "scheduler-client-1",
+	}, map[string]string{"Authorization": "Bearer scheduler-test-key"})
+	if dispatchResp.Code != http.StatusAccepted {
+		t.Fatalf("expected scheduler dispatch 202, got %d %s", dispatchResp.Code, dispatchResp.Body.String())
+	}
+	dispatchPayload := decodeJSONMap(t, dispatchResp.Body.Bytes())
+	dispatchResult := requireAgentRuntimeSuccessEnvelope(t, dispatchPayload)
+	if got, _ := dispatchResult["dispatched_by_scheduler"].(bool); !got {
+		t.Fatalf("expected dispatched_by_scheduler=true, got %v payload=%v", dispatchResult["dispatched_by_scheduler"], dispatchPayload)
+	}
+	if _, exists := dispatchResult["dispatched_by_human_id"]; exists {
+		t.Fatalf("did not expect human dispatch marker, got payload=%v", dispatchPayload)
+	}
+
+	pullResp := pull(t, router, token, 1000)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected dispatched task pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
+	message, _ := pullResult["message"].(map[string]any)
+	if got, _ := message["to_agent_uuid"].(string); got != agentUUID {
+		t.Fatalf("expected message.to_agent_uuid=%q, got %q payload=%v", agentUUID, got, pullPayload)
+	}
+	if got, _ := message["payload"].(string); got != taskEnvelope {
+		t.Fatalf("expected dispatched skill payload, got %q payload=%v", got, pullPayload)
+	}
+}
+
+func TestSchedulerAgentDispatchRequiresConfiguredAPIKey(t *testing.T) {
+	router := newTestRouterWithSchedulerAPIKey("scheduler-test-key")
+	_, _, agentUUID := registerMyAgent(t, router, "alice", "alice@a.test", "", "alice-agent-scheduler-auth")
+
+	for name, headers := range map[string]map[string]string{
+		"missing": nil,
+		"wrong":   {"Authorization": "Bearer wrong-key"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := doJSONRequest(t, router, http.MethodPost, "/v1/scheduler/agents/"+agentUUID+"/dispatch", map[string]any{
+				"content_type": "text/plain",
+				"payload":      "hello",
+			}, headers)
+			if resp.Code != http.StatusUnauthorized {
+				t.Fatalf("expected scheduler dispatch 401, got %d %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+
+	unconfiguredRouter := newTestRouter()
+	resp := doJSONRequest(t, unconfiguredRouter, http.MethodPost, "/v1/scheduler/agents/"+agentUUID+"/dispatch", map[string]any{
+		"content_type": "text/plain",
+		"payload":      "hello",
+	}, map[string]string{"Authorization": "Bearer scheduler-test-key"})
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unconfigured scheduler dispatch 401, got %d %s", resp.Code, resp.Body.String())
 	}
 }
 
