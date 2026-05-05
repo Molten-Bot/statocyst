@@ -14,7 +14,7 @@ import (
 	"moltenhub/internal/store"
 )
 
-func TestOpenClawPublishPullAckFlow(t *testing.T) {
+func TestOpenClawCompatibilityPublishPullAckFlow(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
@@ -172,7 +172,7 @@ func TestRuntimePublishPullAckFlowDefaultsRuntimeEnvelope(t *testing.T) {
 	}
 }
 
-func TestOpenClawPullProjectsTextPayload(t *testing.T) {
+func TestRuntimePullProjectsTextPayload(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
@@ -185,25 +185,25 @@ func TestOpenClawPullProjectsTextPayload(t *testing.T) {
 		t.Fatalf("expected runtime publish 202, got %d %s", publishResp.Code, publishResp.Body.String())
 	}
 
-	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
 	if pullResp.Code != http.StatusOK {
-		t.Fatalf("expected openclaw pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+		t.Fatalf("expected runtime pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
 	}
 	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
 	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
-	if got := readStringPath(pullResult, "openclaw_message", "kind"); got != "text_message" {
+	if got := readStringPath(pullResult, "envelope", "kind"); got != "text_message" {
 		t.Fatalf("expected text_message projection, got %q payload=%v", got, pullPayload)
 	}
-	if got := readStringPath(pullResult, "openclaw_message", "text"); got != "hello from text/plain" {
+	if got := readStringPath(pullResult, "envelope", "text"); got != "hello from text/plain" {
 		t.Fatalf("expected projected text payload, got %q payload=%v", got, pullPayload)
 	}
 }
 
-func TestOpenClawPublishAcceptsTopLevelEnvelope(t *testing.T) {
+func TestRuntimePublishAcceptsTopLevelEnvelope(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
-	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
 		"to_agent_uuid": agentUUIDB,
 		"kind":          "task_result",
 		"text":          "Failure: clone failed\nError details: repository not found",
@@ -214,33 +214,33 @@ func TestOpenClawPublishAcceptsTopLevelEnvelope(t *testing.T) {
 		},
 	}, map[string]string{"Authorization": "Bearer " + tokenA})
 	if publishResp.Code != http.StatusAccepted {
-		t.Fatalf("expected openclaw top-level envelope publish 202, got %d %s", publishResp.Code, publishResp.Body.String())
+		t.Fatalf("expected runtime top-level envelope publish 202, got %d %s", publishResp.Code, publishResp.Body.String())
 	}
 
-	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
 	if pullResp.Code != http.StatusOK {
-		t.Fatalf("expected openclaw pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+		t.Fatalf("expected runtime pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
 	}
 	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
 	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
-	if got := readStringPath(pullResult, "openclaw_message", "kind"); got != "task_result" {
+	if got := readStringPath(pullResult, "envelope", "kind"); got != "task_result" {
 		t.Fatalf("expected top-level envelope kind to be preserved, got %q payload=%v", got, pullPayload)
 	}
-	openClawMessage, _ := pullResult["openclaw_message"].(map[string]any)
-	if failureAlias, _ := openClawMessage["Failure:"].(bool); !failureAlias {
-		t.Fatalf("expected Failure: alias in delivered OpenClaw message, got payload=%v", pullPayload)
+	envelope, _ := pullResult["envelope"].(map[string]any)
+	if failureAlias, _ := envelope["Failure:"].(bool); !failureAlias {
+		t.Fatalf("expected Failure: alias in delivered runtime envelope, got payload=%v", pullPayload)
 	}
 }
 
-func TestOpenClawPublishRequiresMessageObject(t *testing.T) {
+func TestRuntimePublishRequiresMessageObject(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
-	resp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
 		"to_agent_uuid": agentUUIDB,
 	}, map[string]string{"Authorization": "Bearer " + tokenA})
 	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected openclaw publish missing message to return 400, got %d %s", resp.Code, resp.Body.String())
+		t.Fatalf("expected runtime publish missing message to return 400, got %d %s", resp.Code, resp.Body.String())
 	}
 	payload := decodeJSONMap(t, resp.Body.Bytes())
 	if got, _ := payload["error"].(string); got != "invalid_request" {
@@ -262,7 +262,7 @@ func TestOpenClawPublishRequiresMessageObject(t *testing.T) {
 	}
 }
 
-func TestOpenClawPublishSkillActivationAllowsMissingPayload(t *testing.T) {
+func TestRuntimePublishSkillActivationAllowsMissingPayload(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
@@ -280,7 +280,7 @@ func TestOpenClawPublishSkillActivationAllowsMissingPayload(t *testing.T) {
 		t.Fatalf("metadata patch failed: %d %s", metadataPatch.Code, metadataPatch.Body.String())
 	}
 
-	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
 		"to_agent_uuid": agentUUIDB,
 		"message": map[string]any{
 			"type":           "skill_request",
@@ -290,29 +290,29 @@ func TestOpenClawPublishSkillActivationAllowsMissingPayload(t *testing.T) {
 		},
 	}, map[string]string{"Authorization": "Bearer " + tokenA})
 	if publishResp.Code != http.StatusAccepted {
-		t.Fatalf("expected openclaw skill_request publish 202, got %d %s", publishResp.Code, publishResp.Body.String())
+		t.Fatalf("expected runtime skill_request publish 202, got %d %s", publishResp.Code, publishResp.Body.String())
 	}
 
-	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
 	if pullResp.Code != http.StatusOK {
-		t.Fatalf("expected openclaw pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+		t.Fatalf("expected runtime pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
 	}
 	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
 	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
-	if got := readStringPath(pullResult, "openclaw_message", "skill_name"); got != "weather_lookup" {
-		t.Fatalf("expected pull openclaw_message.skill_name=weather_lookup, got %q payload=%v", got, pullPayload)
+	if got := readStringPath(pullResult, "envelope", "skill_name"); got != "weather_lookup" {
+		t.Fatalf("expected pull envelope.skill_name=weather_lookup, got %q payload=%v", got, pullPayload)
 	}
-	openClawMessage, _ := pullResult["openclaw_message"].(map[string]any)
-	if _, ok := openClawMessage["payload"]; ok {
-		t.Fatalf("expected payload to be omitted when not provided, got payload=%v", openClawMessage["payload"])
+	envelope, _ := pullResult["envelope"].(map[string]any)
+	if _, ok := envelope["payload"]; ok {
+		t.Fatalf("expected payload to be omitted when not provided, got payload=%v", envelope["payload"])
 	}
 }
 
-func TestOpenClawPublishSkillActivationRejectsInvalidPayloadType(t *testing.T) {
+func TestRuntimePublishSkillActivationRejectsInvalidPayloadType(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
-	resp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
 		"to_agent_uuid": agentUUIDB,
 		"message": map[string]any{
 			"type":       "skill_request",
@@ -321,7 +321,7 @@ func TestOpenClawPublishSkillActivationRejectsInvalidPayloadType(t *testing.T) {
 		},
 	}, map[string]string{"Authorization": "Bearer " + tokenA})
 	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected openclaw publish invalid payload type to return 400, got %d %s", resp.Code, resp.Body.String())
+		t.Fatalf("expected runtime publish invalid payload type to return 400, got %d %s", resp.Code, resp.Body.String())
 	}
 	payload := decodeJSONMap(t, resp.Body.Bytes())
 	if got, _ := payload["error"].(string); got != "invalid_request" {
@@ -373,14 +373,26 @@ func TestOpenClawRegisterPluginUpdatesMetadataAndActivityLog(t *testing.T) {
 	}
 }
 
-func TestOpenClawWebSocketDeliveryAndAckFlow(t *testing.T) {
+func TestRuntimeRegisterPluginRouteIsNotSupported(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
+
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/register-plugin", map[string]any{
+		"plugin_id": "moltenhub-openclaw",
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected runtime register-plugin 404, got %d %s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestRuntimeWebSocketDeliveryAndAckFlow(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=integration-main"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=integration-main"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenB)
 
@@ -398,7 +410,7 @@ func TestOpenClawWebSocketDeliveryAndAckFlow(t *testing.T) {
 		t.Fatalf("expected ws transport.adapter=websocket, got %q payload=%v", got, ready)
 	}
 
-	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
 		"to_agent_uuid": agentUUIDB,
 		"message": map[string]any{
 			"kind": "skill_result",
@@ -414,7 +426,7 @@ func TestOpenClawWebSocketDeliveryAndAckFlow(t *testing.T) {
 	if deliveryID == "" {
 		t.Fatalf("expected delivery message to include delivery_id, payload=%v", delivery)
 	}
-	if got := readStringPath(delivery, "result", "openclaw_message", "kind"); got != "skill_result" {
+	if got := readStringPath(delivery, "result", "envelope", "kind"); got != "skill_result" {
 		t.Fatalf("expected delivery kind=skill_result, got %q payload=%v", got, delivery)
 	}
 
@@ -435,19 +447,19 @@ func TestOpenClawWebSocketDeliveryAndAckFlow(t *testing.T) {
 	}
 }
 
-func TestOpenClawWebSocketDeliversMessageQueuedWhileAgentOffline(t *testing.T) {
+func TestRuntimeWebSocketDeliversMessageQueuedWhileAgentOffline(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
-	offlineResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+	offlineResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/offline", map[string]any{
 		"session_key": "offline-queue",
 		"reason":      "offline queue regression",
 	}, map[string]string{"Authorization": "Bearer " + tokenB})
 	if offlineResp.Code != http.StatusOK {
-		t.Fatalf("expected openclaw offline 200, got %d %s", offlineResp.Code, offlineResp.Body.String())
+		t.Fatalf("expected runtime offline 200, got %d %s", offlineResp.Code, offlineResp.Body.String())
 	}
 
-	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
+	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
 		"to_agent_uuid": agentUUIDB,
 		"message": map[string]any{
 			"kind": "offline_queue_probe",
@@ -470,7 +482,7 @@ func TestOpenClawWebSocketDeliversMessageQueuedWhileAgentOffline(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=offline-queue"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=offline-queue"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenB)
 
@@ -489,7 +501,7 @@ func TestOpenClawWebSocketDeliversMessageQueuedWhileAgentOffline(t *testing.T) {
 	if got := readStringPath(delivery, "result", "message", "message_id"); got != messageID {
 		t.Fatalf("expected queued offline message_id %q, got %q payload=%v", messageID, got, delivery)
 	}
-	if got := readStringPath(delivery, "result", "openclaw_message", "text"); got != "queued while offline" {
+	if got := readStringPath(delivery, "result", "envelope", "text"); got != "queued while offline" {
 		t.Fatalf("expected queued offline payload text, got %q payload=%v", got, delivery)
 	}
 	deliveryID := readStringPath(delivery, "result", "delivery", "delivery_id")
@@ -510,14 +522,14 @@ func TestOpenClawWebSocketDeliversMessageQueuedWhileAgentOffline(t *testing.T) {
 	}
 }
 
-func TestOpenClawWebSocketUpgradeWithGzipAcceptEncoding(t *testing.T) {
+func TestRuntimeWebSocketUpgradeWithGzipAcceptEncoding(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
 
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=gzip-header"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=gzip-header"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenB)
 	headers.Set("Accept-Encoding", "gzip")
@@ -534,14 +546,14 @@ func TestOpenClawWebSocketUpgradeWithGzipAcceptEncoding(t *testing.T) {
 	}
 }
 
-func TestOpenClawWebSocketActivityCommand(t *testing.T) {
+func TestRuntimeWebSocketActivityCommand(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
 
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=activity-main"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=activity-main"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenA)
 
@@ -581,16 +593,16 @@ func TestOpenClawWebSocketActivityCommand(t *testing.T) {
 	}
 }
 
-func TestOpenClawOfflineEndpointUpdatesPresenceAndActivityLog(t *testing.T) {
+func TestRuntimeOfflineEndpointUpdatesPresenceAndActivityLog(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, _ := setupTrustedAgents(t, router)
 
-	resp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+	resp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/offline", map[string]any{
 		"session_key": "main",
 		"reason":      "shutdown",
 	}, map[string]string{"Authorization": "Bearer " + tokenA})
 	if resp.Code != http.StatusOK {
-		t.Fatalf("expected openclaw offline 200, got %d %s", resp.Code, resp.Body.String())
+		t.Fatalf("expected runtime offline 200, got %d %s", resp.Code, resp.Body.String())
 	}
 
 	payload := decodeJSONMap(t, resp.Body.Bytes())
@@ -617,21 +629,21 @@ func TestOpenClawOfflineEndpointUpdatesPresenceAndActivityLog(t *testing.T) {
 	}
 }
 
-func TestOpenClawPullMarksPresenceOnline(t *testing.T) {
+func TestRuntimePullMarksPresenceOnline(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
 
-	offlineResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+	offlineResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/offline", map[string]any{
 		"session_key": "main",
 		"reason":      "pre-poll baseline",
 	}, map[string]string{"Authorization": "Bearer " + tokenB})
 	if offlineResp.Code != http.StatusOK {
-		t.Fatalf("expected openclaw offline 200, got %d %s", offlineResp.Code, offlineResp.Body.String())
+		t.Fatalf("expected runtime offline 200, got %d %s", offlineResp.Code, offlineResp.Body.String())
 	}
 
-	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=0", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=0", nil, map[string]string{"Authorization": "Bearer " + tokenB})
 	if pullResp.Code != http.StatusNoContent {
-		t.Fatalf("expected openclaw pull 204 while queue empty, got %d %s", pullResp.Code, pullResp.Body.String())
+		t.Fatalf("expected runtime pull 204 while queue empty, got %d %s", pullResp.Code, pullResp.Body.String())
 	}
 
 	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, map[string]string{"Authorization": "Bearer " + tokenB})
@@ -651,14 +663,14 @@ func TestOpenClawPullMarksPresenceOnline(t *testing.T) {
 	}
 }
 
-func TestOpenClawWebSocketPresenceOnlineThenOffline(t *testing.T) {
+func TestRuntimeWebSocketPresenceOnlineThenOffline(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
 
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=presence-main"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=presence-main"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenB)
 
@@ -715,7 +727,7 @@ func TestOpenClawWebSocketPresenceOnlineThenOffline(t *testing.T) {
 	}
 }
 
-func TestOpenClawWebSocketPresenceWriteFailureReturnsErrorDetail(t *testing.T) {
+func TestRuntimeWebSocketPresenceWriteFailureReturnsErrorDetail(t *testing.T) {
 	stateStore := &flakyStateWriteStore{MemoryStore: store.NewMemoryStore()}
 	waiters := longpoll.NewWaiters()
 	h := NewHandler(
@@ -743,7 +755,7 @@ func TestOpenClawWebSocketPresenceWriteFailureReturnsErrorDetail(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=presence-fail"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=presence-fail"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenB)
 
@@ -779,7 +791,7 @@ func TestOpenClawWebSocketPresenceWriteFailureReturnsErrorDetail(t *testing.T) {
 	}
 }
 
-func TestOpenClawWebSocketSkillActivationPublishAllowsMissingPayload(t *testing.T) {
+func TestRuntimeWebSocketSkillActivationPublishAllowsMissingPayload(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
@@ -800,7 +812,7 @@ func TestOpenClawWebSocketSkillActivationPublishAllowsMissingPayload(t *testing.
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=skill-activation"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=skill-activation"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenA)
 
@@ -835,29 +847,29 @@ func TestOpenClawWebSocketSkillActivationPublishAllowsMissingPayload(t *testing.
 		t.Fatalf("expected ws publish response status=202, got %v payload=%v", got, publishResp)
 	}
 
-	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
 	if pullResp.Code != http.StatusOK {
-		t.Fatalf("expected openclaw pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+		t.Fatalf("expected runtime pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
 	}
 	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
 	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
-	if got := readStringPath(pullResult, "openclaw_message", "skill_name"); got != "weather_lookup" {
-		t.Fatalf("expected pull openclaw_message.skill_name=weather_lookup, got %q payload=%v", got, pullPayload)
+	if got := readStringPath(pullResult, "envelope", "skill_name"); got != "weather_lookup" {
+		t.Fatalf("expected pull envelope.skill_name=weather_lookup, got %q payload=%v", got, pullPayload)
 	}
-	openClawMessage, _ := pullResult["openclaw_message"].(map[string]any)
-	if _, ok := openClawMessage["payload"]; ok {
-		t.Fatalf("expected payload to be omitted when not provided, got payload=%v", openClawMessage["payload"])
+	envelope, _ := pullResult["envelope"].(map[string]any)
+	if _, ok := envelope["payload"]; ok {
+		t.Fatalf("expected payload to be omitted when not provided, got payload=%v", envelope["payload"])
 	}
 }
 
-func TestOpenClawWebSocketSkillActivationRejectsInvalidPayloadType(t *testing.T) {
+func TestRuntimeWebSocketSkillActivationRejectsInvalidPayloadType(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, _, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=skill-invalid"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=skill-invalid"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenA)
 
@@ -894,7 +906,7 @@ func TestOpenClawWebSocketSkillActivationRejectsInvalidPayloadType(t *testing.T)
 	}
 }
 
-func TestOpenClawWebSocketSkillActivationIncludesValidationErrors(t *testing.T) {
+func TestRuntimeWebSocketSkillActivationIncludesValidationErrors(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
@@ -921,7 +933,7 @@ func TestOpenClawWebSocketSkillActivationIncludesValidationErrors(t *testing.T) 
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=skill-validation"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=skill-validation"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenA)
 
@@ -986,7 +998,7 @@ func TestOpenClawWebSocketSkillActivationIncludesValidationErrors(t *testing.T) 
 	}
 }
 
-func TestOpenClawWebSocketUpgradeWithWrappedWriter(t *testing.T) {
+func TestRuntimeWebSocketUpgradeWithWrappedWriter(t *testing.T) {
 	router := newTestRouter()
 	_, _, _, tokenB, _, _, _, _ := setupTrustedAgents(t, router)
 
@@ -998,7 +1010,7 @@ func TestOpenClawWebSocketUpgradeWithWrappedWriter(t *testing.T) {
 	server := httptest.NewServer(wrappedRouter)
 	defer server.Close()
 
-	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/openclaw/messages/ws?session_key=wrapped-writer"
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/v1/runtime/messages/ws?session_key=wrapped-writer"
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tokenB)
 

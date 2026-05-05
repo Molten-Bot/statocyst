@@ -235,6 +235,9 @@ func TestBuildAgentSkillMarkdownOpenClawSection(t *testing.T) {
 	if endpoints["publish"] != "https://hub.example/v1/openclaw/messages/publish" {
 		t.Fatalf("expected openclaw publish endpoint, got %+v", endpoints)
 	}
+	if endpoints["websocket"] != "https://hub.example/v1/openclaw/messages/ws" {
+		t.Fatalf("expected openclaw websocket endpoint, got %+v", endpoints)
+	}
 	if endpoints["offline"] != "https://hub.example/v1/openclaw/messages/offline" {
 		t.Fatalf("expected openclaw offline endpoint, got %+v", endpoints)
 	}

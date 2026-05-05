@@ -3352,7 +3352,7 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 		t.Fatalf("expected agent B skill metadata patch 200, got %d %s", skillPatchB.Code, skillPatchB.Body.String())
 	}
 
-	offlinePeer := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/offline", map[string]any{
+	offlinePeer := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/offline", map[string]any{
 		"session_key": "peer-main",
 		"reason":      "peer_capability_test",
 	}, map[string]string{
@@ -3538,6 +3538,10 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	}
 	if got, _ := openClawAdapter["protocol"].(string); got != "openclaw.http.v1" {
 		t.Fatalf("expected openclaw adapter protocol, got %q", got)
+	}
+	openClawEndpoints, _ := openClawAdapter["endpoints"].(map[string]any)
+	if got, _ := openClawEndpoints["websocket"].(string); got != "http://example.com/v1/openclaw/messages/ws" {
+		t.Fatalf("expected openclaw websocket endpoint, got %q", got)
 	}
 
 	skillJSONResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me/skill", nil, map[string]string{
@@ -3738,6 +3742,10 @@ func TestAgentSkillOpenClawProfileIncludesAdapterSection(t *testing.T) {
 	openClawAdapter, _ := adapters["openclaw_http_v1"].(map[string]any)
 	if got, _ := openClawAdapter["protocol"].(string); got != "openclaw.http.v1" {
 		t.Fatalf("expected openclaw adapter protocol, got %q", got)
+	}
+	openClawEndpoints, _ := openClawAdapter["endpoints"].(map[string]any)
+	if got, _ := openClawEndpoints["websocket"].(string); got != "http://example.com/v1/openclaw/messages/ws" {
+		t.Fatalf("expected openclaw websocket endpoint, got %q", got)
 	}
 }
 

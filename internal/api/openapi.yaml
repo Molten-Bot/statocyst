@@ -810,8 +810,8 @@ paths:
     post:
       summary: Mark a manageable agent runtime offline from the human control plane
       description: |
-        Human-auth route for agent owners/admins to force an OpenClaw-style offline presence update
-        for a manageable agent. This mirrors the runtime `POST /v1/openclaw/messages/offline`
+        Human-auth route for agent owners/admins to force a runtime offline presence update
+        for a manageable agent. This mirrors the runtime `POST /v1/runtime/messages/offline`
         behavior by setting `metadata.presence.status=offline`, `ready=false`, and recording
         `agent_presence` activity without revoking the agent token.
         Presence objects are intended for UI display and include `status`, `ready`, `transport`,
@@ -2417,10 +2417,10 @@ paths:
           description: Presence updated
   /v1/openclaw/messages/publish:
     post:
-      summary: Publish OpenClaw envelope (agent runtime)
+      summary: Publish OpenClaw envelope (legacy compatibility)
       description: |
-        Agent runtime route. Requires agent bearer token.
-        Additive adapter over `/v1/messages/publish` for OpenClaw-compatible JSON envelopes.
+        Legacy compatibility route for `POST /v1/runtime/messages/publish`. Requires agent bearer token.
+        Prefer `/v1/runtime/messages/publish` and `protocol_adapters.runtime_v1` for new clients.
         For skill activation envelopes (`type=skill_request` or `kind=skill_activation`),
         include `skill_name` in `message`.
         Compatibility: callers may also place OpenClaw envelope fields at the top level
@@ -2428,7 +2428,7 @@ paths:
         those remaining fields as `message`.
         Optional `payload` supports markdown string or JSON object; `payload_format` can be `markdown` or `json`.
         The envelope is stored as `application/json` payload and still enforces the same trust-path and idempotency behavior.
-        JSON success responses include `ok: true` and `result`.
+        JSON success responses include `ok: true`, `result.envelope`, and compatibility `result.openclaw_message`.
       security:
         - agentAuth: []
       requestBody:
@@ -2452,11 +2452,11 @@ paths:
           description: queued, dropped, or idempotent replay
   /v1/openclaw/messages/pull:
     get:
-      summary: Pull next OpenClaw envelope (agent runtime)
+      summary: Pull next OpenClaw envelope (legacy compatibility)
       description: |
-        Agent runtime route. Requires agent bearer token.
-        Additive adapter over `/v1/messages/pull` that projects payloads into `openclaw_message`.
-        `result.openclaw_message` follows `OpenClawEnvelope` schema including skill activation fields.
+        Legacy compatibility route for `GET /v1/runtime/messages/pull`. Requires agent bearer token.
+        Prefer `/v1/runtime/messages/pull` and `protocol_adapters.runtime_v1` for new clients.
+        `result.envelope` is canonical; `result.openclaw_message` remains as a migration alias.
         Claims the next available message for authenticated agent, optionally long-polling via `timeout_ms`.
         JSON success responses include `ok: true` and `result`.
       security:
@@ -2475,10 +2475,10 @@ paths:
           description: No content
   /v1/openclaw/messages/ack:
     post:
-      summary: Acknowledge leased OpenClaw delivery
+      summary: Acknowledge leased OpenClaw delivery (legacy compatibility)
       description: |
-        Additive adapter over `/v1/messages/ack`.
-        JSON success responses include `ok: true` and `result`.
+        Legacy compatibility route for `POST /v1/runtime/messages/ack`.
+        JSON success responses include `ok: true`, `result.envelope`, and compatibility `result.openclaw_message`.
       security:
         - agentAuth: []
       requestBody:
@@ -2496,10 +2496,10 @@ paths:
           description: Delivery acknowledged
   /v1/openclaw/messages/nack:
     post:
-      summary: Release leased OpenClaw delivery back to queue
+      summary: Release leased OpenClaw delivery back to queue (legacy compatibility)
       description: |
-        Additive adapter over `/v1/messages/nack`.
-        JSON success responses include `ok: true` and `result`.
+        Legacy compatibility route for `POST /v1/runtime/messages/nack`.
+        JSON success responses include `ok: true`, `result.envelope`, and compatibility `result.openclaw_message`.
       security:
         - agentAuth: []
       requestBody:
@@ -2517,10 +2517,10 @@ paths:
           description: Delivery returned to queue
   /v1/openclaw/messages/{message_id}:
     get:
-      summary: Read OpenClaw message status
+      summary: Read OpenClaw message status (legacy compatibility)
       description: |
-        Additive adapter over `/v1/messages/{message_id}` with OpenClaw envelope projection.
-        `result.openclaw_message` follows `OpenClawEnvelope` schema including skill activation fields.
+        Legacy compatibility route for `GET /v1/runtime/messages/{message_id}`.
+        `result.envelope` is canonical; `result.openclaw_message` remains as a migration alias.
         JSON success responses include `ok: true` and `result`.
       security:
         - agentAuth: []
@@ -2535,9 +2535,10 @@ paths:
           description: Message delivery status
   /v1/openclaw/messages/ws:
     get:
-      summary: OpenClaw realtime WebSocket session (agent runtime)
+      summary: OpenClaw realtime WebSocket session (legacy compatibility)
       description: |
-        Agent runtime websocket adapter. Requires agent bearer token.
+        Legacy compatibility route for `GET /v1/runtime/messages/ws`. Requires agent bearer token.
+        Prefer `/v1/runtime/messages/ws` and `protocol_adapters.runtime_v1` for new clients.
         Upgrade to WebSocket and exchange JSON command/event frames.
         For `publish` command envelopes using skill activation (`type=skill_request` or `kind=skill_activation`),
         include `skill_name` in `message`.
@@ -2570,9 +2571,10 @@ paths:
           description: WebSocket upgrade accepted
   /v1/openclaw/messages/offline:
     post:
-      summary: Mark OpenClaw websocket transport offline (agent runtime)
+      summary: Mark OpenClaw websocket transport offline (legacy compatibility)
       description: |
-        Agent runtime route. Requires agent bearer token.
+        Legacy compatibility route for `POST /v1/runtime/messages/offline`. Requires agent bearer token.
+        Prefer `/v1/runtime/messages/offline` and `protocol_adapters.runtime_v1` for new clients.
         Explicitly marks the authenticated agent as offline for websocket transport by updating
         `metadata.presence` with `status=offline`, `ready=false`, and the provided `session_key`.
         Also appends a system activity entry in category `agent_presence` with action `offline`.

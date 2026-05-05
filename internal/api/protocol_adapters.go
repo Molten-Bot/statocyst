@@ -59,12 +59,13 @@ func runtimeEnvelopeAdapterEndpoints(apiBase string) map[string]string {
 
 func openClawAdapterEndpoints(apiBase string) map[string]string {
 	return map[string]string{
-		"publish": apiBase + "/openclaw/messages/publish",
-		"pull":    apiBase + "/openclaw/messages/pull",
-		"ack":     apiBase + "/openclaw/messages/ack",
-		"nack":    apiBase + "/openclaw/messages/nack",
-		"status":  apiBase + "/openclaw/messages/{message_id}",
-		"offline": apiBase + "/openclaw/messages/offline",
+		"publish":   apiBase + "/openclaw/messages/publish",
+		"pull":      apiBase + "/openclaw/messages/pull",
+		"ack":       apiBase + "/openclaw/messages/ack",
+		"nack":      apiBase + "/openclaw/messages/nack",
+		"status":    apiBase + "/openclaw/messages/{message_id}",
+		"websocket": apiBase + "/openclaw/messages/ws",
+		"offline":   apiBase + "/openclaw/messages/offline",
 	}
 }
 

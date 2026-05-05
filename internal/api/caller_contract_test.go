@@ -148,6 +148,7 @@ func TestOpenAPICallerContractSecuritySchemes(t *testing.T) {
 		{Method: http.MethodPost, Path: "/v1/openclaw/messages/ack"}:                  {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/openclaw/messages/nack"}:                 {"agentAuth"},
 		{Method: http.MethodGet, Path: "/v1/openclaw/messages/{message_id}"}:          {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/openclaw/messages/ws"}:                    {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/openclaw/messages/offline"}:              {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/scheduler/agents/{agent_uuid}/dispatch"}: {"schedulerAuth"},
 	}

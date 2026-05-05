@@ -837,7 +837,7 @@ func (r *runner) stepOpenClawCompatibilityAliases() error {
 			return fmt.Errorf("expected openclaw compatibility delivery_id payload=%v", payload)
 		}
 		if readStringPath(result, "message", "message_id") == messageID || readStringPath(result, "message_id") == messageID {
-			envelope, err := cmdutil.RequireObject(result, "openclaw_message")
+			envelope, err := runtimeEnvelopeFromResult(result)
 			if err != nil {
 				return err
 			}
@@ -1083,7 +1083,7 @@ func (r *runner) pullRuntimeEnvelopeMessage(token, expectedMessageID string, tim
 			return "", "", fmt.Errorf("expected runtime pull to include delivery_id payload=%v", payload)
 		}
 
-		runtimeEnvelope, err := cmdutil.RequireObject(result, "envelope")
+		runtimeEnvelope, err := runtimeEnvelopeFromResult(result)
 		if err != nil {
 			return "", "", err
 		}
@@ -1244,7 +1244,7 @@ func (r *runner) waitForRuntimeEnvelopeWSDelivery(conn *websocket.Conn, expected
 			return "", "", fmt.Errorf("expected websocket delivery_id payload=%v", evt)
 		}
 
-		runtimeEnvelope, err := cmdutil.RequireObject(result, "envelope")
+		runtimeEnvelope, err := runtimeEnvelopeFromResult(result)
 		if err != nil {
 			return "", "", err
 		}
@@ -1586,6 +1586,16 @@ func runtimeResult(payload map[string]any) map[string]any {
 		return result
 	}
 	return payload
+}
+
+func runtimeEnvelopeFromResult(result map[string]any) (map[string]any, error) {
+	if envelope, ok := result["envelope"].(map[string]any); ok {
+		return envelope, nil
+	}
+	if envelope, ok := result["openclaw_message"].(map[string]any); ok {
+		return envelope, nil
+	}
+	return nil, fmt.Errorf("expected result.envelope object or result.openclaw_message fallback, got payload=%v", result)
 }
 
 func readStringPath(root map[string]any, path ...string) string {

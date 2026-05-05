@@ -311,7 +311,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			Mutating:             true,
 			Retryable:            true,
 			TrustStateGated:      true,
-			Description:          "OpenClaw JSON envelope publish adapter (additive to /v1/messages/publish).",
+			Description:          "Legacy OpenClaw compatibility alias for /v1/runtime/messages/publish.",
 		},
 		{
 			ID:                   "agent.messages.openclaw.pull",
@@ -323,7 +323,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			Mutating:             false,
 			Retryable:            true,
 			TrustStateGated:      false,
-			Description:          "OpenClaw JSON envelope pull adapter (additive to /v1/messages/pull).",
+			Description:          "Legacy OpenClaw compatibility alias for /v1/runtime/messages/pull.",
 		},
 		{
 			ID:                   "agent.messages.openclaw.ack",
@@ -336,7 +336,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			Mutating:             true,
 			Retryable:            true,
 			TrustStateGated:      false,
-			Description:          "OpenClaw JSON envelope ack adapter (additive to /v1/messages/ack).",
+			Description:          "Legacy OpenClaw compatibility alias for /v1/runtime/messages/ack.",
 		},
 		{
 			ID:                   "agent.messages.openclaw.nack",
@@ -349,7 +349,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			Mutating:             true,
 			Retryable:            true,
 			TrustStateGated:      false,
-			Description:          "OpenClaw JSON envelope nack adapter (additive to /v1/messages/nack).",
+			Description:          "Legacy OpenClaw compatibility alias for /v1/runtime/messages/nack.",
 		},
 		{
 			ID:                   "agent.messages.openclaw.status",
@@ -361,7 +361,19 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			Mutating:             false,
 			Retryable:            true,
 			TrustStateGated:      false,
-			Description:          "OpenClaw JSON envelope status adapter (additive to /v1/messages/{message_id}).",
+			Description:          "Legacy OpenClaw compatibility alias for /v1/runtime/messages/{message_id}.",
+		},
+		{
+			ID:                   "agent.messages.openclaw.ws",
+			Method:               "GET",
+			Path:                 "/v1/openclaw/messages/ws",
+			Auth:                 "bearer_agent",
+			ResponseContentTypes: []string{"application/json"},
+			ReadOnly:             false,
+			Mutating:             true,
+			Retryable:            true,
+			TrustStateGated:      false,
+			Description:          "Legacy OpenClaw compatibility alias for /v1/runtime/messages/ws.",
 		},
 		{
 			ID:                   "agent.messages.openclaw.offline",
@@ -374,7 +386,7 @@ func buildAgentManifest(agent model.Agent, cp agentControlPlaneView, now time.Ti
 			Mutating:             true,
 			Retryable:            true,
 			TrustStateGated:      false,
-			Description:          "Mark websocket transport offline and update profile presence metadata.",
+			Description:          "Legacy OpenClaw compatibility alias for /v1/runtime/messages/offline.",
 		},
 	}
 
@@ -568,7 +580,7 @@ const (
 	skillOperatingRuleLine     = "- {{VALUE}}\n"
 	skillOpenClawBlockTemplate = `## OpenClaw Node + Agent HTTP Path
 - Activated profile: ` + "`metadata.agent_type=openclaw`" + `
-- Adapter mode: ` + "`openclaw.http.v1`" + ` (additive). Core ` + "`/v1/messages/*`" + ` routes remain valid.
+- Adapter mode: ` + "`openclaw.http.v1`" + ` compatibility alias. Prefer ` + "`protocol_adapters.runtime_v1`" + ` for new runtime calls.
 - Node/agent base URL: ` + "`{{API_BASE}}`" + `
 
 ### OpenClaw Adapter Endpoints
