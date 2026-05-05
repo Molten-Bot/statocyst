@@ -70,10 +70,10 @@ func main() {
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "A2A send/get/list and legacy pull/ack succeeds between bound agents", run: (*runner).stepA2AStorageDelivery},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
-		{name: "Runtime HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
-		{name: "Runtime polling heartbeat marks runtime presence online", run: (*runner).stepOpenClawPresenceHeartbeat},
-		{name: "Runtime queued offline message dispatches on websocket reconnect", run: (*runner).stepOpenClawQueuedOfflineWebSocketDelivery},
-		{name: "Runtime websocket delivery and ack succeeds", run: (*runner).stepOpenClawWebSocketDelivery},
+		{name: "Runtime HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepRuntimeHTTPDelivery},
+		{name: "Runtime polling heartbeat marks runtime presence online", run: (*runner).stepRuntimePresenceHeartbeat},
+		{name: "Runtime queued offline message dispatches on websocket reconnect", run: (*runner).stepRuntimeQueuedOfflineWebSocketDelivery},
+		{name: "Runtime websocket delivery and ack succeeds", run: (*runner).stepRuntimeWebSocketDelivery},
 		{name: "OpenClaw compatibility publish/pull/ack aliases still work", run: (*runner).stepOpenClawCompatibilityAliases},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},
@@ -393,7 +393,7 @@ func (r *runner) stepAgentPublishesActivities() error {
 		return fmt.Errorf("expected HTTP activity_log to include %q payload=%v", httpActivity, httpAgent)
 	}
 
-	conn, err := r.openOpenClawWebSocket(r.tokenA, fmt.Sprintf("smoke-activity-%d", time.Now().UnixNano()))
+	conn, err := r.openRuntimeEnvelopeWebSocket(r.tokenA, fmt.Sprintf("smoke-activity-%d", time.Now().UnixNano()))
 	if err != nil {
 		return err
 	}
@@ -777,25 +777,25 @@ func (r *runner) stepOpenClawRegisterPlugin() error {
 	return nil
 }
 
-func (r *runner) stepOpenClawHTTPDelivery() error {
-	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+func (r *runner) stepRuntimeHTTPDelivery() error {
+	if err := r.drainRuntimeEnvelopeQueue(r.tokenB); err != nil {
 		return err
 	}
 
-	messageText := fmt.Sprintf("smoke-openclaw-http-%d", time.Now().UnixNano())
-	messageID, err := r.publishOpenClawMessage(r.tokenA, r.agentUUIDB, messageText)
+	messageText := fmt.Sprintf("smoke-runtime-http-%d", time.Now().UnixNano())
+	messageID, err := r.publishRuntimeEnvelopeMessage(r.tokenA, r.agentUUIDB, messageText)
 	if err != nil {
 		return err
 	}
 
-	deliveryID, receivedText, err := r.pullOpenClawMessage(r.tokenB, messageID, 12*time.Second)
+	deliveryID, receivedText, err := r.pullRuntimeEnvelopeMessage(r.tokenB, messageID, 12*time.Second)
 	if err != nil {
 		return err
 	}
 	if receivedText != messageText {
 		return fmt.Errorf("expected pull text %q, got %q", messageText, receivedText)
 	}
-	return r.ackOpenClawDeliveryHTTP(r.tokenB, deliveryID)
+	return r.ackRuntimeEnvelopeDeliveryHTTP(r.tokenB, deliveryID)
 }
 
 func (r *runner) stepOpenClawCompatibilityAliases() error {
@@ -855,42 +855,42 @@ func (r *runner) stepOpenClawCompatibilityAliases() error {
 			}
 			return nil
 		}
-		if err := r.ackOpenClawDeliveryHTTP(r.tokenB, deliveryID); err != nil {
+		if err := r.ackRuntimeEnvelopeDeliveryHTTP(r.tokenB, deliveryID); err != nil {
 			return err
 		}
 	}
 	return fmt.Errorf("timed out waiting for openclaw compatibility message_id=%q", messageID)
 }
 
-func (r *runner) stepOpenClawWebSocketDelivery() error {
-	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+func (r *runner) stepRuntimeWebSocketDelivery() error {
+	if err := r.drainRuntimeEnvelopeQueue(r.tokenB); err != nil {
 		return err
 	}
 
-	conn, err := r.openOpenClawWebSocket(r.tokenB, fmt.Sprintf("smoke-session-%d", time.Now().UnixNano()))
+	conn, err := r.openRuntimeEnvelopeWebSocket(r.tokenB, fmt.Sprintf("smoke-session-%d", time.Now().UnixNano()))
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	messageText := fmt.Sprintf("smoke-openclaw-ws-%d", time.Now().UnixNano())
-	messageID, err := r.publishOpenClawMessage(r.tokenA, r.agentUUIDB, messageText)
+	messageText := fmt.Sprintf("smoke-runtime-ws-%d", time.Now().UnixNano())
+	messageID, err := r.publishRuntimeEnvelopeMessage(r.tokenA, r.agentUUIDB, messageText)
 	if err != nil {
 		return err
 	}
 
-	deliveryID, receivedText, err := r.waitForOpenClawWSDelivery(conn, messageID, 12*time.Second)
+	deliveryID, receivedText, err := r.waitForRuntimeEnvelopeWSDelivery(conn, messageID, 12*time.Second)
 	if err != nil {
 		return err
 	}
 	if receivedText != messageText {
 		return fmt.Errorf("expected websocket delivery text %q, got %q", messageText, receivedText)
 	}
-	return r.ackOpenClawDeliveryWS(conn, deliveryID)
+	return r.ackRuntimeEnvelopeDeliveryWS(conn, deliveryID)
 }
 
-func (r *runner) stepOpenClawQueuedOfflineWebSocketDelivery() error {
-	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+func (r *runner) stepRuntimeQueuedOfflineWebSocketDelivery() error {
+	if err := r.drainRuntimeEnvelopeQueue(r.tokenB); err != nil {
 		return err
 	}
 
@@ -910,30 +910,30 @@ func (r *runner) stepOpenClawQueuedOfflineWebSocketDelivery() error {
 		return fmt.Errorf("expected presence status offline before queued publish, got %q payload=%v", got, payload)
 	}
 
-	messageText := fmt.Sprintf("smoke-openclaw-offline-queue-%d", time.Now().UnixNano())
-	messageID, err := r.publishOpenClawMessage(r.tokenA, r.agentUUIDB, messageText)
+	messageText := fmt.Sprintf("smoke-runtime-offline-queue-%d", time.Now().UnixNano())
+	messageID, err := r.publishRuntimeEnvelopeMessage(r.tokenA, r.agentUUIDB, messageText)
 	if err != nil {
 		return err
 	}
 
-	conn, err := r.openOpenClawWebSocket(r.tokenB, sessionKey)
+	conn, err := r.openRuntimeEnvelopeWebSocket(r.tokenB, sessionKey)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	deliveryID, receivedText, err := r.waitForOpenClawWSDelivery(conn, messageID, 12*time.Second)
+	deliveryID, receivedText, err := r.waitForRuntimeEnvelopeWSDelivery(conn, messageID, 12*time.Second)
 	if err != nil {
 		return err
 	}
 	if receivedText != messageText {
 		return fmt.Errorf("expected websocket delivery text %q, got %q", messageText, receivedText)
 	}
-	return r.ackOpenClawDeliveryWS(conn, deliveryID)
+	return r.ackRuntimeEnvelopeDeliveryWS(conn, deliveryID)
 }
 
-func (r *runner) stepOpenClawPresenceHeartbeat() error {
-	if err := r.drainOpenClawQueue(r.tokenB); err != nil {
+func (r *runner) stepRuntimePresenceHeartbeat() error {
+	if err := r.drainRuntimeEnvelopeQueue(r.tokenB); err != nil {
 		return err
 	}
 
@@ -957,7 +957,7 @@ func (r *runner) stepOpenClawPresenceHeartbeat() error {
 	case http.StatusOK:
 		result := runtimeResult(payload)
 		if deliveryID := readStringPath(result, "delivery", "delivery_id"); deliveryID != "" {
-			if err := r.ackOpenClawDeliveryHTTP(r.tokenB, deliveryID); err != nil {
+			if err := r.ackRuntimeEnvelopeDeliveryHTTP(r.tokenB, deliveryID); err != nil {
 				return err
 			}
 		}
@@ -979,7 +979,7 @@ func (r *runner) stepOpenClawPresenceHeartbeat() error {
 	return nil
 }
 
-func (r *runner) publishOpenClawMessage(token, toAgentUUID, text string) (string, error) {
+func (r *runner) publishRuntimeEnvelopeMessage(token, toAgentUUID, text string) (string, error) {
 	status, payload, err := r.requestJSON(http.MethodPost, "/v1/runtime/messages/publish", cmdutil.AgentHeaders(token), map[string]any{
 		"to_agent_uuid": toAgentUUID,
 		"message": map[string]any{
@@ -1059,7 +1059,7 @@ func (r *runner) publishAgentActivityWS(conn *websocket.Conn, activity, category
 	return nil, fmt.Errorf("timed out waiting for websocket activity response request_id=%q", requestID)
 }
 
-func (r *runner) pullOpenClawMessage(token, expectedMessageID string, timeout time.Duration) (string, string, error) {
+func (r *runner) pullRuntimeEnvelopeMessage(token, expectedMessageID string, timeout time.Duration) (string, string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		status, payload, err := r.requestJSON(http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=1000", cmdutil.AgentHeaders(token), nil)
@@ -1083,22 +1083,22 @@ func (r *runner) pullOpenClawMessage(token, expectedMessageID string, timeout ti
 			return "", "", fmt.Errorf("expected runtime pull to include delivery_id payload=%v", payload)
 		}
 
-		openClawMessage, err := cmdutil.RequireObject(result, "envelope")
+		runtimeEnvelope, err := cmdutil.RequireObject(result, "envelope")
 		if err != nil {
 			return "", "", err
 		}
-		text := cmdutil.AsString(openClawMessage, "text")
+		text := cmdutil.AsString(runtimeEnvelope, "text")
 		if messageID == expectedMessageID {
 			return deliveryID, text, nil
 		}
-		if err := r.ackOpenClawDeliveryHTTP(token, deliveryID); err != nil {
+		if err := r.ackRuntimeEnvelopeDeliveryHTTP(token, deliveryID); err != nil {
 			return "", "", err
 		}
 	}
-	return "", "", fmt.Errorf("timed out waiting for openclaw pull message_id=%q", expectedMessageID)
+	return "", "", fmt.Errorf("timed out waiting for runtime pull message_id=%q", expectedMessageID)
 }
 
-func (r *runner) drainOpenClawQueue(token string) error {
+func (r *runner) drainRuntimeEnvelopeQueue(token string) error {
 	for i := 0; i < 64; i++ {
 		status, payload, err := r.requestJSON(http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=0", cmdutil.AgentHeaders(token), nil)
 		if err != nil {
@@ -1116,14 +1116,14 @@ func (r *runner) drainOpenClawQueue(token string) error {
 		if deliveryID == "" {
 			continue
 		}
-		if err := r.ackOpenClawDeliveryHTTP(token, deliveryID); err != nil {
+		if err := r.ackRuntimeEnvelopeDeliveryHTTP(token, deliveryID); err != nil {
 			return err
 		}
 	}
-	return fmt.Errorf("openclaw queue drain exceeded maximum attempts")
+	return fmt.Errorf("runtime queue drain exceeded maximum attempts")
 }
 
-func (r *runner) ackOpenClawDeliveryHTTP(token, deliveryID string) error {
+func (r *runner) ackRuntimeEnvelopeDeliveryHTTP(token, deliveryID string) error {
 	status, payload, err := r.requestJSON(http.MethodPost, "/v1/runtime/messages/ack", cmdutil.AgentHeaders(token), map[string]any{
 		"delivery_id": deliveryID,
 	})
@@ -1185,7 +1185,7 @@ func (r *runner) ackLegacyDeliveryHTTP(token, deliveryID string) error {
 	return fmt.Errorf("expected legacy ack 200, got %d payload=%v", status, payload)
 }
 
-func (r *runner) openOpenClawWebSocket(token, sessionKey string) (*websocket.Conn, error) {
+func (r *runner) openRuntimeEnvelopeWebSocket(token, sessionKey string) (*websocket.Conn, error) {
 	base, err := url.Parse(r.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse base url %q: %w", r.baseURL, err)
@@ -1208,9 +1208,9 @@ func (r *runner) openOpenClawWebSocket(token, sessionKey string) (*websocket.Con
 	conn, resp, err := websocket.DefaultDialer.Dial(base.String(), headers)
 	if err != nil {
 		if resp != nil {
-			return nil, fmt.Errorf("openclaw websocket dial failed status=%d: %w", resp.StatusCode, err)
+			return nil, fmt.Errorf("runtime websocket dial failed status=%d: %w", resp.StatusCode, err)
 		}
-		return nil, fmt.Errorf("openclaw websocket dial failed: %w", err)
+		return nil, fmt.Errorf("runtime websocket dial failed: %w", err)
 	}
 	first, err := readWSJSON(conn, 8*time.Second)
 	if err != nil {
@@ -1224,7 +1224,7 @@ func (r *runner) openOpenClawWebSocket(token, sessionKey string) (*websocket.Con
 	return conn, nil
 }
 
-func (r *runner) waitForOpenClawWSDelivery(conn *websocket.Conn, expectedMessageID string, timeout time.Duration) (string, string, error) {
+func (r *runner) waitForRuntimeEnvelopeWSDelivery(conn *websocket.Conn, expectedMessageID string, timeout time.Duration) (string, string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		evt, err := readWSJSON(conn, time.Until(deadline))
@@ -1244,22 +1244,22 @@ func (r *runner) waitForOpenClawWSDelivery(conn *websocket.Conn, expectedMessage
 			return "", "", fmt.Errorf("expected websocket delivery_id payload=%v", evt)
 		}
 
-		openClawMessage, err := cmdutil.RequireObject(result, "envelope")
+		runtimeEnvelope, err := cmdutil.RequireObject(result, "envelope")
 		if err != nil {
 			return "", "", err
 		}
-		text := cmdutil.AsString(openClawMessage, "text")
+		text := cmdutil.AsString(runtimeEnvelope, "text")
 		if messageID == expectedMessageID {
 			return deliveryID, text, nil
 		}
-		if err := r.ackOpenClawDeliveryHTTP(r.tokenB, deliveryID); err != nil {
+		if err := r.ackRuntimeEnvelopeDeliveryHTTP(r.tokenB, deliveryID); err != nil {
 			return "", "", err
 		}
 	}
 	return "", "", fmt.Errorf("timed out waiting for websocket delivery message_id=%q", expectedMessageID)
 }
 
-func (r *runner) ackOpenClawDeliveryWS(conn *websocket.Conn, deliveryID string) error {
+func (r *runner) ackRuntimeEnvelopeDeliveryWS(conn *websocket.Conn, deliveryID string) error {
 	requestID := fmt.Sprintf("smoke-ws-ack-%d", time.Now().UnixNano())
 	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return fmt.Errorf("set websocket write deadline: %w", err)
@@ -1282,7 +1282,7 @@ func (r *runner) ackOpenClawDeliveryWS(conn *websocket.Conn, deliveryID string) 
 			if readStringPath(evt, "type") == "delivery" {
 				strayDeliveryID := readStringPath(runtimeResult(evt), "delivery", "delivery_id")
 				if strayDeliveryID != "" {
-					_ = r.ackOpenClawDeliveryHTTP(r.tokenB, strayDeliveryID)
+					_ = r.ackRuntimeEnvelopeDeliveryHTTP(r.tokenB, strayDeliveryID)
 				}
 			}
 			continue

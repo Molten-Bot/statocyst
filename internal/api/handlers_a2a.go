@@ -1325,7 +1325,7 @@ func a2aEnvelopePayload(payload string) map[string]any {
 
 func openClawEnvelopePayload(payload string) map[string]any {
 	envelope := runtimeEnvelopePayload(payload)
-	if len(envelope) == 0 || strings.TrimSpace(asStringAny(envelope["protocol"])) != openClawHTTPProtocol {
+	if len(envelope) == 0 || strings.TrimSpace(asStringAny(envelope["protocol"])) != openClawCompatibilityProtocol {
 		return nil
 	}
 	return envelope
@@ -1344,7 +1344,7 @@ func runtimeEnvelopePayload(payload string) map[string]any {
 
 func isRuntimeEnvelopeProtocol(raw string) bool {
 	switch strings.TrimSpace(raw) {
-	case runtimeEnvelopeProtocol, openClawHTTPProtocol:
+	case runtimeEnvelopeProtocol, openClawCompatibilityProtocol:
 		return true
 	default:
 		return false

@@ -36,8 +36,8 @@ func TestOpenClawPublishPullAckFlow(t *testing.T) {
 	}
 	publishPayload := decodeJSONMap(t, publishResp.Body.Bytes())
 	publishResult := requireAgentRuntimeSuccessEnvelope(t, publishPayload)
-	if got := readStringPath(publishResult, "transport", "protocol"); got != openClawHTTPProtocol {
-		t.Fatalf("expected transport.protocol=%q, got %q payload=%v", openClawHTTPProtocol, got, publishPayload)
+	if got := readStringPath(publishResult, "transport", "protocol"); got != openClawCompatibilityProtocol {
+		t.Fatalf("expected transport.protocol=%q, got %q payload=%v", openClawCompatibilityProtocol, got, publishPayload)
 	}
 	if got := readStringPath(publishResult, "openclaw_message", "kind"); got != "node_event" {
 		t.Fatalf("expected openclaw_message.kind=node_event, got %q payload=%v", got, publishPayload)
@@ -56,8 +56,8 @@ func TestOpenClawPublishPullAckFlow(t *testing.T) {
 	}
 	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
 	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
-	if got := readStringPath(pullResult, "transport", "protocol"); got != openClawHTTPProtocol {
-		t.Fatalf("expected pull transport.protocol=%q, got %q payload=%v", openClawHTTPProtocol, got, pullPayload)
+	if got := readStringPath(pullResult, "transport", "protocol"); got != openClawCompatibilityProtocol {
+		t.Fatalf("expected pull transport.protocol=%q, got %q payload=%v", openClawCompatibilityProtocol, got, pullPayload)
 	}
 	if got := readStringPath(pullResult, "openclaw_message", "kind"); got != "node_event" {
 		t.Fatalf("expected pull openclaw_message.kind=node_event, got %q payload=%v", got, pullPayload)
@@ -81,8 +81,8 @@ func TestOpenClawPublishPullAckFlow(t *testing.T) {
 	}
 	ackPayload := decodeJSONMap(t, ackResp.Body.Bytes())
 	ackResult := requireAgentRuntimeSuccessEnvelope(t, ackPayload)
-	if got := readStringPath(ackResult, "transport", "protocol"); got != openClawHTTPProtocol {
-		t.Fatalf("expected ack transport.protocol=%q, got %q payload=%v", openClawHTTPProtocol, got, ackPayload)
+	if got := readStringPath(ackResult, "transport", "protocol"); got != openClawCompatibilityProtocol {
+		t.Fatalf("expected ack transport.protocol=%q, got %q payload=%v", openClawCompatibilityProtocol, got, ackPayload)
 	}
 	if got := readStringPath(ackResult, "openclaw_message", "kind"); got != "node_event" {
 		t.Fatalf("expected ack openclaw_message.kind=node_event, got %q payload=%v", got, ackPayload)
@@ -94,8 +94,8 @@ func TestOpenClawPublishPullAckFlow(t *testing.T) {
 	}
 	statusPayload := decodeJSONMap(t, statusResp.Body.Bytes())
 	statusResult := requireAgentRuntimeSuccessEnvelope(t, statusPayload)
-	if got := readStringPath(statusResult, "transport", "protocol"); got != openClawHTTPProtocol {
-		t.Fatalf("expected status transport.protocol=%q, got %q payload=%v", openClawHTTPProtocol, got, statusPayload)
+	if got := readStringPath(statusResult, "transport", "protocol"); got != openClawCompatibilityProtocol {
+		t.Fatalf("expected status transport.protocol=%q, got %q payload=%v", openClawCompatibilityProtocol, got, statusPayload)
 	}
 	if got := readStringPath(statusResult, "openclaw_message", "kind"); got != "node_event" {
 		t.Fatalf("expected status openclaw_message.kind=node_event, got %q payload=%v", got, statusPayload)
@@ -992,7 +992,7 @@ func TestOpenClawWebSocketUpgradeWithWrappedWriter(t *testing.T) {
 
 	wrappedRouter := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Simulate middleware wrappers that hide Hijacker but still expose Unwrap.
-		router.ServeHTTP(openClawUnwrapOnlyResponseWriter{ResponseWriter: w}, r)
+		router.ServeHTTP(runtimeEnvelopeUnwrapOnlyResponseWriter{ResponseWriter: w}, r)
 	})
 
 	server := httptest.NewServer(wrappedRouter)
@@ -1014,11 +1014,11 @@ func TestOpenClawWebSocketUpgradeWithWrappedWriter(t *testing.T) {
 	}
 }
 
-type openClawUnwrapOnlyResponseWriter struct {
+type runtimeEnvelopeUnwrapOnlyResponseWriter struct {
 	http.ResponseWriter
 }
 
-func (w openClawUnwrapOnlyResponseWriter) Unwrap() http.ResponseWriter {
+func (w runtimeEnvelopeUnwrapOnlyResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 

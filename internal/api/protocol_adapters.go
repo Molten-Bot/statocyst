@@ -37,7 +37,7 @@ func protocolAdaptersPayload(apiBase string) map[string]any {
 			"endpoints":   runtimeEnvelopeAdapterEndpoints(apiBase),
 		},
 		"openclaw_http_v1": map[string]any{
-			"protocol":    openClawHTTPProtocol,
+			"protocol":    openClawCompatibilityProtocol,
 			"mode":        "compatibility_alias",
 			"description": "Legacy OpenClaw JSON envelope adapter over HTTP; prefer protocol_adapters.runtime_v1 for new clients.",
 			"endpoints":   openClawAdapterEndpoints(apiBase),

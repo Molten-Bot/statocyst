@@ -201,10 +201,10 @@ func TestRunnerLaunchSmokeFlow(t *testing.T) {
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "A2A send/get/list and legacy pull/ack succeeds between bound agents", run: (*runner).stepA2AStorageDelivery},
 		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
-		{name: "Runtime HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepOpenClawHTTPDelivery},
-		{name: "Runtime polling heartbeat marks runtime presence online", run: (*runner).stepOpenClawPresenceHeartbeat},
-		{name: "Runtime queued offline message dispatches on websocket reconnect", run: (*runner).stepOpenClawQueuedOfflineWebSocketDelivery},
-		{name: "Runtime websocket delivery and ack succeeds", run: (*runner).stepOpenClawWebSocketDelivery},
+		{name: "Runtime HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepRuntimeHTTPDelivery},
+		{name: "Runtime polling heartbeat marks runtime presence online", run: (*runner).stepRuntimePresenceHeartbeat},
+		{name: "Runtime queued offline message dispatches on websocket reconnect", run: (*runner).stepRuntimeQueuedOfflineWebSocketDelivery},
+		{name: "Runtime websocket delivery and ack succeeds", run: (*runner).stepRuntimeWebSocketDelivery},
 		{name: "OpenClaw compatibility publish/pull/ack aliases still work", run: (*runner).stepOpenClawCompatibilityAliases},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},
@@ -257,7 +257,7 @@ func TestRunnerA2AStorageSmokeBackends(t *testing.T) {
 				{name: "second agent binds", run: (*runner).stepAgentDuplicateHandleRejected},
 				{name: "agent trust active", run: (*runner).stepAliceCreatesAgentTrust},
 				{name: "a2a storage delivery", run: (*runner).stepA2AStorageDelivery},
-				{name: "offline queued websocket delivery", run: (*runner).stepOpenClawQueuedOfflineWebSocketDelivery},
+				{name: "offline queued websocket delivery", run: (*runner).stepRuntimeQueuedOfflineWebSocketDelivery},
 			}
 			for _, step := range steps {
 				if err := step.run(r); err != nil {

@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	openClawHTTPProtocol    = "openclaw.http.v1"
-	runtimeEnvelopeProtocol = "runtime.envelope.v1"
+	openClawCompatibilityProtocol = "openclaw.http.v1"
+	runtimeEnvelopeProtocol       = "runtime.envelope.v1"
 )
 
 const (
@@ -21,11 +21,11 @@ const (
 )
 
 const (
-	openClawSkillPayloadFormatMarkdown = "markdown"
-	openClawSkillPayloadFormatJSON     = "json"
+	runtimeEnvelopePayloadFormatMarkdown = "markdown"
+	runtimeEnvelopePayloadFormatJSON     = "json"
 )
 
-type openClawPublishRequest struct {
+type runtimeEnvelopePublishRequest struct {
 	ToAgentUUID string         `json:"to_agent_uuid"`
 	ToAgentID   string         `json:"to_agent_id,omitempty"`
 	ToAgentURI  string         `json:"to_agent_uri,omitempty"`
@@ -34,7 +34,7 @@ type openClawPublishRequest struct {
 }
 
 func (h *Handler) handleOpenClawPublish(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopePublish(w, r, openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRuntimeEnvelopePublish(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimePublish(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +66,7 @@ func (h *Handler) handleRuntimeEnvelopePublish(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	req, err := parseOpenClawPublishRequest(raw)
+	req, err := parseRuntimeEnvelopePublishRequest(raw)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -105,13 +105,13 @@ func (h *Handler) handleRuntimeEnvelopePublish(w http.ResponseWriter, r *http.Re
 	out["envelope"] = envelope
 	out["openclaw_message"] = envelope
 	h.recordRuntimeEnvelopeAdapterUsage(senderAgentUUID, adapterName, "publish", map[string]any{
-		"message_id": openClawMessageIDFromResult(out),
+		"message_id": runtimeEnvelopeMessageIDFromResult(out),
 	})
 	writeAgentRuntimeSuccess(w, http.StatusAccepted, out)
 }
 
-func parseOpenClawPublishRequest(raw map[string]any) (openClawPublishRequest, error) {
-	var req openClawPublishRequest
+func parseRuntimeEnvelopePublishRequest(raw map[string]any) (runtimeEnvelopePublishRequest, error) {
+	var req runtimeEnvelopePublishRequest
 	if raw == nil {
 		return req, nil
 	}
@@ -150,7 +150,7 @@ func parseOpenClawPublishRequest(raw map[string]any) (openClawPublishRequest, er
 }
 
 func (h *Handler) handleOpenClawPull(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopePull(w, r, openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRuntimeEnvelopePull(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimePull(w http.ResponseWriter, r *http.Request) {
@@ -194,13 +194,13 @@ func (h *Handler) handleRuntimeEnvelopePull(w http.ResponseWriter, r *http.Reque
 
 	out := withRuntimeEnvelopeProjection(result, defaultProtocol)
 	h.recordRuntimeEnvelopeAdapterUsage(receiverAgentUUID, adapterName, "pull", map[string]any{
-		"message_id": openClawMessageIDFromResult(out),
+		"message_id": runtimeEnvelopeMessageIDFromResult(out),
 	})
 	writeAgentRuntimeSuccess(w, status, out)
 }
 
 func (h *Handler) handleOpenClawMessageSubroutes(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeMessageSubroutes(w, r, "/v1/openclaw/messages/", openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRuntimeEnvelopeMessageSubroutes(w, r, "/v1/openclaw/messages/", openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimeMessageSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +249,7 @@ func (h *Handler) handleRuntimeEnvelopeMessageSubroutes(w http.ResponseWriter, r
 }
 
 func (h *Handler) handleOpenClawAckDelivery(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeAckDelivery(w, r, openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRuntimeEnvelopeAckDelivery(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimeEnvelopeAckDelivery(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
@@ -290,13 +290,13 @@ func (h *Handler) handleRuntimeEnvelopeAckDelivery(w http.ResponseWriter, r *htt
 
 	result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
 	h.recordRuntimeEnvelopeAdapterUsage(receiverAgentUUID, adapterName, "ack", map[string]any{
-		"message_id": openClawMessageIDFromResult(result),
+		"message_id": runtimeEnvelopeMessageIDFromResult(result),
 	})
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
 }
 
 func (h *Handler) handleOpenClawNackDelivery(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeNackDelivery(w, r, openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRuntimeEnvelopeNackDelivery(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimeEnvelopeNackDelivery(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
@@ -337,13 +337,13 @@ func (h *Handler) handleRuntimeEnvelopeNackDelivery(w http.ResponseWriter, r *ht
 
 	result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
 	h.recordRuntimeEnvelopeAdapterUsage(receiverAgentUUID, adapterName, "nack", map[string]any{
-		"message_id": openClawMessageIDFromResult(result),
+		"message_id": runtimeEnvelopeMessageIDFromResult(result),
 	})
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
 }
 
 func (h *Handler) handleOpenClawMessageStatus(w http.ResponseWriter, r *http.Request, messageID string) {
-	h.handleRuntimeEnvelopeMessageStatus(w, r, messageID, openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRuntimeEnvelopeMessageStatus(w, r, messageID, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimeEnvelopeMessageStatus(w http.ResponseWriter, r *http.Request, messageID, defaultProtocol, adapterName string) {
@@ -370,13 +370,9 @@ func (h *Handler) handleRuntimeEnvelopeMessageStatus(w http.ResponseWriter, r *h
 
 	result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
 	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "status", map[string]any{
-		"message_id": openClawMessageIDFromResult(result),
+		"message_id": runtimeEnvelopeMessageIDFromResult(result),
 	})
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
-}
-
-func normalizeOpenClawEnvelope(in map[string]any, now time.Time) (map[string]any, error) {
-	return normalizeRuntimeEnvelope(in, now, openClawHTTPProtocol)
 }
 
 func normalizeRuntimeEnvelope(in map[string]any, now time.Time, defaultProtocol string) (map[string]any, error) {
@@ -393,14 +389,10 @@ func normalizeRuntimeEnvelope(in map[string]any, now time.Time, defaultProtocol 
 	if strings.TrimSpace(asStringAny(out["timestamp"])) == "" {
 		out["timestamp"] = now.UTC().Format(time.RFC3339Nano)
 	}
-	if err := normalizeOpenClawSkillActivationEnvelope(out); err != nil {
+	if err := normalizeRuntimeSkillActivationEnvelope(out); err != nil {
 		return nil, err
 	}
 	return out, nil
-}
-
-func withOpenClawProjection(result map[string]any) map[string]any {
-	return withRuntimeEnvelopeProjection(result, openClawHTTPProtocol)
 }
 
 func withRuntimeEnvelopeProjection(result map[string]any, defaultProtocol string) map[string]any {
@@ -417,14 +409,6 @@ func withRuntimeEnvelopeProjection(result map[string]any, defaultProtocol string
 	return out
 }
 
-func openClawTransportMetadata() map[string]any {
-	return runtimeEnvelopeTransportMetadata(openClawHTTPProtocol, "http")
-}
-
-func openClawTransportMetadataForAdapter(adapter string) map[string]any {
-	return runtimeEnvelopeTransportMetadata(openClawHTTPProtocol, adapter)
-}
-
 func runtimeEnvelopeTransportMetadata(defaultProtocol, adapter string) map[string]any {
 	adapter = strings.TrimSpace(adapter)
 	if adapter == "" {
@@ -434,10 +418,6 @@ func runtimeEnvelopeTransportMetadata(defaultProtocol, adapter string) map[strin
 		"protocol": normalizeRuntimeEnvelopeProtocol(defaultProtocol),
 		"adapter":  adapter,
 	}
-}
-
-func parseOpenClawEnvelopeFromMessage(message model.Message) map[string]any {
-	return parseRuntimeEnvelopeFromMessage(message, openClawHTTPProtocol)
 }
 
 func parseRuntimeEnvelopeFromMessage(message model.Message, defaultProtocol string) map[string]any {
@@ -451,7 +431,7 @@ func parseRuntimeEnvelopeFromMessage(message model.Message, defaultProtocol stri
 			if strings.TrimSpace(asStringAny(out["kind"])) == "" {
 				out["kind"] = "agent_message"
 			}
-			_ = normalizeOpenClawSkillActivationEnvelope(out)
+			_ = normalizeRuntimeSkillActivationEnvelope(out)
 			return out
 		}
 		return map[string]any{
@@ -512,7 +492,7 @@ func asStringAny(value any) string {
 	return ""
 }
 
-func normalizeOpenClawSkillActivationEnvelope(envelope map[string]any) error {
+func normalizeRuntimeSkillActivationEnvelope(envelope map[string]any) error {
 	if envelope == nil {
 		return nil
 	}
@@ -529,7 +509,7 @@ func normalizeOpenClawSkillActivationEnvelope(envelope map[string]any) error {
 	}
 
 	payloadFormat := strings.ToLower(strings.TrimSpace(asStringAny(envelope["payload_format"])))
-	if payloadFormat != "" && payloadFormat != openClawSkillPayloadFormatMarkdown && payloadFormat != openClawSkillPayloadFormatJSON {
+	if payloadFormat != "" && payloadFormat != runtimeEnvelopePayloadFormatMarkdown && payloadFormat != runtimeEnvelopePayloadFormatJSON {
 		return errors.New("payload_format must be one of: markdown, json")
 	}
 
@@ -548,16 +528,16 @@ func normalizeOpenClawSkillActivationEnvelope(envelope map[string]any) error {
 	switch payload.(type) {
 	case string:
 		if payloadFormat == "" {
-			payloadFormat = openClawSkillPayloadFormatMarkdown
+			payloadFormat = runtimeEnvelopePayloadFormatMarkdown
 		}
-		if payloadFormat != openClawSkillPayloadFormatMarkdown {
+		if payloadFormat != runtimeEnvelopePayloadFormatMarkdown {
 			return errors.New("payload must be a JSON object when payload_format is json")
 		}
 	case map[string]any:
 		if payloadFormat == "" {
-			payloadFormat = openClawSkillPayloadFormatJSON
+			payloadFormat = runtimeEnvelopePayloadFormatJSON
 		}
-		if payloadFormat != openClawSkillPayloadFormatJSON {
+		if payloadFormat != runtimeEnvelopePayloadFormatJSON {
 			return errors.New("payload must be a markdown string when payload_format is markdown")
 		}
 	default:

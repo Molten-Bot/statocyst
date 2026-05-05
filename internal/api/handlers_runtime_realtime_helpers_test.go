@@ -13,17 +13,17 @@ import (
 	"moltenhub/internal/store"
 )
 
-func TestOpenClawWSPullTimeout(t *testing.T) {
-	timeout, err := openClawWSPullTimeout(nil)
+func TestRuntimeEnvelopeWSPullTimeout(t *testing.T) {
+	timeout, err := runtimeEnvelopeWSPullTimeout(nil)
 	if err != nil {
 		t.Fatalf("unexpected error for nil timeout: %v", err)
 	}
-	if timeout != openClawWebSocketPullTimeoutDefault {
-		t.Fatalf("expected default timeout %v, got %v", openClawWebSocketPullTimeoutDefault, timeout)
+	if timeout != runtimeEnvelopeWebSocketPullTimeoutDefault {
+		t.Fatalf("expected default timeout %v, got %v", runtimeEnvelopeWebSocketPullTimeoutDefault, timeout)
 	}
 
 	zero := 0
-	timeout, err = openClawWSPullTimeout(&zero)
+	timeout, err = runtimeEnvelopeWSPullTimeout(&zero)
 	if err != nil {
 		t.Fatalf("unexpected error for zero timeout: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestOpenClawWSPullTimeout(t *testing.T) {
 	}
 
 	max := maxPullTimeoutMS
-	timeout, err = openClawWSPullTimeout(&max)
+	timeout, err = runtimeEnvelopeWSPullTimeout(&max)
 	if err != nil {
 		t.Fatalf("unexpected error for max timeout: %v", err)
 	}
@@ -41,23 +41,23 @@ func TestOpenClawWSPullTimeout(t *testing.T) {
 	}
 
 	negative := -1
-	if _, err := openClawWSPullTimeout(&negative); err == nil || !strings.Contains(err.Error(), "between 0 and 30000") {
+	if _, err := runtimeEnvelopeWSPullTimeout(&negative); err == nil || !strings.Contains(err.Error(), "between 0 and 30000") {
 		t.Fatalf("expected bounds error for negative timeout, got %v", err)
 	}
 
 	tooHigh := maxPullTimeoutMS + 1
-	if _, err := openClawWSPullTimeout(&tooHigh); err == nil || !strings.Contains(err.Error(), "between 0 and 30000") {
+	if _, err := runtimeEnvelopeWSPullTimeout(&tooHigh); err == nil || !strings.Contains(err.Error(), "between 0 and 30000") {
 		t.Fatalf("expected bounds error for timeout above max, got %v", err)
 	}
 }
 
-func TestOpenClawPresenceFromMetadataAt(t *testing.T) {
+func TestRuntimePresenceFromMetadataAt(t *testing.T) {
 	now := time.Date(2026, time.April, 17, 18, 0, 0, 0, time.UTC)
-	fresh := now.Add(-openClawPresenceOfflineAfter + time.Minute).Format(time.RFC3339)
-	stale := now.Add(-openClawPresenceOfflineAfter - time.Second).Format(time.RFC3339)
+	fresh := now.Add(-runtimePresenceOfflineAfter + time.Minute).Format(time.RFC3339)
+	stale := now.Add(-runtimePresenceOfflineAfter - time.Second).Format(time.RFC3339)
 
 	t.Run("fresh online stays online", func(t *testing.T) {
-		presence := openClawPresenceFromMetadataAt(map[string]any{
+		presence := runtimePresenceFromMetadataAt(map[string]any{
 			"presence": map[string]any{
 				"status":      "online",
 				"ready":       true,
@@ -65,7 +65,7 @@ func TestOpenClawPresenceFromMetadataAt(t *testing.T) {
 				"session_key": "main",
 				"updated_at":  fresh,
 			},
-		}, now, openClawPresenceOfflineAfter)
+		}, now, runtimePresenceOfflineAfter)
 		if got, _ := presence["status"].(string); got != "online" {
 			t.Fatalf("expected online presence status, got %q payload=%v", got, presence)
 		}
@@ -75,14 +75,14 @@ func TestOpenClawPresenceFromMetadataAt(t *testing.T) {
 	})
 
 	t.Run("stale online degrades to offline", func(t *testing.T) {
-		presence := openClawPresenceFromMetadataAt(map[string]any{
+		presence := runtimePresenceFromMetadataAt(map[string]any{
 			"presence": map[string]any{
 				"status":      "online",
 				"ready":       true,
 				"session_key": "main",
 				"updated_at":  stale,
 			},
-		}, now, openClawPresenceOfflineAfter)
+		}, now, runtimePresenceOfflineAfter)
 		if got, _ := presence["status"].(string); got != "offline" {
 			t.Fatalf("expected stale online status to degrade offline, got %q payload=%v", got, presence)
 		}
@@ -92,14 +92,14 @@ func TestOpenClawPresenceFromMetadataAt(t *testing.T) {
 	})
 
 	t.Run("invalid updated_at keeps online", func(t *testing.T) {
-		presence := openClawPresenceFromMetadataAt(map[string]any{
+		presence := runtimePresenceFromMetadataAt(map[string]any{
 			"presence": map[string]any{
 				"status":      "online",
 				"ready":       true,
 				"session_key": "main",
 				"updated_at":  "not-a-time",
 			},
-		}, now, openClawPresenceOfflineAfter)
+		}, now, runtimePresenceOfflineAfter)
 		if got, _ := presence["status"].(string); got != "online" {
 			t.Fatalf("expected invalid timestamp to preserve online status, got %q payload=%v", got, presence)
 		}
@@ -109,7 +109,7 @@ func TestOpenClawPresenceFromMetadataAt(t *testing.T) {
 	})
 
 	t.Run("stale threshold disabled", func(t *testing.T) {
-		presence := openClawPresenceFromMetadataAt(map[string]any{
+		presence := runtimePresenceFromMetadataAt(map[string]any{
 			"presence": map[string]any{
 				"status":      "online",
 				"ready":       true,
@@ -123,48 +123,48 @@ func TestOpenClawPresenceFromMetadataAt(t *testing.T) {
 	})
 
 	t.Run("missing or invalid presence metadata returns nil", func(t *testing.T) {
-		if got := openClawPresenceFromMetadataAt(nil, now, openClawPresenceOfflineAfter); got != nil {
+		if got := runtimePresenceFromMetadataAt(nil, now, runtimePresenceOfflineAfter); got != nil {
 			t.Fatalf("expected nil presence for nil metadata, got %v", got)
 		}
-		if got := openClawPresenceFromMetadataAt(map[string]any{}, now, openClawPresenceOfflineAfter); got != nil {
+		if got := runtimePresenceFromMetadataAt(map[string]any{}, now, runtimePresenceOfflineAfter); got != nil {
 			t.Fatalf("expected nil presence for missing presence key, got %v", got)
 		}
-		if got := openClawPresenceFromMetadataAt(map[string]any{"presence": "invalid"}, now, openClawPresenceOfflineAfter); got != nil {
+		if got := runtimePresenceFromMetadataAt(map[string]any{"presence": "invalid"}, now, runtimePresenceOfflineAfter); got != nil {
 			t.Fatalf("expected nil presence for invalid presence object, got %v", got)
 		}
-		if got := openClawPresenceFromMetadataAt(map[string]any{"presence": map[string]any{}}, now, openClawPresenceOfflineAfter); got != nil {
+		if got := runtimePresenceFromMetadataAt(map[string]any{"presence": map[string]any{}}, now, runtimePresenceOfflineAfter); got != nil {
 			t.Fatalf("expected nil presence for empty presence object, got %v", got)
 		}
-		if got := openClawPresenceFromMetadataAt(map[string]any{"presence": map[string]any{"note": "noop"}}, now, openClawPresenceOfflineAfter); got != nil {
+		if got := runtimePresenceFromMetadataAt(map[string]any{"presence": map[string]any{"note": "noop"}}, now, runtimePresenceOfflineAfter); got != nil {
 			t.Fatalf("expected nil presence for metadata without supported fields, got %v", got)
 		}
 	})
 
 	t.Run("zero now still renders presence", func(t *testing.T) {
-		presence := openClawPresenceFromMetadataAt(map[string]any{
+		presence := runtimePresenceFromMetadataAt(map[string]any{
 			"presence": map[string]any{
 				"status":      "offline",
 				"ready":       false,
 				"session_key": "main",
 				"updated_at":  stale,
 			},
-		}, time.Time{}, openClawPresenceOfflineAfter)
+		}, time.Time{}, runtimePresenceOfflineAfter)
 		if got, _ := presence["status"].(string); got != "offline" {
 			t.Fatalf("expected status offline with zero now fallback, got %q payload=%v", got, presence)
 		}
 	})
 }
 
-func TestParseOpenClawPresenceTimestamp(t *testing.T) {
-	if _, ok := parseOpenClawPresenceTimestamp(""); ok {
+func TestParseRuntimePresenceTimestamp(t *testing.T) {
+	if _, ok := parseRuntimePresenceTimestamp(""); ok {
 		t.Fatalf("expected empty timestamp to fail parse")
 	}
-	if _, ok := parseOpenClawPresenceTimestamp("not-a-time"); ok {
+	if _, ok := parseRuntimePresenceTimestamp("not-a-time"); ok {
 		t.Fatalf("expected invalid timestamp to fail parse")
 	}
 
 	raw := "2026-04-17T10:11:12.123456789Z"
-	parsed, ok := parseOpenClawPresenceTimestamp(raw)
+	parsed, ok := parseRuntimePresenceTimestamp(raw)
 	if !ok {
 		t.Fatalf("expected timestamp parse success for %q", raw)
 	}
@@ -281,7 +281,7 @@ func TestRuntimeHandlerErrorForPresenceUpdateMappings(t *testing.T) {
 	}
 }
 
-func TestSetOpenClawWebSocketPresenceInvalidStatusFallsBackOffline(t *testing.T) {
+func TestSetRuntimeWebSocketPresenceInvalidStatusFallsBackOffline(t *testing.T) {
 	mem := store.NewMemoryStore()
 	waiters := longpoll.NewWaiters()
 	h := NewHandler(
@@ -302,9 +302,9 @@ func TestSetOpenClawWebSocketPresenceInvalidStatusFallsBackOffline(t *testing.T)
 	router := NewRouter(h)
 	_, _, _, _, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
 
-	agent, err := h.setOpenClawWebSocketPresence(agentUUIDB, "main", "invalid-status", "forced invalid")
+	agent, err := h.setRuntimeWebSocketPresence(agentUUIDB, "main", "invalid-status", "forced invalid")
 	if err != nil {
-		t.Fatalf("expected setOpenClawWebSocketPresence success, got %v", err)
+		t.Fatalf("expected setRuntimeWebSocketPresence success, got %v", err)
 	}
 	presence := h.currentAgentPresence(agentUUIDB, agent.Metadata)
 	if got, _ := presence["status"].(string); got != "offline" {
@@ -314,7 +314,7 @@ func TestSetOpenClawWebSocketPresenceInvalidStatusFallsBackOffline(t *testing.T)
 		t.Fatalf("expected ready=false for invalid status fallback, got payload=%v", presence)
 	}
 
-	if _, err := h.setOpenClawWebSocketPresence("", "main", "online", "missing"); !errors.Is(err, store.ErrAgentNotFound) {
+	if _, err := h.setRuntimeWebSocketPresence("", "main", "online", "missing"); !errors.Is(err, store.ErrAgentNotFound) {
 		t.Fatalf("expected empty agent uuid to return ErrAgentNotFound, got %v", err)
 	}
 }
@@ -331,7 +331,7 @@ func (s *failPresenceActivityStore) RecordAgentSystemActivity(agentUUID string, 
 	return s.MemoryStore.RecordAgentSystemActivity(agentUUID, entry, now)
 }
 
-func TestSetOpenClawWebSocketPresenceActivityFailure(t *testing.T) {
+func TestSetRuntimeWebSocketPresenceActivityFailure(t *testing.T) {
 	stateStore := &failPresenceActivityStore{MemoryStore: store.NewMemoryStore()}
 	waiters := longpoll.NewWaiters()
 	h := NewHandler(
@@ -353,9 +353,9 @@ func TestSetOpenClawWebSocketPresenceActivityFailure(t *testing.T) {
 	_, _, _, _, _, _, agentUUIDA, _ := setupTrustedAgents(t, router)
 
 	stateStore.failRecordActivity = true
-	agent, err := h.setOpenClawWebSocketPresence(agentUUIDA, "main", "online", "")
+	agent, err := h.setRuntimeWebSocketPresence(agentUUIDA, "main", "online", "")
 	if err != nil {
-		t.Fatalf("expected setOpenClawWebSocketPresence to ignore activity write failure, got %v", err)
+		t.Fatalf("expected setRuntimeWebSocketPresence to ignore activity write failure, got %v", err)
 	}
 	presence := h.currentAgentPresence(agentUUIDA, agent.Metadata)
 	if got, _ := presence["status"].(string); got != "online" {
