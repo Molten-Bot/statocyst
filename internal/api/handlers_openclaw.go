@@ -16,7 +16,7 @@ const (
 )
 
 const (
-	runtimeEnvelopeAdapterRuntime = "runtime"
+	runtimeEnvelopeAdapterRuntime  = "runtime"
 	runtimeEnvelopeAdapterOpenClaw = "openclaw"
 )
 
