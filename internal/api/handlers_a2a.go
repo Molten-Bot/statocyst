@@ -1142,9 +1142,6 @@ func a2aTaskMetadataFromRecord(record model.MessageRecord, contextID string) map
 	if runtimeMeta := runtimeEnvelopeTaskMetadata(record.Message.Payload); len(runtimeMeta) > 0 {
 		metadata["runtime"] = runtimeMeta
 	}
-	if openClawMeta := openClawTaskMetadata(record.Message.Payload); len(openClawMeta) > 0 {
-		metadata["openclaw"] = openClawMeta
-	}
 	return metadata
 }
 
@@ -1174,14 +1171,6 @@ func a2aProtocolTaskMetadata(payload string) map[string]any {
 		out["metadata"] = cloneStringAnyMap(envelopeMeta)
 	}
 	return out
-}
-
-func openClawTaskMetadata(payload string) map[string]any {
-	envelope := openClawEnvelopePayload(payload)
-	if len(envelope) == 0 {
-		return nil
-	}
-	return runtimeEnvelopeMetadataFromPayload(envelope)
 }
 
 func runtimeEnvelopeTaskMetadata(payload string) map[string]any {
@@ -1323,14 +1312,6 @@ func a2aEnvelopePayload(payload string) map[string]any {
 	return nil
 }
 
-func openClawEnvelopePayload(payload string) map[string]any {
-	envelope := runtimeEnvelopePayload(payload)
-	if len(envelope) == 0 || strings.TrimSpace(asStringAny(envelope["protocol"])) != openClawCompatibilityProtocol {
-		return nil
-	}
-	return envelope
-}
-
 func runtimeEnvelopePayload(payload string) map[string]any {
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
@@ -1344,7 +1325,7 @@ func runtimeEnvelopePayload(payload string) map[string]any {
 
 func isRuntimeEnvelopeProtocol(raw string) bool {
 	switch strings.TrimSpace(raw) {
-	case runtimeEnvelopeProtocol, openClawCompatibilityProtocol:
+	case runtimeEnvelopeProtocol:
 		return true
 	default:
 		return false

@@ -891,6 +891,11 @@ func defaultErrorHint(code string) (errorHint, bool) {
 			Retryable:  false,
 			NextAction: "fix request payload shape and retry",
 		}, true
+	case "invalid_protocol":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "use protocol runtime.envelope.v1 or omit protocol to use the runtime default",
+		}, true
 	case "unauthorized":
 		return errorHint{
 			Retryable:  false,

@@ -783,7 +783,7 @@ func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request
 	if reason := strings.TrimSpace(req.Reason); reason != "" {
 		details["reason"] = reason
 	}
-	h.recordOpenClawCompatibilityAdapterUsage(agent.AgentUUID, "ws_offline", details)
+	h.recordRuntimeEnvelopeAdapterUsage(agent.AgentUUID, runtimeEnvelopeAdapterRuntime, "ws_offline", details)
 
 	payload := map[string]any{
 		"agent":        h.agentResponsePayload(updated),

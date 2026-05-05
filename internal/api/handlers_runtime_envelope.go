@@ -11,19 +11,20 @@ import (
 )
 
 const (
-	openClawCompatibilityProtocol = "openclaw.http.v1"
-	runtimeEnvelopeProtocol       = "runtime.envelope.v1"
+	retiredOpenClawProtocol = "openclaw.http.v1"
+	runtimeEnvelopeProtocol = "runtime.envelope.v1"
 )
 
 const (
-	runtimeEnvelopeAdapterRuntime  = "runtime"
-	runtimeEnvelopeAdapterOpenClaw = "openclaw"
+	runtimeEnvelopeAdapterRuntime = "runtime"
 )
 
 const (
 	runtimeEnvelopePayloadFormatMarkdown = "markdown"
 	runtimeEnvelopePayloadFormatJSON     = "json"
 )
+
+var errInvalidRuntimeEnvelopeProtocol = errors.New("protocol must be runtime.envelope.v1")
 
 type runtimeEnvelopePublishRequest struct {
 	ToAgentUUID string         `json:"to_agent_uuid"`
@@ -34,7 +35,7 @@ type runtimeEnvelopePublishRequest struct {
 }
 
 func (h *Handler) handleOpenClawPublish(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopePublish(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimePublish(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +79,10 @@ func (h *Handler) handleRuntimeEnvelopePublish(w http.ResponseWriter, r *http.Re
 
 	envelope, err := normalizeRuntimeEnvelope(req.Message, h.now().UTC(), defaultProtocol)
 	if err != nil {
+		if errors.Is(err, errInvalidRuntimeEnvelopeProtocol) {
+			writeError(w, http.StatusBadRequest, "invalid_protocol", err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -103,7 +108,6 @@ func (h *Handler) handleRuntimeEnvelopePublish(w http.ResponseWriter, r *http.Re
 	out := cloneStringAnyMap(result)
 	out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "http")
 	out["envelope"] = envelope
-	out["openclaw_message"] = envelope
 	h.recordRuntimeEnvelopeAdapterUsage(senderAgentUUID, adapterName, "publish", map[string]any{
 		"message_id": runtimeEnvelopeMessageIDFromResult(out),
 	})
@@ -150,7 +154,7 @@ func parseRuntimeEnvelopePublishRequest(raw map[string]any) (runtimeEnvelopePubl
 }
 
 func (h *Handler) handleOpenClawPull(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopePull(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimePull(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +204,7 @@ func (h *Handler) handleRuntimeEnvelopePull(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) handleOpenClawMessageSubroutes(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeMessageSubroutes(w, r, "/v1/openclaw/messages/", openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimeMessageSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -234,10 +238,6 @@ func (h *Handler) handleRuntimeEnvelopeMessageSubroutes(w http.ResponseWriter, r
 		h.handleRuntimeEnvelopeOffline(w, r, adapterName)
 		return
 	case "register-plugin":
-		if adapterName == runtimeEnvelopeAdapterOpenClaw {
-			h.handleOpenClawRegisterPlugin(w, r)
-			return
-		}
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
@@ -249,7 +249,7 @@ func (h *Handler) handleRuntimeEnvelopeMessageSubroutes(w http.ResponseWriter, r
 }
 
 func (h *Handler) handleOpenClawAckDelivery(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeAckDelivery(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimeEnvelopeAckDelivery(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
@@ -296,7 +296,7 @@ func (h *Handler) handleRuntimeEnvelopeAckDelivery(w http.ResponseWriter, r *htt
 }
 
 func (h *Handler) handleOpenClawNackDelivery(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeNackDelivery(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimeEnvelopeNackDelivery(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
@@ -343,7 +343,51 @@ func (h *Handler) handleRuntimeEnvelopeNackDelivery(w http.ResponseWriter, r *ht
 }
 
 func (h *Handler) handleOpenClawMessageStatus(w http.ResponseWriter, r *http.Request, messageID string) {
-	h.handleRuntimeEnvelopeMessageStatus(w, r, messageID, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
+	h.handleRetiredOpenClawMessages(w, r)
+}
+
+func (h *Handler) handleRetiredOpenClawMessages(w http.ResponseWriter, r *http.Request) {
+	retiredEndpoint, replacementEndpoint, hasReplacement := retiredOpenClawEndpointReplacement(r.URL.Path)
+	extras := map[string]any{
+		"retired_endpoint": retiredEndpoint,
+	}
+	message := "OpenClaw compatibility endpoints are retired; use " + replacementEndpoint
+	if hasReplacement {
+		extras["replacement_endpoint"] = replacementEndpoint
+	} else {
+		message = "OpenClaw plugin registration is retired; no generic replacement is available"
+		extras["replacement"] = "none"
+	}
+	writeErrorWithHintAndExtras(w, http.StatusGone, "endpoint_retired", message, &errorHint{
+		Retryable:  false,
+		NextAction: "update the client to the canonical /v1/runtime/messages/* runtime transport endpoints",
+	}, extras)
+}
+
+func retiredOpenClawEndpointReplacement(path string) (string, string, bool) {
+	const prefix = "/v1/openclaw/messages/"
+	trimmed := strings.TrimSuffix(path, "/")
+	tail := strings.TrimPrefix(trimmed, prefix)
+	switch tail {
+	case "publish":
+		return "/v1/openclaw/messages/publish", "/v1/runtime/messages/publish", true
+	case "pull":
+		return "/v1/openclaw/messages/pull", "/v1/runtime/messages/pull", true
+	case "ack":
+		return "/v1/openclaw/messages/ack", "/v1/runtime/messages/ack", true
+	case "nack":
+		return "/v1/openclaw/messages/nack", "/v1/runtime/messages/nack", true
+	case "ws":
+		return "/v1/openclaw/messages/ws", "/v1/runtime/messages/ws", true
+	case "offline":
+		return "/v1/openclaw/messages/offline", "/v1/runtime/messages/offline", true
+	case "register-plugin":
+		return "/v1/openclaw/messages/register-plugin", "", false
+	}
+	if strings.TrimSpace(tail) != "" && !strings.Contains(tail, "/") {
+		return "/v1/openclaw/messages/{message_id}", "/v1/runtime/messages/{message_id}", true
+	}
+	return "/v1/openclaw/messages/*", "/v1/runtime/messages/*", true
 }
 
 func (h *Handler) handleRuntimeEnvelopeMessageStatus(w http.ResponseWriter, r *http.Request, messageID, defaultProtocol, adapterName string) {
@@ -383,6 +427,9 @@ func normalizeRuntimeEnvelope(in map[string]any, now time.Time, defaultProtocol 
 	if strings.TrimSpace(asStringAny(out["protocol"])) == "" {
 		out["protocol"] = normalizeRuntimeEnvelopeProtocol(defaultProtocol)
 	}
+	if protocol := strings.TrimSpace(asStringAny(out["protocol"])); protocol == retiredOpenClawProtocol || protocol != runtimeEnvelopeProtocol {
+		return nil, errInvalidRuntimeEnvelopeProtocol
+	}
 	if strings.TrimSpace(asStringAny(out["kind"])) == "" {
 		out["kind"] = "agent_message"
 	}
@@ -404,7 +451,6 @@ func withRuntimeEnvelopeProjection(result map[string]any, defaultProtocol string
 	if message, ok := extractMessage(out["message"]); ok {
 		envelope := parseRuntimeEnvelopeFromMessage(message, defaultProtocol)
 		out["envelope"] = envelope
-		out["openclaw_message"] = envelope
 	}
 	return out
 }
