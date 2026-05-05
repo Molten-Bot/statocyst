@@ -38,6 +38,25 @@ func TestCallerContract_AgentRuntimeEndpointsRejectHumanHeaders(t *testing.T) {
 	}, headers)
 	requireUnauthorized(t, ackResp)
 
+	runtimePublishResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
+		"to_agent_uuid": "11111111-1111-1111-1111-111111111111",
+		"message":       map[string]any{"kind": "agent_message", "text": "hello"},
+	}, headers)
+	requireUnauthorized(t, runtimePublishResp)
+
+	runtimePullResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=0", nil, headers)
+	requireUnauthorized(t, runtimePullResp)
+
+	runtimeAckResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/ack", map[string]any{
+		"delivery_id": "delivery-1",
+	}, headers)
+	requireUnauthorized(t, runtimeAckResp)
+
+	runtimeOfflineResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/offline", map[string]any{
+		"session_key": "main",
+	}, headers)
+	requireUnauthorized(t, runtimeOfflineResp)
+
 	openclawPublishResp := doJSONRequest(t, router, http.MethodPost, "/v1/openclaw/messages/publish", map[string]any{
 		"to_agent_uuid": "11111111-1111-1111-1111-111111111111",
 		"message":       map[string]any{"kind": "agent_message", "text": "hello"},
@@ -117,6 +136,13 @@ func TestOpenAPICallerContractSecuritySchemes(t *testing.T) {
 		{Method: http.MethodPost, Path: "/v1/messages/ack"}:                           {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/messages/nack"}:                          {"agentAuth"},
 		{Method: http.MethodGet, Path: "/v1/messages/{message_id}"}:                   {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/runtime/messages/publish"}:               {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/runtime/messages/pull"}:                   {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/runtime/messages/ack"}:                   {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/runtime/messages/nack"}:                  {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/runtime/messages/{message_id}"}:           {"agentAuth"},
+		{Method: http.MethodGet, Path: "/v1/runtime/messages/ws"}:                     {"agentAuth"},
+		{Method: http.MethodPost, Path: "/v1/runtime/messages/offline"}:               {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/openclaw/messages/publish"}:              {"agentAuth"},
 		{Method: http.MethodGet, Path: "/v1/openclaw/messages/pull"}:                  {"agentAuth"},
 		{Method: http.MethodPost, Path: "/v1/openclaw/messages/ack"}:                  {"agentAuth"},
@@ -137,7 +163,7 @@ func TestOpenAPICallerContractSecuritySchemes(t *testing.T) {
 	}
 
 	for op, schemes := range securityByOperation {
-		if strings.HasPrefix(op.Path, "/v1/messages/") || strings.HasPrefix(op.Path, "/v1/openclaw/messages/") || op.Path == "/v1/agents/me" || strings.HasPrefix(op.Path, "/v1/agents/me/") {
+		if strings.HasPrefix(op.Path, "/v1/messages/") || strings.HasPrefix(op.Path, "/v1/runtime/messages/") || strings.HasPrefix(op.Path, "/v1/openclaw/messages/") || op.Path == "/v1/agents/me" || strings.HasPrefix(op.Path, "/v1/agents/me/") {
 			if !equalSecuritySchemes(schemes, []string{"agentAuth"}) {
 				t.Fatalf("runtime endpoint must require agentAuth: %s %s got=%v", op.Method, op.Path, schemes)
 			}

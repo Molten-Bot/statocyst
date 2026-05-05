@@ -42,6 +42,9 @@ func TestOpenClawPublishPullAckFlow(t *testing.T) {
 	if got := readStringPath(publishResult, "openclaw_message", "kind"); got != "node_event" {
 		t.Fatalf("expected openclaw_message.kind=node_event, got %q payload=%v", got, publishPayload)
 	}
+	if got := readStringPath(publishResult, "envelope", "kind"); got != "node_event" {
+		t.Fatalf("expected envelope.kind=node_event, got %q payload=%v", got, publishPayload)
+	}
 	messageID, _ := publishResult["message_id"].(string)
 	if messageID == "" {
 		t.Fatalf("expected message_id in publish response payload=%v", publishPayload)
@@ -61,6 +64,9 @@ func TestOpenClawPublishPullAckFlow(t *testing.T) {
 	}
 	if got := readStringPath(pullResult, "openclaw_message", "text"); got != "build completed" {
 		t.Fatalf("expected pull openclaw_message.text=build completed, got %q payload=%v", got, pullPayload)
+	}
+	if got := readStringPath(pullResult, "envelope", "text"); got != "build completed" {
+		t.Fatalf("expected pull envelope.text=build completed, got %q payload=%v", got, pullPayload)
 	}
 	deliveryID := readStringPath(pullResult, "delivery", "delivery_id")
 	if deliveryID == "" {
@@ -93,6 +99,76 @@ func TestOpenClawPublishPullAckFlow(t *testing.T) {
 	}
 	if got := readStringPath(statusResult, "openclaw_message", "kind"); got != "node_event" {
 		t.Fatalf("expected status openclaw_message.kind=node_event, got %q payload=%v", got, statusPayload)
+	}
+}
+
+func TestRuntimePublishPullAckFlowDefaultsRuntimeEnvelope(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	publishResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/publish", map[string]any{
+		"to_agent_uuid": agentUUIDB,
+		"message": map[string]any{
+			"kind": "task_result",
+			"text": "runtime ready",
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if publishResp.Code != http.StatusAccepted {
+		t.Fatalf("expected runtime publish 202, got %d %s", publishResp.Code, publishResp.Body.String())
+	}
+	publishPayload := decodeJSONMap(t, publishResp.Body.Bytes())
+	publishResult := requireAgentRuntimeSuccessEnvelope(t, publishPayload)
+	if got := readStringPath(publishResult, "transport", "protocol"); got != runtimeEnvelopeProtocol {
+		t.Fatalf("expected runtime transport.protocol=%q, got %q payload=%v", runtimeEnvelopeProtocol, got, publishPayload)
+	}
+	if got := readStringPath(publishResult, "envelope", "protocol"); got != runtimeEnvelopeProtocol {
+		t.Fatalf("expected runtime envelope.protocol=%q, got %q payload=%v", runtimeEnvelopeProtocol, got, publishPayload)
+	}
+	if got := readStringPath(publishResult, "openclaw_message", "text"); got != "runtime ready" {
+		t.Fatalf("expected compatibility openclaw_message.text, got %q payload=%v", got, publishPayload)
+	}
+	messageID, _ := publishResult["message_id"].(string)
+	if messageID == "" {
+		t.Fatalf("expected message_id in publish response payload=%v", publishPayload)
+	}
+
+	pullResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/pull?timeout_ms=1000", nil, map[string]string{"Authorization": "Bearer " + tokenB})
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected runtime pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	pullResult := requireAgentRuntimeSuccessEnvelope(t, pullPayload)
+	if got := readStringPath(pullResult, "envelope", "text"); got != "runtime ready" {
+		t.Fatalf("expected pull envelope.text=runtime ready, got %q payload=%v", got, pullPayload)
+	}
+	if got := readStringPath(pullResult, "openclaw_message", "text"); got != "runtime ready" {
+		t.Fatalf("expected pull compatibility openclaw_message.text=runtime ready, got %q payload=%v", got, pullPayload)
+	}
+	deliveryID := readStringPath(pullResult, "delivery", "delivery_id")
+	if deliveryID == "" {
+		t.Fatalf("expected delivery_id in pull response payload=%v", pullPayload)
+	}
+
+	ackResp := doJSONRequest(t, router, http.MethodPost, "/v1/runtime/messages/ack", map[string]any{
+		"delivery_id": deliveryID,
+	}, map[string]string{"Authorization": "Bearer " + tokenB})
+	if ackResp.Code != http.StatusOK {
+		t.Fatalf("expected runtime ack 200, got %d %s", ackResp.Code, ackResp.Body.String())
+	}
+	ackPayload := decodeJSONMap(t, ackResp.Body.Bytes())
+	ackResult := requireAgentRuntimeSuccessEnvelope(t, ackPayload)
+	if got := readStringPath(ackResult, "envelope", "protocol"); got != runtimeEnvelopeProtocol {
+		t.Fatalf("expected ack envelope.protocol=%q, got %q payload=%v", runtimeEnvelopeProtocol, got, ackPayload)
+	}
+
+	statusResp := doJSONRequest(t, router, http.MethodGet, "/v1/runtime/messages/"+messageID, nil, map[string]string{"Authorization": "Bearer " + tokenA})
+	if statusResp.Code != http.StatusOK {
+		t.Fatalf("expected runtime status 200, got %d %s", statusResp.Code, statusResp.Body.String())
+	}
+	statusPayload := decodeJSONMap(t, statusResp.Body.Bytes())
+	statusResult := requireAgentRuntimeSuccessEnvelope(t, statusPayload)
+	if got := readStringPath(statusResult, "envelope", "text"); got != "runtime ready" {
+		t.Fatalf("expected status envelope.text=runtime ready, got %q payload=%v", got, statusPayload)
 	}
 }
 

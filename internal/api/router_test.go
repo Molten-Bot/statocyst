@@ -3525,6 +3525,13 @@ func TestAgentCapabilitiesAndSkillEndpoints(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected control_plane.protocol_adapters, got %v", controlPlane)
 	}
+	runtimeAdapter, ok := controlPlaneAdapters["runtime_v1"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected runtime_v1 adapter in control_plane.protocol_adapters, got %v", controlPlaneAdapters)
+	}
+	if got, _ := runtimeAdapter["protocol"].(string); got != runtimeEnvelopeProtocol {
+		t.Fatalf("expected runtime adapter protocol, got %q", got)
+	}
 	openClawAdapter, ok := controlPlaneAdapters["openclaw_http_v1"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected openclaw_http_v1 adapter in control_plane.protocol_adapters, got %v", controlPlaneAdapters)
@@ -3724,6 +3731,10 @@ func TestAgentSkillOpenClawProfileIncludesAdapterSection(t *testing.T) {
 	}
 	capsPayload := decodeJSONMap(t, capsResp.Body.Bytes())
 	adapters, _ := capsPayload["protocol_adapters"].(map[string]any)
+	runtimeAdapter, _ := adapters["runtime_v1"].(map[string]any)
+	if got, _ := runtimeAdapter["protocol"].(string); got != runtimeEnvelopeProtocol {
+		t.Fatalf("expected runtime adapter protocol, got %q", got)
+	}
 	openClawAdapter, _ := adapters["openclaw_http_v1"].(map[string]any)
 	if got, _ := openClawAdapter["protocol"].(string); got != "openclaw.http.v1" {
 		t.Fatalf("expected openclaw adapter protocol, got %q", got)
