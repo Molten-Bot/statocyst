@@ -26,6 +26,7 @@ const pullTransientDequeueRetryInterval = 250 * time.Millisecond
 
 type publishRequest struct {
 	ToAgentUUID string  `json:"to_agent_uuid"`
+	ToAgentID   string  `json:"to_agent_id,omitempty"`
 	ToAgentURI  string  `json:"to_agent_uri,omitempty"`
 	ContentType string  `json:"content_type"`
 	Payload     string  `json:"payload"`
@@ -130,6 +131,7 @@ func (h *Handler) handlePublish(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, req publishRequest) (map[string]any, *runtimeHandlerError) {
 	req.ToAgentUUID = normalizeUUID(req.ToAgentUUID)
+	req.ToAgentID = strings.TrimSpace(req.ToAgentID)
 	req.ToAgentURI = strings.TrimSpace(req.ToAgentURI)
 	req.ContentType = strings.TrimSpace(req.ContentType)
 
@@ -150,11 +152,30 @@ func (h *Handler) publishFromAgent(ctx context.Context, senderAgentUUID string, 
 		}
 	}
 
+	if req.ToAgentUUID == "" && req.ToAgentURI == "" && req.ToAgentID != "" {
+		resolvedUUID, err := h.control.ResolveAgentUUID(req.ToAgentID)
+		if err != nil {
+			if errors.Is(err, store.ErrAgentNotFound) {
+				return nil, &runtimeHandlerError{
+					status:  http.StatusNotFound,
+					code:    "unknown_receiver",
+					message: "to_agent_id is not registered",
+				}
+			}
+			return nil, &runtimeHandlerError{
+				status:  http.StatusInternalServerError,
+				code:    "store_error",
+				message: "failed to resolve receiver",
+			}
+		}
+		req.ToAgentUUID = resolvedUUID
+	}
+
 	if req.ToAgentUUID == "" && req.ToAgentURI == "" {
 		return nil, &runtimeHandlerError{
 			status:  http.StatusBadRequest,
 			code:    "invalid_request",
-			message: "to_agent_uuid or to_agent_uri is required",
+			message: "to_agent_uuid, to_agent_id, or to_agent_uri is required",
 		}
 	}
 

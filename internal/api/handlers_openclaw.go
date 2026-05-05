@@ -19,6 +19,7 @@ const (
 
 type openClawPublishRequest struct {
 	ToAgentUUID string         `json:"to_agent_uuid"`
+	ToAgentID   string         `json:"to_agent_id,omitempty"`
 	ToAgentURI  string         `json:"to_agent_uri,omitempty"`
 	ClientMsgID *string        `json:"client_msg_id,omitempty"`
 	Message     map[string]any `json:"message"`
@@ -72,6 +73,7 @@ func (h *Handler) handleOpenClawPublish(w http.ResponseWriter, r *http.Request) 
 
 	result, handlerErr := h.publishFromAgent(r.Context(), senderAgentUUID, publishRequest{
 		ToAgentUUID: req.ToAgentUUID,
+		ToAgentID:   req.ToAgentID,
 		ToAgentURI:  req.ToAgentURI,
 		ContentType: "application/json",
 		Payload:     string(payload),
@@ -98,6 +100,7 @@ func parseOpenClawPublishRequest(raw map[string]any) (openClawPublishRequest, er
 	}
 
 	req.ToAgentUUID = strings.TrimSpace(asStringAny(raw["to_agent_uuid"]))
+	req.ToAgentID = strings.TrimSpace(asStringAny(raw["to_agent_id"]))
 	req.ToAgentURI = strings.TrimSpace(asStringAny(raw["to_agent_uri"]))
 	if rawClientMsgID, ok := raw["client_msg_id"]; ok {
 		clientMsgID := strings.TrimSpace(asStringAny(rawClientMsgID))
@@ -119,7 +122,7 @@ func parseOpenClawPublishRequest(raw map[string]any) (openClawPublishRequest, er
 	message := make(map[string]any, len(raw))
 	for key, value := range raw {
 		switch key {
-		case "to_agent_uuid", "to_agent_uri", "client_msg_id":
+		case "to_agent_uuid", "to_agent_id", "to_agent_uri", "client_msg_id":
 			continue
 		default:
 			message[key] = value

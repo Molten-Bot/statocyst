@@ -469,7 +469,7 @@ func (h *Handler) a2aSendMessageFromRequest(ctx context.Context, r *http.Request
 	if heartbeatErr := h.touchAgentPresenceOnline(senderAgentUUID, "", ""); heartbeatErr != nil {
 		return nil, a2aErrorFromRuntimeHandler(heartbeatErr)
 	}
-	publishReq, protocolErr := a2aPublishRequestFromSendMessage(targetAgentUUID, req)
+	publishReq, protocolErr := h.a2aPublishRequestFromSendMessage(targetAgentUUID, req)
 	if protocolErr != nil {
 		return nil, protocolErr
 	}
@@ -508,7 +508,7 @@ func (req a2aSendMessageRequest) ConfigHistoryLength() *int {
 	return req.Config.HistoryLength
 }
 
-func a2aPublishRequestFromSendMessage(targetAgentUUID string, req a2aSendMessageRequest) (publishRequest, *a2aProtocolError) {
+func (h *Handler) a2aPublishRequestFromSendMessage(targetAgentUUID string, req a2aSendMessageRequest) (publishRequest, *a2aProtocolError) {
 	if req.Message == nil {
 		return publishRequest{}, a2aInvalidParams("invalid_message", "message is required", nil)
 	}
@@ -517,16 +517,26 @@ func a2aPublishRequestFromSendMessage(targetAgentUUID string, req a2aSendMessage
 	if targetAgentUUID == "" {
 		targetAgentUUID = normalizeUUID(metadataString(req.Metadata, "to_agent_uuid", "toAgentUuid", "target_agent_uuid", "targetAgentUuid"))
 		targetAgentURI = strings.TrimSpace(metadataString(req.Metadata, "to_agent_uri", "toAgentUri", "target_agent_uri", "targetAgentUri"))
+		if targetAgentUUID == "" && targetAgentURI == "" {
+			targetAgentUUID = strings.TrimSpace(metadataString(req.Metadata, "to_agent_id", "toAgentId", "target_agent_id", "targetAgentId"))
+		}
 	}
 	if targetAgentUUID == "" && targetAgentURI == "" && req.Message != nil {
 		targetAgentUUID = normalizeUUID(metadataString(req.Message.Metadata, "to_agent_uuid", "toAgentUuid", "target_agent_uuid", "targetAgentUuid"))
 		targetAgentURI = strings.TrimSpace(metadataString(req.Message.Metadata, "to_agent_uri", "toAgentUri", "target_agent_uri", "targetAgentUri"))
+		if targetAgentUUID == "" && targetAgentURI == "" {
+			targetAgentUUID = strings.TrimSpace(metadataString(req.Message.Metadata, "to_agent_id", "toAgentId", "target_agent_id", "targetAgentId"))
+		}
 	}
 	if targetAgentUUID == "" && targetAgentURI == "" {
-		return publishRequest{}, a2aInvalidParams("missing_target_agent", "target agent is required; use /v1/a2a/agents/{agent_uuid}, request metadata.to_agent_uuid/to_agent_uri, or message metadata.to_agent_uuid/to_agent_uri", nil)
+		return publishRequest{}, a2aInvalidParams("missing_target_agent", "target agent is required; use /v1/a2a/agents/{agent_uuid}, request metadata.to_agent_uuid/to_agent_id/to_agent_uri, or message metadata.to_agent_uuid/to_agent_id/to_agent_uri", nil)
 	}
 	if targetAgentUUID != "" && !validateUUID(targetAgentUUID) {
-		return publishRequest{}, a2aInvalidParams("invalid_target_agent", "target agent UUID is invalid", nil)
+		resolvedUUID, err := h.control.ResolveAgentUUID(targetAgentUUID)
+		if err != nil {
+			return publishRequest{}, a2aInvalidParams("invalid_target_agent", "target agent ID is invalid or unknown", map[string]any{"target_agent": targetAgentUUID})
+		}
+		targetAgentUUID = resolvedUUID
 	}
 	contentType, payload, protocolErr := a2aMessagePayload(req)
 	if protocolErr != nil {
@@ -607,6 +617,7 @@ func a2aMetadataOnlyRouting(metadata map[string]any) bool {
 	for key := range metadata {
 		switch key {
 		case "to_agent_uuid", "toAgentUuid", "target_agent_uuid", "targetAgentUuid",
+			"to_agent_id", "toAgentId", "target_agent_id", "targetAgentId",
 			"to_agent_uri", "toAgentUri", "target_agent_uri", "targetAgentUri":
 			continue
 		default:
@@ -891,20 +902,25 @@ func a2aSkillsFromAgentMetadata(metadata map[string]any) []map[string]any {
 
 func (h *Handler) a2aTaskFromRecord(record model.MessageRecord, historyLength *int) map[string]any {
 	contextID := a2aContextIDFromRecord(record)
+	status := map[string]any{
+		"state":     a2aTaskState(record),
+		"timestamp": record.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if statusUpdate := a2aTaskStatusFromPayload(record.Message.Payload, record.Message.MessageID, contextID, record.UpdatedAt); len(statusUpdate) > 0 {
+		status = statusUpdate
+	}
 	task := map[string]any{
 		"id":        record.Message.MessageID,
 		"contextId": contextID,
-		"status": map[string]any{
-			"state":     a2aTaskState(record),
-			"timestamp": record.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		},
-		"metadata": a2aTaskMetadataFromRecord(record, contextID),
+		"status":    status,
+		"metadata":  a2aTaskMetadataFromRecord(record, contextID),
 	}
 	if historyLength == nil || *historyLength != 0 {
 		task["history"] = []map[string]any{h.a2aMessageFromRecord(record, contextID)}
 	}
 	if record.Status == model.MessageDeliveryFailed || strings.TrimSpace(record.LastFailureReason) != "" {
 		status, _ := task["status"].(map[string]any)
+		status["state"] = "TASK_STATE_FAILED"
 		status["message"] = map[string]any{
 			"messageId": record.Message.MessageID + "-failure",
 			"contextId": contextID,
@@ -916,6 +932,185 @@ func (h *Handler) a2aTaskFromRecord(record model.MessageRecord, historyLength *i
 		}
 	}
 	return task
+}
+
+func a2aTaskStatusFromPayload(payload, fallbackMessageID, fallbackContextID string, fallbackUpdatedAt time.Time) map[string]any {
+	for _, candidate := range a2aTaskStatusCandidates(payload) {
+		if status := a2aTaskStatusFromCandidate(candidate, fallbackMessageID, fallbackContextID, fallbackUpdatedAt); len(status) > 0 {
+			return status
+		}
+	}
+	return nil
+}
+
+func a2aTaskStatusCandidates(payload string) []map[string]any {
+	var candidates []map[string]any
+	var root map[string]any
+	if err := json.Unmarshal([]byte(payload), &root); err == nil && len(root) > 0 {
+		if a2aLooksLikeTaskStatusPayload(root) {
+			candidates = append(candidates, root)
+		}
+	}
+	if openClaw := openClawEnvelopePayload(payload); a2aLooksLikeTaskStatusPayload(openClaw) {
+		candidates = append(candidates, openClaw)
+	}
+	if msg := a2aEnvelopeMessage(payload); len(msg) > 0 {
+		candidates = append(candidates, a2aTaskStatusCandidatesFromMessage(msg)...)
+	}
+	return candidates
+}
+
+func a2aTaskStatusCandidatesFromMessage(message map[string]any) []map[string]any {
+	parts, _ := message["parts"].([]any)
+	candidates := make([]map[string]any, 0, len(parts))
+	for _, rawPart := range parts {
+		part, _ := rawPart.(map[string]any)
+		if len(part) == 0 {
+			continue
+		}
+		if data, _ := part["data"].(map[string]any); a2aLooksLikeTaskStatusPayload(data) {
+			candidates = append(candidates, data)
+		}
+		text := strings.TrimSpace(asStringAny(part["text"]))
+		if text == "" || !strings.HasPrefix(text, "{") {
+			continue
+		}
+		var candidate map[string]any
+		if err := json.Unmarshal([]byte(text), &candidate); err == nil && a2aLooksLikeTaskStatusPayload(candidate) {
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
+}
+
+func a2aLooksLikeTaskStatusPayload(payload map[string]any) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(asStringAny(payload["type"])), "task_status_update") {
+		return true
+	}
+	if strings.TrimSpace(asStringAny(payload["a2a_state"])) != "" || strings.TrimSpace(asStringAny(payload["task_state"])) != "" {
+		return true
+	}
+	_, ok := payload["statusUpdate"].(map[string]any)
+	return ok
+}
+
+func a2aTaskStatusFromCandidate(candidate map[string]any, fallbackMessageID, fallbackContextID string, fallbackUpdatedAt time.Time) map[string]any {
+	statusUpdate, _ := candidate["statusUpdate"].(map[string]any)
+	rawStatus, _ := statusUpdate["status"].(map[string]any)
+	status := cloneStringAnyMap(rawStatus)
+	if status == nil {
+		status = map[string]any{}
+	}
+
+	state := a2aNormalizeTaskState(firstA2AString(
+		status["state"],
+		candidate["a2a_state"],
+		candidate["task_state"],
+		candidate["status"],
+	))
+	if state == "" {
+		return nil
+	}
+	status["state"] = state
+	if strings.TrimSpace(asStringAny(status["timestamp"])) == "" {
+		status["timestamp"] = fallbackUpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+
+	taskID := firstA2AString(
+		statusUpdate["taskId"],
+		statusUpdate["task_id"],
+		candidate["a2a_task_id"],
+		candidate["task_id"],
+		candidate["hub_task_id"],
+		fallbackMessageID,
+	)
+	contextID := firstA2AString(
+		statusUpdate["contextId"],
+		statusUpdate["context_id"],
+		candidate["a2a_context_id"],
+		candidate["context_id"],
+		fallbackContextID,
+	)
+	if message := a2aStatusMessage(candidate, status, fallbackMessageID, contextID, taskID); len(message) > 0 {
+		status["message"] = message
+	}
+	return status
+}
+
+func a2aStatusMessage(candidate, status map[string]any, fallbackMessageID, contextID, taskID string) map[string]any {
+	if message, _ := status["message"].(map[string]any); len(message) > 0 {
+		out := cloneStringAnyMap(message)
+		a2aFillStatusMessageFields(out, fallbackMessageID, contextID, taskID)
+		return out
+	}
+	text := firstA2AString(candidate["message"], status["message"])
+	if text == "" {
+		return nil
+	}
+	return map[string]any{
+		"messageId": fallbackMessageID + "-status",
+		"contextId": contextID,
+		"taskId":    taskID,
+		"role":      "ROLE_AGENT",
+		"parts": []map[string]any{{
+			"text": text,
+		}},
+	}
+}
+
+func a2aFillStatusMessageFields(message map[string]any, fallbackMessageID, contextID, taskID string) {
+	if message == nil {
+		return
+	}
+	if strings.TrimSpace(asStringAny(message["messageId"])) == "" {
+		message["messageId"] = fallbackMessageID + "-status"
+	}
+	if strings.TrimSpace(asStringAny(message["contextId"])) == "" {
+		message["contextId"] = contextID
+	}
+	if strings.TrimSpace(asStringAny(message["taskId"])) == "" {
+		message["taskId"] = taskID
+	}
+	if strings.TrimSpace(asStringAny(message["role"])) == "" {
+		message["role"] = "ROLE_AGENT"
+	}
+}
+
+func a2aNormalizeTaskState(state string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(state))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	if strings.HasPrefix(normalized, "TASK_STATE_") {
+		return normalized
+	}
+	switch normalized {
+	case "SUBMITTED", "QUEUED", "PENDING", "IN_QUEUE":
+		return "TASK_STATE_SUBMITTED"
+	case "WORKING", "RUNNING", "IN_PROGRESS", "PROGRESS", "WAITING":
+		return "TASK_STATE_WORKING"
+	case "COMPLETED", "COMPLETE", "DONE", "SUCCEEDED", "SUCCESS", "NO_CHANGES":
+		return "TASK_STATE_COMPLETED"
+	case "FAILED", "FAILURE", "ERROR", "ERRORED", "TIMED_OUT", "TIMEOUT":
+		return "TASK_STATE_FAILED"
+	case "CANCELED", "CANCELLED", "ABORTED", "STOPPED":
+		return "TASK_STATE_CANCELED"
+	case "REJECTED", "DUPLICATE":
+		return "TASK_STATE_REJECTED"
+	default:
+		return ""
+	}
+}
+
+func firstA2AString(values ...any) string {
+	for _, value := range values {
+		if out := strings.TrimSpace(asStringAny(value)); out != "" {
+			return out
+		}
+	}
+	return ""
 }
 
 func a2aTaskMetadataFromRecord(record model.MessageRecord, contextID string) map[string]any {
