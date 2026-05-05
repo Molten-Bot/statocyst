@@ -17,12 +17,11 @@ func agentRuntimeEndpoints(apiBase string) map[string]string {
 
 func agentManifestEndpoints(apiBase string) map[string]string {
 	endpoints := agentRuntimeEndpoints(apiBase)
-	endpoints["offline"] = apiBase + "/openclaw/messages/offline"
+	endpoints["offline"] = apiBase + "/runtime/messages/offline"
 	return endpoints
 }
 
 func protocolAdaptersPayload(apiBase string) map[string]any {
-	endpoints := openClawAdapterEndpoints(apiBase)
 	return map[string]any{
 		"a2a_v1": map[string]any{
 			"protocol":    a2aProtocolAdapter,
@@ -31,12 +30,30 @@ func protocolAdaptersPayload(apiBase string) map[string]any {
 			"bindings":    []string{"JSONRPC", "HTTP+JSON"},
 			"endpoints":   a2aAdapterEndpoints(apiBase),
 		},
+		"runtime_v1": map[string]any{
+			"protocol":    runtimeEnvelopeProtocol,
+			"mode":        "canonical",
+			"description": "Generic agent-runtime JSON envelope adapter over HTTP and websocket; core /v1/messages/* routes remain available.",
+			"endpoints":   runtimeEnvelopeAdapterEndpoints(apiBase),
+		},
 		"openclaw_http_v1": map[string]any{
 			"protocol":    openClawHTTPProtocol,
-			"mode":        "additive",
-			"description": "OpenClaw JSON envelope adapter over HTTP; core /v1/messages/* routes remain available.",
-			"endpoints":   endpoints,
+			"mode":        "compatibility_alias",
+			"description": "Legacy OpenClaw JSON envelope adapter over HTTP; prefer protocol_adapters.runtime_v1 for new clients.",
+			"endpoints":   openClawAdapterEndpoints(apiBase),
 		},
+	}
+}
+
+func runtimeEnvelopeAdapterEndpoints(apiBase string) map[string]string {
+	return map[string]string{
+		"publish":   apiBase + "/runtime/messages/publish",
+		"pull":      apiBase + "/runtime/messages/pull",
+		"ack":       apiBase + "/runtime/messages/ack",
+		"nack":      apiBase + "/runtime/messages/nack",
+		"status":    apiBase + "/runtime/messages/{message_id}",
+		"websocket": apiBase + "/runtime/messages/ws",
+		"offline":   apiBase + "/runtime/messages/offline",
 	}
 }
 

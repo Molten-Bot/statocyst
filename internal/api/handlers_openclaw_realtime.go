@@ -181,6 +181,10 @@ func (h *Handler) handleOpenClawRegisterPlugin(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) {
+	h.handleRuntimeEnvelopeOffline(w, r, runtimeEnvelopeAdapterOpenClaw)
+}
+
+func (h *Handler) handleRuntimeEnvelopeOffline(w http.ResponseWriter, r *http.Request, adapterName string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -219,7 +223,7 @@ func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) 
 	if reason := strings.TrimSpace(req.Reason); reason != "" {
 		details["reason"] = reason
 	}
-	h.recordOpenClawAdapterUsage(agentUUID, "ws_offline", details)
+	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_offline", details)
 
 	out := map[string]any{
 		"agent": h.agentResponsePayload(agent),
@@ -231,6 +235,10 @@ func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request) {
+	h.handleRuntimeEnvelopeWebSocket(w, r, openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw)
+}
+
+func (h *Handler) handleRuntimeEnvelopeWebSocket(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
 		return
@@ -256,7 +264,7 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 	}
 	defer func() {
 		_, _ = h.setOpenClawWebSocketPresence(agentUUID, sessionKey, openClawPresenceStatusOffline, "")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_disconnect", map[string]any{"session_key": sessionKey})
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_disconnect", map[string]any{"session_key": sessionKey})
 	}()
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -273,12 +281,12 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 		return true
 	}
 
-	h.recordOpenClawAdapterUsage(agentUUID, "ws_connect", map[string]any{"session_key": sessionKey})
+	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_connect", map[string]any{"session_key": sessionKey})
 
 	if ok := writeEvent(map[string]any{
 		"type":        "session_ready",
 		"session_key": sessionKey,
-		"transport":   openClawTransportMetadataForAdapter("websocket"),
+		"transport":   runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket"),
 	}); !ok {
 		return
 	}
@@ -319,8 +327,8 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 			case http.StatusNoContent:
 				continue
 			case http.StatusOK:
-				out := withOpenClawProjection(result)
-				out["transport"] = openClawTransportMetadataForAdapter("websocket")
+				out := withRuntimeEnvelopeProjection(result, defaultProtocol)
+				out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
 				if !writeEvent(map[string]any{
 					"type":        "delivery",
 					"session_key": sessionKey,
@@ -329,7 +337,7 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 					cancel()
 					return
 				}
-				h.recordOpenClawAdapterUsage(agentUUID, "ws_delivery", map[string]any{
+				h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_delivery", map[string]any{
 					"message_id":  openClawMessageIDFromResult(out),
 					"session_key": sessionKey,
 				})
@@ -347,7 +355,7 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 		if err := conn.ReadJSON(&req); err != nil {
 			break
 		}
-		if !h.handleOpenClawWSCommand(ctx, agentUUID, sessionKey, req, writeEvent) {
+		if !h.handleRuntimeEnvelopeWSCommand(ctx, agentUUID, sessionKey, req, defaultProtocol, adapterName, writeEvent) {
 			break
 		}
 	}
@@ -363,6 +371,18 @@ func (h *Handler) handleOpenClawWSCommand(
 	req openClawWSRequest,
 	writeEvent func(map[string]any) bool,
 ) bool {
+	return h.handleRuntimeEnvelopeWSCommand(ctx, agentUUID, sessionKey, req, openClawHTTPProtocol, runtimeEnvelopeAdapterOpenClaw, writeEvent)
+}
+
+func (h *Handler) handleRuntimeEnvelopeWSCommand(
+	ctx context.Context,
+	agentUUID,
+	sessionKey string,
+	req openClawWSRequest,
+	defaultProtocol,
+	adapterName string,
+	writeEvent func(map[string]any) bool,
+) bool {
 	kind := strings.ToLower(strings.TrimSpace(req.Type))
 	requestID := strings.TrimSpace(req.RequestID)
 	switch kind {
@@ -375,7 +395,7 @@ func (h *Handler) handleOpenClawWSCommand(
 		if len(req.Message) == 0 {
 			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_request", "message is required"))
 		}
-		envelope, err := normalizeOpenClawEnvelope(req.Message, h.now().UTC())
+		envelope, err := normalizeRuntimeEnvelope(req.Message, h.now().UTC(), defaultProtocol)
 		if err != nil {
 			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_request", err.Error()))
 		}
@@ -394,9 +414,10 @@ func (h *Handler) handleOpenClawWSCommand(
 			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
 		out := cloneStringAnyMap(result)
-		out["transport"] = openClawTransportMetadataForAdapter("websocket")
+		out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		out["envelope"] = envelope
 		out["openclaw_message"] = envelope
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_publish", map[string]any{
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_publish", map[string]any{
 			"message_id":  openClawMessageIDFromResult(out),
 			"session_key": sessionKey,
 		})
@@ -414,9 +435,9 @@ func (h *Handler) handleOpenClawWSCommand(
 		}
 		result := map[string]any{
 			"agent":     h.agentResponsePayload(agent),
-			"transport": openClawTransportMetadataForAdapter("websocket"),
+			"transport": runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket"),
 		}
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_activity", map[string]any{
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_activity", map[string]any{
 			"session_key": sessionKey,
 		})
 		return writeEvent(openClawWSResponse(requestID, http.StatusCreated, result))
@@ -429,9 +450,9 @@ func (h *Handler) handleOpenClawWSCommand(
 		if handlerErr != nil {
 			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
-		result := withOpenClawProjection(messageStatusResponse(record))
-		result["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_ack", map[string]any{
+		result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
+		result["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_ack", map[string]any{
 			"message_id":  openClawMessageIDFromResult(result),
 			"session_key": sessionKey,
 		})
@@ -445,9 +466,9 @@ func (h *Handler) handleOpenClawWSCommand(
 		if handlerErr != nil {
 			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
-		result := withOpenClawProjection(messageStatusResponse(record))
-		result["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_nack", map[string]any{
+		result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
+		result["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_nack", map[string]any{
 			"message_id":  openClawMessageIDFromResult(result),
 			"session_key": sessionKey,
 		})
@@ -461,9 +482,9 @@ func (h *Handler) handleOpenClawWSCommand(
 		if handlerErr != nil {
 			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
 		}
-		result := withOpenClawProjection(messageStatusResponse(record))
-		result["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_status", map[string]any{
+		result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
+		result["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_status", map[string]any{
 			"message_id":  openClawMessageIDFromResult(result),
 			"session_key": sessionKey,
 		})
@@ -483,9 +504,9 @@ func (h *Handler) handleOpenClawWSCommand(
 		if status == 0 {
 			return false
 		}
-		out := withOpenClawProjection(result)
-		out["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_pull", map[string]any{
+		out := withRuntimeEnvelopeProjection(result, defaultProtocol)
+		out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_pull", map[string]any{
 			"message_id":  openClawMessageIDFromResult(out),
 			"session_key": sessionKey,
 		})
@@ -650,14 +671,25 @@ func openClawMessageIDFromResult(result map[string]any) string {
 }
 
 func (h *Handler) recordOpenClawAdapterUsage(agentUUID, action string, details map[string]any) {
+	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, runtimeEnvelopeAdapterOpenClaw, action, details)
+}
+
+func (h *Handler) recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, action string, details map[string]any) {
 	agentUUID = strings.TrimSpace(agentUUID)
+	adapterName = strings.ToLower(strings.TrimSpace(adapterName))
 	action = strings.TrimSpace(action)
 	if agentUUID == "" || action == "" {
 		return
 	}
+	category := "runtime_adapter"
+	activityPrefix := "runtime adapter "
+	if adapterName == runtimeEnvelopeAdapterOpenClaw {
+		category = "openclaw_adapter"
+		activityPrefix = "openclaw adapter "
+	}
 	entry := map[string]any{
-		"activity": "openclaw adapter " + action,
-		"category": "openclaw_adapter",
+		"activity": activityPrefix + action,
+		"category": category,
 		"action":   action,
 	}
 	for k, v := range details {
@@ -681,7 +713,7 @@ func (h *Handler) recordOpenClawAdapterUsage(agentUUID, action string, details m
 	}
 	h.publishCollectiveEvent(collectiveStreamEvent{
 		At:        now,
-		Category:  "openclaw_adapter",
+		Category:  category,
 		Action:    action,
 		AgentUUID: agent.AgentUUID,
 		OrgID:     agent.OrgID,
