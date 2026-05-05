@@ -951,8 +951,8 @@ func a2aTaskStatusCandidates(payload string) []map[string]any {
 			candidates = append(candidates, root)
 		}
 	}
-	if openClaw := openClawEnvelopePayload(payload); a2aLooksLikeTaskStatusPayload(openClaw) {
-		candidates = append(candidates, openClaw)
+	if envelope := runtimeEnvelopePayload(payload); a2aLooksLikeTaskStatusPayload(envelope) {
+		candidates = append(candidates, envelope)
 	}
 	if msg := a2aEnvelopeMessage(payload); len(msg) > 0 {
 		candidates = append(candidates, a2aTaskStatusCandidatesFromMessage(msg)...)
@@ -1139,6 +1139,9 @@ func a2aTaskMetadataFromRecord(record model.MessageRecord, contextID string) map
 	if a2aMeta := a2aProtocolTaskMetadata(record.Message.Payload); len(a2aMeta) > 0 {
 		metadata["a2a"] = a2aMeta
 	}
+	if runtimeMeta := runtimeEnvelopeTaskMetadata(record.Message.Payload); len(runtimeMeta) > 0 {
+		metadata["runtime"] = runtimeMeta
+	}
 	if openClawMeta := openClawTaskMetadata(record.Message.Payload); len(openClawMeta) > 0 {
 		metadata["openclaw"] = openClawMeta
 	}
@@ -1178,6 +1181,18 @@ func openClawTaskMetadata(payload string) map[string]any {
 	if len(envelope) == 0 {
 		return nil
 	}
+	return runtimeEnvelopeMetadataFromPayload(envelope)
+}
+
+func runtimeEnvelopeTaskMetadata(payload string) map[string]any {
+	envelope := runtimeEnvelopePayload(payload)
+	if len(envelope) == 0 {
+		return nil
+	}
+	return runtimeEnvelopeMetadataFromPayload(envelope)
+}
+
+func runtimeEnvelopeMetadataFromPayload(envelope map[string]any) map[string]any {
 	out := map[string]any{}
 	for _, key := range []string{
 		"protocol",
@@ -1309,14 +1324,31 @@ func a2aEnvelopePayload(payload string) map[string]any {
 }
 
 func openClawEnvelopePayload(payload string) map[string]any {
+	envelope := runtimeEnvelopePayload(payload)
+	if len(envelope) == 0 || strings.TrimSpace(asStringAny(envelope["protocol"])) != openClawCompatibilityProtocol {
+		return nil
+	}
+	return envelope
+}
+
+func runtimeEnvelopePayload(payload string) map[string]any {
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 		return nil
 	}
-	if strings.TrimSpace(asStringAny(envelope["protocol"])) != openClawHTTPProtocol {
+	if !isRuntimeEnvelopeProtocol(asStringAny(envelope["protocol"])) {
 		return nil
 	}
 	return envelope
+}
+
+func isRuntimeEnvelopeProtocol(raw string) bool {
+	switch strings.TrimSpace(raw) {
+	case runtimeEnvelopeProtocol, openClawCompatibilityProtocol:
+		return true
+	default:
+		return false
+	}
 }
 
 func a2aContextIDFromRecord(record model.MessageRecord) string {
@@ -1325,8 +1357,8 @@ func a2aContextIDFromRecord(record model.MessageRecord) string {
 			return contextID
 		}
 	}
-	if openClaw := openClawEnvelopePayload(record.Message.Payload); len(openClaw) > 0 {
-		if requestID := strings.TrimSpace(asStringAny(openClaw["request_id"])); requestID != "" {
+	if envelope := runtimeEnvelopePayload(record.Message.Payload); len(envelope) > 0 {
+		if requestID := strings.TrimSpace(asStringAny(envelope["request_id"])); requestID != "" {
 			return requestID
 		}
 	}

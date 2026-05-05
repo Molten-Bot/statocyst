@@ -49,7 +49,7 @@ func TestBuildAgentDiscoveryMarkdownRendersTemplateTokens(t *testing.T) {
 	if !strings.Contains(markdown, "- manifest: `https://hub.example/v1/agents/me/manifest`") {
 		t.Fatalf("expected manifest endpoint in markdown, got markdown=%q", markdown)
 	}
-	if !strings.Contains(markdown, "- offline: `https://hub.example/v1/openclaw/messages/offline`") {
+	if !strings.Contains(markdown, "- offline: `https://hub.example/v1/runtime/messages/offline`") {
 		t.Fatalf("expected offline endpoint in markdown, got markdown=%q", markdown)
 	}
 	if !strings.Contains(markdown, "### POST /v1/messages/publish") {
@@ -202,6 +202,24 @@ func TestBuildAgentSkillMarkdownOpenClawSection(t *testing.T) {
 		OwnerHumanID: "human-alice",
 	}
 	manifest := buildAgentManifest(agent, cp, time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC))
+
+	runtimeAdapter, ok := manifest.ProtocolAdapters["runtime_v1"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected runtime_v1 protocol adapter in manifest, got %+v", manifest.ProtocolAdapters)
+	}
+	if protocol, _ := runtimeAdapter["protocol"].(string); protocol != runtimeEnvelopeProtocol {
+		t.Fatalf("expected runtime adapter protocol %q, got %q", runtimeEnvelopeProtocol, protocol)
+	}
+	runtimeEndpoints, ok := runtimeAdapter["endpoints"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected runtime adapter endpoints map[string]string, got %+v", runtimeAdapter["endpoints"])
+	}
+	if runtimeEndpoints["publish"] != "https://hub.example/v1/runtime/messages/publish" {
+		t.Fatalf("expected runtime publish endpoint, got %+v", runtimeEndpoints)
+	}
+	if runtimeEndpoints["offline"] != "https://hub.example/v1/runtime/messages/offline" {
+		t.Fatalf("expected runtime offline endpoint, got %+v", runtimeEndpoints)
+	}
 
 	adapters, ok := manifest.ProtocolAdapters["openclaw_http_v1"].(map[string]any)
 	if !ok {

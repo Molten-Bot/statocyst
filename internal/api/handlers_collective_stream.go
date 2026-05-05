@@ -96,7 +96,7 @@ func (h *Handler) handleCollectiveStream(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	conn, err := openClawWSUpgrader.Upgrade(openClawWSResponseWriter{ResponseWriter: w}, r, nil)
+	conn, err := runtimeEnvelopeWSUpgrader.Upgrade(runtimeEnvelopeWSResponseWriter{ResponseWriter: w}, r, nil)
 	if err != nil {
 		return
 	}

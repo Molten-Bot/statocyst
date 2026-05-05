@@ -20,15 +20,15 @@ import (
 )
 
 const (
-	openClawWebSocketPullTimeoutDefault = 20 * time.Second
-	openClawPluginDefaultID             = "moltenhub-openclaw"
-	openClawPresenceStatusOnline        = "online"
-	openClawPresenceStatusOffline       = "offline"
-	openClawPresenceOfflineAfter        = 2 * time.Hour
+	runtimeEnvelopeWebSocketPullTimeoutDefault = 20 * time.Second
+	openClawPluginDefaultID                    = "moltenhub-openclaw"
+	runtimePresenceStatusOnline                = "online"
+	runtimePresenceStatusOffline               = "offline"
+	runtimePresenceOfflineAfter                = 2 * time.Hour
 )
 
 var (
-	openClawWSUpgrader = websocket.Upgrader{
+	runtimeEnvelopeWSUpgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
 		CheckOrigin: func(_ *http.Request) bool {
@@ -47,12 +47,12 @@ type openClawPluginRegisterRequest struct {
 	SessionMode string `json:"session_mode,omitempty"`
 }
 
-type openClawOfflineRequest struct {
+type runtimeEnvelopeOfflineRequest struct {
 	SessionKey string `json:"session_key,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 }
 
-type openClawWSRequest struct {
+type runtimeEnvelopeWSRequest struct {
 	Type        string          `json:"type"`
 	RequestID   string          `json:"request_id,omitempty"`
 	ToAgentUUID string          `json:"to_agent_uuid,omitempty"`
@@ -69,18 +69,18 @@ type openClawWSRequest struct {
 	TimeoutMS   *int            `json:"timeout_ms,omitempty"`
 }
 
-// openClawWSResponseWriter bridges websocket upgrades through wrappers that may
+// runtimeEnvelopeWSResponseWriter bridges websocket upgrades through wrappers that may
 // not expose http.Hijacker directly, but still support hijacking via
 // http.ResponseController.
-type openClawWSResponseWriter struct {
+type runtimeEnvelopeWSResponseWriter struct {
 	http.ResponseWriter
 }
 
-func (w openClawWSResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+func (w runtimeEnvelopeWSResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return http.NewResponseController(w.ResponseWriter).Hijack()
 }
 
-func (w openClawWSResponseWriter) Unwrap() http.ResponseWriter {
+func (w runtimeEnvelopeWSResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
@@ -108,7 +108,7 @@ func (h *Handler) handleOpenClawRegisterPlugin(w http.ResponseWriter, r *http.Re
 	now := h.now().UTC()
 	pluginID := normalizeOpenClawPluginID(req.PluginID)
 	pluginKey := openClawPluginMetadataKey(pluginID)
-	sessionKey := normalizeOpenClawSessionKey(req.SessionKey)
+	sessionKey := normalizeRuntimeSessionKey(req.SessionKey)
 	transport := strings.ToLower(strings.TrimSpace(req.Transport))
 	if transport == "" {
 		transport = "websocket"
@@ -181,6 +181,10 @@ func (h *Handler) handleOpenClawRegisterPlugin(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) {
+	h.handleRuntimeEnvelopeOffline(w, r, runtimeEnvelopeAdapterOpenClaw)
+}
+
+func (h *Handler) handleRuntimeEnvelopeOffline(w http.ResponseWriter, r *http.Request, adapterName string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -195,14 +199,14 @@ func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req openClawOfflineRequest
+	var req runtimeEnvelopeOfflineRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
 		return
 	}
 
-	sessionKey := normalizeOpenClawSessionKey(req.SessionKey)
-	agent, err := h.setOpenClawWebSocketPresence(agentUUID, sessionKey, openClawPresenceStatusOffline, req.Reason)
+	sessionKey := normalizeRuntimeSessionKey(req.SessionKey)
+	agent, err := h.setRuntimeWebSocketPresence(agentUUID, sessionKey, runtimePresenceStatusOffline, req.Reason)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):
@@ -219,7 +223,7 @@ func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) 
 	if reason := strings.TrimSpace(req.Reason); reason != "" {
 		details["reason"] = reason
 	}
-	h.recordOpenClawAdapterUsage(agentUUID, "ws_offline", details)
+	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_offline", details)
 
 	out := map[string]any{
 		"agent": h.agentResponsePayload(agent),
@@ -231,6 +235,10 @@ func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request) {
+	h.handleRuntimeEnvelopeWebSocket(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
+}
+
+func (h *Handler) handleRuntimeEnvelopeWebSocket(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
 		return
@@ -242,21 +250,21 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	conn, err := openClawWSUpgrader.Upgrade(openClawWSResponseWriter{ResponseWriter: w}, r, nil)
+	conn, err := runtimeEnvelopeWSUpgrader.Upgrade(runtimeEnvelopeWSResponseWriter{ResponseWriter: w}, r, nil)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
 
-	sessionKey := normalizeOpenClawSessionKey(r.URL.Query().Get("session_key"))
-	if _, err := h.setOpenClawWebSocketPresence(agentUUID, sessionKey, openClawPresenceStatusOnline, ""); err != nil {
+	sessionKey := normalizeRuntimeSessionKey(r.URL.Query().Get("session_key"))
+	if _, err := h.setRuntimeWebSocketPresence(agentUUID, sessionKey, runtimePresenceStatusOnline, ""); err != nil {
 		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		_ = conn.WriteJSON(openClawWSErrorFromRuntime("", runtimeHandlerErrorForPresenceUpdate(err)))
+		_ = conn.WriteJSON(runtimeEnvelopeWSErrorFromRuntime("", runtimeHandlerErrorForPresenceUpdate(err)))
 		return
 	}
 	defer func() {
-		_, _ = h.setOpenClawWebSocketPresence(agentUUID, sessionKey, openClawPresenceStatusOffline, "")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_disconnect", map[string]any{"session_key": sessionKey})
+		_, _ = h.setRuntimeWebSocketPresence(agentUUID, sessionKey, runtimePresenceStatusOffline, "")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_disconnect", map[string]any{"session_key": sessionKey})
 	}()
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -273,12 +281,12 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 		return true
 	}
 
-	h.recordOpenClawAdapterUsage(agentUUID, "ws_connect", map[string]any{"session_key": sessionKey})
+	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_connect", map[string]any{"session_key": sessionKey})
 
 	if ok := writeEvent(map[string]any{
 		"type":        "session_ready",
 		"session_key": sessionKey,
-		"transport":   openClawTransportMetadataForAdapter("websocket"),
+		"transport":   runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket"),
 	}); !ok {
 		return
 	}
@@ -294,7 +302,7 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 			}
 
 			if heartbeatErr := h.touchAgentPresenceOnline(agentUUID, sessionKey, "websocket"); heartbeatErr != nil {
-				if !writeEvent(openClawWSErrorFromRuntime("", heartbeatErr)) {
+				if !writeEvent(runtimeEnvelopeWSErrorFromRuntime("", heartbeatErr)) {
 					cancel()
 					return
 				}
@@ -302,12 +310,12 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			status, result, handlerErr := h.pullForAgent(ctx, agentUUID, openClawWebSocketPullTimeoutDefault)
+			status, result, handlerErr := h.pullForAgent(ctx, agentUUID, runtimeEnvelopeWebSocketPullTimeoutDefault)
 			if ctx.Err() != nil {
 				return
 			}
 			if handlerErr != nil {
-				if !writeEvent(openClawWSErrorFromRuntime("", handlerErr)) {
+				if !writeEvent(runtimeEnvelopeWSErrorFromRuntime("", handlerErr)) {
 					cancel()
 					return
 				}
@@ -319,8 +327,8 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 			case http.StatusNoContent:
 				continue
 			case http.StatusOK:
-				out := withOpenClawProjection(result)
-				out["transport"] = openClawTransportMetadataForAdapter("websocket")
+				out := withRuntimeEnvelopeProjection(result, defaultProtocol)
+				out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
 				if !writeEvent(map[string]any{
 					"type":        "delivery",
 					"session_key": sessionKey,
@@ -329,12 +337,12 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 					cancel()
 					return
 				}
-				h.recordOpenClawAdapterUsage(agentUUID, "ws_delivery", map[string]any{
-					"message_id":  openClawMessageIDFromResult(out),
+				h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_delivery", map[string]any{
+					"message_id":  runtimeEnvelopeMessageIDFromResult(out),
 					"session_key": sessionKey,
 				})
 			default:
-				if !writeEvent(openClawWSError("", status, "unexpected_status", "unexpected pull status")) {
+				if !writeEvent(runtimeEnvelopeWSError("", status, "unexpected_status", "unexpected pull status")) {
 					cancel()
 					return
 				}
@@ -343,11 +351,11 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 	}()
 
 	for {
-		var req openClawWSRequest
+		var req runtimeEnvelopeWSRequest
 		if err := conn.ReadJSON(&req); err != nil {
 			break
 		}
-		if !h.handleOpenClawWSCommand(ctx, agentUUID, sessionKey, req, writeEvent) {
+		if !h.handleRuntimeEnvelopeWSCommand(ctx, agentUUID, sessionKey, req, defaultProtocol, adapterName, writeEvent) {
 			break
 		}
 	}
@@ -356,11 +364,13 @@ func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request
 	<-deliveryDone
 }
 
-func (h *Handler) handleOpenClawWSCommand(
+func (h *Handler) handleRuntimeEnvelopeWSCommand(
 	ctx context.Context,
 	agentUUID,
 	sessionKey string,
-	req openClawWSRequest,
+	req runtimeEnvelopeWSRequest,
+	defaultProtocol,
+	adapterName string,
 	writeEvent func(map[string]any) bool,
 ) bool {
 	kind := strings.ToLower(strings.TrimSpace(req.Type))
@@ -373,15 +383,15 @@ func (h *Handler) handleOpenClawWSCommand(
 		})
 	case "publish":
 		if len(req.Message) == 0 {
-			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_request", "message is required"))
+			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_request", "message is required"))
 		}
-		envelope, err := normalizeOpenClawEnvelope(req.Message, h.now().UTC())
+		envelope, err := normalizeRuntimeEnvelope(req.Message, h.now().UTC(), defaultProtocol)
 		if err != nil {
-			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_request", err.Error()))
+			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_request", err.Error()))
 		}
 		payload, err := json.Marshal(envelope)
 		if err != nil {
-			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_request", "message must be a JSON object"))
+			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_request", "message must be a JSON object"))
 		}
 		result, handlerErr := h.publishFromAgent(ctx, agentUUID, publishRequest{
 			ToAgentUUID: req.ToAgentUUID,
@@ -391,16 +401,17 @@ func (h *Handler) handleOpenClawWSCommand(
 			ClientMsgID: req.ClientMsgID,
 		})
 		if handlerErr != nil {
-			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
+			return writeEvent(runtimeEnvelopeWSErrorFromRuntime(requestID, handlerErr))
 		}
 		out := cloneStringAnyMap(result)
-		out["transport"] = openClawTransportMetadataForAdapter("websocket")
+		out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		out["envelope"] = envelope
 		out["openclaw_message"] = envelope
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_publish", map[string]any{
-			"message_id":  openClawMessageIDFromResult(out),
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_publish", map[string]any{
+			"message_id":  runtimeEnvelopeMessageIDFromResult(out),
 			"session_key": sessionKey,
 		})
-		return writeEvent(openClawWSResponse(requestID, http.StatusAccepted, out))
+		return writeEvent(runtimeEnvelopeWSResponse(requestID, http.StatusAccepted, out))
 	case "activity", "publish_activity":
 		agent, err := h.publishAgentActivity(agentUUID, publishAgentActivityRequest{
 			Activity:   req.Activity,
@@ -410,92 +421,92 @@ func (h *Handler) handleOpenClawWSCommand(
 			State:      req.State,
 		})
 		if err != nil {
-			return writeEvent(openClawWSErrorFromAgentActivity(requestID, err))
+			return writeEvent(runtimeEnvelopeWSErrorFromAgentActivity(requestID, err))
 		}
 		result := map[string]any{
 			"agent":     h.agentResponsePayload(agent),
-			"transport": openClawTransportMetadataForAdapter("websocket"),
+			"transport": runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket"),
 		}
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_activity", map[string]any{
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_activity", map[string]any{
 			"session_key": sessionKey,
 		})
-		return writeEvent(openClawWSResponse(requestID, http.StatusCreated, result))
+		return writeEvent(runtimeEnvelopeWSResponse(requestID, http.StatusCreated, result))
 	case "ack":
 		deliveryID := strings.TrimSpace(req.DeliveryID)
 		if deliveryID == "" {
-			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_delivery_id", "delivery_id is required"))
+			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_delivery_id", "delivery_id is required"))
 		}
 		record, handlerErr := h.ackDeliveryForAgent(agentUUID, deliveryID)
 		if handlerErr != nil {
-			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
+			return writeEvent(runtimeEnvelopeWSErrorFromRuntime(requestID, handlerErr))
 		}
-		result := withOpenClawProjection(messageStatusResponse(record))
-		result["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_ack", map[string]any{
-			"message_id":  openClawMessageIDFromResult(result),
+		result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
+		result["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_ack", map[string]any{
+			"message_id":  runtimeEnvelopeMessageIDFromResult(result),
 			"session_key": sessionKey,
 		})
-		return writeEvent(openClawWSResponse(requestID, http.StatusOK, result))
+		return writeEvent(runtimeEnvelopeWSResponse(requestID, http.StatusOK, result))
 	case "nack":
 		deliveryID := strings.TrimSpace(req.DeliveryID)
 		if deliveryID == "" {
-			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_delivery_id", "delivery_id is required"))
+			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_delivery_id", "delivery_id is required"))
 		}
 		record, handlerErr := h.nackDeliveryForAgent(ctx, agentUUID, deliveryID)
 		if handlerErr != nil {
-			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
+			return writeEvent(runtimeEnvelopeWSErrorFromRuntime(requestID, handlerErr))
 		}
-		result := withOpenClawProjection(messageStatusResponse(record))
-		result["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_nack", map[string]any{
-			"message_id":  openClawMessageIDFromResult(result),
+		result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
+		result["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_nack", map[string]any{
+			"message_id":  runtimeEnvelopeMessageIDFromResult(result),
 			"session_key": sessionKey,
 		})
-		return writeEvent(openClawWSResponse(requestID, http.StatusOK, result))
+		return writeEvent(runtimeEnvelopeWSResponse(requestID, http.StatusOK, result))
 	case "status":
 		messageID := strings.TrimSpace(req.MessageID)
 		if messageID == "" {
-			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_message_id", "message_id is required"))
+			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_message_id", "message_id is required"))
 		}
 		record, handlerErr := h.messageStatusForAgent(agentUUID, messageID)
 		if handlerErr != nil {
-			return writeEvent(openClawWSErrorFromRuntime(requestID, handlerErr))
+			return writeEvent(runtimeEnvelopeWSErrorFromRuntime(requestID, handlerErr))
 		}
-		result := withOpenClawProjection(messageStatusResponse(record))
-		result["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_status", map[string]any{
-			"message_id":  openClawMessageIDFromResult(result),
+		result := withRuntimeEnvelopeProjection(messageStatusResponse(record), defaultProtocol)
+		result["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_status", map[string]any{
+			"message_id":  runtimeEnvelopeMessageIDFromResult(result),
 			"session_key": sessionKey,
 		})
-		return writeEvent(openClawWSResponse(requestID, http.StatusOK, result))
+		return writeEvent(runtimeEnvelopeWSResponse(requestID, http.StatusOK, result))
 	case "pull":
-		timeout, err := openClawWSPullTimeout(req.TimeoutMS)
+		timeout, err := runtimeEnvelopeWSPullTimeout(req.TimeoutMS)
 		if err != nil {
-			return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_timeout", err.Error()))
+			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_timeout", err.Error()))
 		}
 		status, result, handlerErr := h.pullForAgent(ctx, agentUUID, timeout)
 		if handlerErr != nil {
-			return writeEvent(openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message))
+			return writeEvent(runtimeEnvelopeWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message))
 		}
 		if status == http.StatusNoContent {
-			return writeEvent(openClawWSResponse(requestID, http.StatusNoContent, map[string]any{"status": "empty"}))
+			return writeEvent(runtimeEnvelopeWSResponse(requestID, http.StatusNoContent, map[string]any{"status": "empty"}))
 		}
 		if status == 0 {
 			return false
 		}
-		out := withOpenClawProjection(result)
-		out["transport"] = openClawTransportMetadataForAdapter("websocket")
-		h.recordOpenClawAdapterUsage(agentUUID, "ws_pull", map[string]any{
-			"message_id":  openClawMessageIDFromResult(out),
+		out := withRuntimeEnvelopeProjection(result, defaultProtocol)
+		out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
+		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_pull", map[string]any{
+			"message_id":  runtimeEnvelopeMessageIDFromResult(out),
 			"session_key": sessionKey,
 		})
-		return writeEvent(openClawWSResponse(requestID, http.StatusOK, out))
+		return writeEvent(runtimeEnvelopeWSResponse(requestID, http.StatusOK, out))
 	default:
-		return writeEvent(openClawWSError(requestID, http.StatusBadRequest, "invalid_request", "unsupported websocket command type"))
+		return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_request", "unsupported websocket command type"))
 	}
 }
 
-func openClawWSResponse(requestID string, status int, result map[string]any) map[string]any {
+func runtimeEnvelopeWSResponse(requestID string, status int, result map[string]any) map[string]any {
 	payload := map[string]any{
 		"type":   "response",
 		"ok":     true,
@@ -508,7 +519,7 @@ func openClawWSResponse(requestID string, status int, result map[string]any) map
 	return payload
 }
 
-func openClawWSError(requestID string, status int, code, message string) map[string]any {
+func runtimeEnvelopeWSError(requestID string, status int, code, message string) map[string]any {
 	hint, hasHint := defaultErrorHint(code)
 	errorDetail := map[string]any{
 		"code":    strings.TrimSpace(code),
@@ -545,24 +556,24 @@ func openClawWSError(requestID string, status int, code, message string) map[str
 	return payload
 }
 
-func openClawWSErrorFromAgentActivity(requestID string, err error) map[string]any {
+func runtimeEnvelopeWSErrorFromAgentActivity(requestID string, err error) map[string]any {
 	switch {
 	case errors.Is(err, store.ErrAgentNotFound):
-		return openClawWSError(requestID, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
+		return runtimeEnvelopeWSError(requestID, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
 	case errors.Is(err, store.ErrInvalidAgentActivity):
-		return openClawWSError(requestID, http.StatusBadRequest, "invalid_agent_activity", "activity text must be non-sensitive and must not include secrets, tokens, passwords, keys, or credentials")
+		return runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_agent_activity", "activity text must be non-sensitive and must not include secrets, tokens, passwords, keys, or credentials")
 	case errors.Is(err, errInvalidAgentActivityRequest):
-		return openClawWSError(requestID, http.StatusBadRequest, "invalid_request", strings.TrimPrefix(err.Error(), errInvalidAgentActivityRequest.Error()+": "))
+		return runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_request", strings.TrimPrefix(err.Error(), errInvalidAgentActivityRequest.Error()+": "))
 	default:
-		return openClawWSError(requestID, http.StatusInternalServerError, "store_error", "failed to publish agent activity")
+		return runtimeEnvelopeWSError(requestID, http.StatusInternalServerError, "store_error", "failed to publish agent activity")
 	}
 }
 
-func openClawWSErrorFromRuntime(requestID string, handlerErr *runtimeHandlerError) map[string]any {
+func runtimeEnvelopeWSErrorFromRuntime(requestID string, handlerErr *runtimeHandlerError) map[string]any {
 	if handlerErr == nil {
-		return openClawWSError(requestID, http.StatusInternalServerError, "unknown_error", "unknown runtime error")
+		return runtimeEnvelopeWSError(requestID, http.StatusInternalServerError, "unknown_error", "unknown runtime error")
 	}
-	payload := openClawWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message)
+	payload := runtimeEnvelopeWSError(requestID, handlerErr.status, handlerErr.code, handlerErr.message)
 	errorPayload, _ := payload["error"].(map[string]any)
 	if errorPayload == nil {
 		errorPayload = map[string]any{}
@@ -581,9 +592,9 @@ func openClawWSErrorFromRuntime(requestID string, handlerErr *runtimeHandlerErro
 	return payload
 }
 
-func openClawWSPullTimeout(raw *int) (time.Duration, error) {
+func runtimeEnvelopeWSPullTimeout(raw *int) (time.Duration, error) {
 	if raw == nil {
-		return openClawWebSocketPullTimeoutDefault, nil
+		return runtimeEnvelopeWebSocketPullTimeoutDefault, nil
 	}
 	if *raw < 0 || *raw > maxPullTimeoutMS {
 		return 0, errors.New("timeout_ms must be between 0 and 30000")
@@ -591,7 +602,7 @@ func openClawWSPullTimeout(raw *int) (time.Duration, error) {
 	return time.Duration(*raw) * time.Millisecond, nil
 }
 
-func normalizeOpenClawSessionKey(raw string) string {
+func normalizeRuntimeSessionKey(raw string) string {
 	candidate := strings.ToLower(strings.TrimSpace(raw))
 	if candidate == "" {
 		return "main"
@@ -635,7 +646,7 @@ func openClawPluginMetadataKey(pluginID string) string {
 	return key
 }
 
-func openClawMessageIDFromResult(result map[string]any) string {
+func runtimeEnvelopeMessageIDFromResult(result map[string]any) string {
 	if result == nil {
 		return ""
 	}
@@ -649,15 +660,26 @@ func openClawMessageIDFromResult(result map[string]any) string {
 	return strings.TrimSpace(message.MessageID)
 }
 
-func (h *Handler) recordOpenClawAdapterUsage(agentUUID, action string, details map[string]any) {
+func (h *Handler) recordOpenClawCompatibilityAdapterUsage(agentUUID, action string, details map[string]any) {
+	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, runtimeEnvelopeAdapterOpenClaw, action, details)
+}
+
+func (h *Handler) recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, action string, details map[string]any) {
 	agentUUID = strings.TrimSpace(agentUUID)
+	adapterName = strings.ToLower(strings.TrimSpace(adapterName))
 	action = strings.TrimSpace(action)
 	if agentUUID == "" || action == "" {
 		return
 	}
+	category := "runtime_adapter"
+	activityPrefix := "runtime adapter "
+	if adapterName == runtimeEnvelopeAdapterOpenClaw {
+		category = "openclaw_adapter"
+		activityPrefix = "openclaw adapter "
+	}
 	entry := map[string]any{
-		"activity": "openclaw adapter " + action,
-		"category": "openclaw_adapter",
+		"activity": activityPrefix + action,
+		"category": category,
 		"action":   action,
 	}
 	for k, v := range details {
@@ -681,7 +703,7 @@ func (h *Handler) recordOpenClawAdapterUsage(agentUUID, action string, details m
 	}
 	h.publishCollectiveEvent(collectiveStreamEvent{
 		At:        now,
-		Category:  "openclaw_adapter",
+		Category:  category,
 		Action:    action,
 		AgentUUID: agent.AgentUUID,
 		OrgID:     agent.OrgID,
@@ -701,12 +723,12 @@ func (h *Handler) touchAgentPresenceOnline(agentUUID, sessionKey, transport stri
 	}
 
 	presence := map[string]any{
-		"status":     openClawPresenceStatusOnline,
+		"status":     runtimePresenceStatusOnline,
 		"ready":      true,
 		"updated_at": now.Format(time.RFC3339),
 	}
 	if sessionKey = strings.TrimSpace(sessionKey); sessionKey != "" {
-		presence["session_key"] = normalizeOpenClawSessionKey(sessionKey)
+		presence["session_key"] = normalizeRuntimeSessionKey(sessionKey)
 	}
 	if transport = strings.TrimSpace(transport); transport != "" {
 		presence["transport"] = transport
@@ -722,9 +744,9 @@ func (h *Handler) touchAgentPresenceOnline(agentUUID, sessionKey, transport stri
 		entry := map[string]any{
 			"activity":   "websocket transport online",
 			"category":   "agent_presence",
-			"action":     openClawPresenceStatusOnline,
-			"subject_id": normalizeOpenClawSessionKey(sessionKey),
-			"event_id":   "agent-presence:online:" + normalizeOpenClawSessionKey(sessionKey) + ":" + strconv.FormatInt(now.UnixNano(), 10),
+			"action":     runtimePresenceStatusOnline,
+			"subject_id": normalizeRuntimeSessionKey(sessionKey),
+			"event_id":   "agent-presence:online:" + normalizeRuntimeSessionKey(sessionKey) + ":" + strconv.FormatInt(now.UnixNano(), 10),
 		}
 		if transport = strings.TrimSpace(transport); transport != "" {
 			entry["transport"] = transport
@@ -734,10 +756,10 @@ func (h *Handler) touchAgentPresenceOnline(agentUUID, sessionKey, transport stri
 			h.publishCollectiveEvent(collectiveStreamEvent{
 				At:        now,
 				Category:  "agent_presence",
-				Action:    openClawPresenceStatusOnline,
+				Action:    runtimePresenceStatusOnline,
 				AgentUUID: agent.AgentUUID,
 				OrgID:     agent.OrgID,
-				Details:   map[string]any{"session_key": normalizeOpenClawSessionKey(sessionKey), "transport": transport},
+				Details:   map[string]any{"session_key": normalizeRuntimeSessionKey(sessionKey), "transport": transport},
 			})
 		}
 	}
@@ -778,21 +800,21 @@ func runtimeHandlerErrorForPresenceUpdate(err error) *runtimeHandlerError {
 	}
 }
 
-func (h *Handler) setOpenClawWebSocketPresence(agentUUID, sessionKey, status, reason string) (model.Agent, error) {
+func (h *Handler) setRuntimeWebSocketPresence(agentUUID, sessionKey, status, reason string) (model.Agent, error) {
 	now := h.now().UTC()
 	agentUUID = strings.TrimSpace(agentUUID)
 	if agentUUID == "" {
 		return model.Agent{}, store.ErrAgentNotFound
 	}
 	status = strings.ToLower(strings.TrimSpace(status))
-	if status != openClawPresenceStatusOnline && status != openClawPresenceStatusOffline {
-		status = openClawPresenceStatusOffline
+	if status != runtimePresenceStatusOnline && status != runtimePresenceStatusOffline {
+		status = runtimePresenceStatusOffline
 	}
-	sessionKey = normalizeOpenClawSessionKey(sessionKey)
+	sessionKey = normalizeRuntimeSessionKey(sessionKey)
 
 	patch := map[string]any{
 		"status":      status,
-		"ready":       status == openClawPresenceStatusOnline,
+		"ready":       status == runtimePresenceStatusOnline,
 		"transport":   "websocket",
 		"session_key": sessionKey,
 		"updated_at":  now.Format(time.RFC3339),
@@ -828,11 +850,11 @@ func (h *Handler) setOpenClawWebSocketPresence(agentUUID, sessionKey, status, re
 	return agent, nil
 }
 
-func openClawPresenceFromMetadata(metadata map[string]any) map[string]any {
-	return openClawPresenceFromMetadataAt(metadata, time.Now().UTC(), openClawPresenceOfflineAfter)
+func runtimePresenceFromMetadata(metadata map[string]any) map[string]any {
+	return runtimePresenceFromMetadataAt(metadata, time.Now().UTC(), runtimePresenceOfflineAfter)
 }
 
-func openClawPresenceFromMetadataAt(metadata map[string]any, now time.Time, staleAfter time.Duration) map[string]any {
+func runtimePresenceFromMetadataAt(metadata map[string]any, now time.Time, staleAfter time.Duration) map[string]any {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {
@@ -851,16 +873,16 @@ func openClawPresenceFromMetadataAt(metadata map[string]any, now time.Time, stal
 	}
 
 	status := strings.ToLower(strings.TrimSpace(asStringAny(presence["status"])))
-	if status != openClawPresenceStatusOnline && status != openClawPresenceStatusOffline {
+	if status != runtimePresenceStatusOnline && status != runtimePresenceStatusOffline {
 		status = ""
 	}
 	transport := strings.TrimSpace(asStringAny(presence["transport"]))
-	sessionKey := normalizeOpenClawSessionKey(asStringAny(presence["session_key"]))
+	sessionKey := normalizeRuntimeSessionKey(asStringAny(presence["session_key"]))
 	updatedAt := strings.TrimSpace(asStringAny(presence["updated_at"]))
 	ready, readyOK := presence["ready"].(bool)
-	if status == openClawPresenceStatusOnline && staleAfter > 0 {
-		if seenAt, ok := parseOpenClawPresenceTimestamp(updatedAt); ok && now.Sub(seenAt) >= staleAfter {
-			status = openClawPresenceStatusOffline
+	if status == runtimePresenceStatusOnline && staleAfter > 0 {
+		if seenAt, ok := parseRuntimePresenceTimestamp(updatedAt); ok && now.Sub(seenAt) >= staleAfter {
+			status = runtimePresenceStatusOffline
 			ready = false
 			readyOK = true
 		}
@@ -888,7 +910,7 @@ func openClawPresenceFromMetadataAt(metadata map[string]any, now time.Time, stal
 	return out
 }
 
-func parseOpenClawPresenceTimestamp(raw string) (time.Time, bool) {
+func parseRuntimePresenceTimestamp(raw string) (time.Time, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return time.Time{}, false

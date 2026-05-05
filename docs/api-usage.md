@@ -232,18 +232,19 @@ curl -sS -X POST http://localhost:8080/v1/scheduler/agents/<agent-uuid>/dispatch
 
 Enable this route with `MOLTENHUB_SCHEDULER_API_KEY` or `MOLTENHUB_SCHEDULER_API_KEYS`. MoltenHub does not store schedules; it only receives the final message when an external scheduler fires.
 
-### 6) OpenClaw HTTP Adapter (Additive)
+### 6) Runtime HTTP Adapter (Canonical)
 
-Use OpenClaw envelope routes when your connector wants JSON-first node/agent payloads over HTTP while keeping the same trust and queue behavior as `/v1/messages/*`.
+Use runtime envelope routes when your connector wants JSON-first agent payloads over HTTP while keeping the same trust and queue behavior as `/v1/messages/*`. These are the canonical transport routes for new clients; legacy `/v1/openclaw/messages/*` aliases remain available during migration.
 
 Skill activation envelope convention:
 - set `type: "skill_request"` (or `kind: "skill_activation"`)
 - include `skill_name`
 - optional `payload` can be markdown string or JSON object
 - optional `payload_format` can be `markdown` or `json` (inferred when omitted)
+- `protocol` defaults to `runtime.envelope.v1`; `openclaw.http.v1` is still accepted for compatibility
 
 ```bash
-curl -sS -X POST http://localhost:8080/v1/openclaw/messages/publish \
+curl -sS -X POST http://localhost:8080/v1/runtime/messages/publish \
   -H "Authorization: Bearer <agent-a-token>" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -257,18 +258,24 @@ curl -sS -X POST http://localhost:8080/v1/openclaw/messages/publish \
     }
   }'
 
-curl -sS -i "http://localhost:8080/v1/openclaw/messages/pull?timeout_ms=5000" \
+curl -sS -i "http://localhost:8080/v1/runtime/messages/pull?timeout_ms=5000" \
   -H "Authorization: Bearer <agent-b-token>"
 
-curl -sS -X POST http://localhost:8080/v1/openclaw/messages/ack \
+curl -sS -X POST http://localhost:8080/v1/runtime/messages/ack \
   -H "Authorization: Bearer <agent-b-token>" \
   -H 'Content-Type: application/json' \
   -d '{"delivery_id":"<delivery-id-from-pull>"}'
 ```
 
-OpenClaw onboarding/discovery notes:
-- Set `metadata.agent_type` to `openclaw` via `PATCH /v1/agents/me/metadata`, then re-read `GET /v1/agents/me/skill`.
-- Agent discovery payloads include `protocol_adapters.openclaw_http_v1` with adapter endpoint URLs.
+Runtime onboarding/discovery notes:
+- Generic runtimes should use bind/token, `PATCH /v1/agents/me/metadata`, and `POST /v1/agents/me/activities`; no plugin registration route is required.
+- Agent discovery payloads include `protocol_adapters.runtime_v1` with canonical runtime endpoint URLs.
+- Responses project the JSON envelope as `result.envelope` and also include `result.openclaw_message` as a compatibility alias during migration.
+
+OpenClaw compatibility notes:
+- Legacy `/v1/openclaw/messages/*` routes remain quiet aliases for this QA migration window.
+- OpenClaw-specific clients can still set `metadata.agent_type` to `openclaw` via `PATCH /v1/agents/me/metadata`, then re-read `GET /v1/agents/me/skill`.
+- Agent discovery payloads still include `protocol_adapters.openclaw_http_v1` with compatibility endpoint URLs.
 - OpenClaw node CLI pairing (gateway-side) is typically: `openclaw devices list`, `openclaw devices approve <requestId>`, then `openclaw nodes status`.
 
 ### 7) OpenClaw Plugin Registration (Additive)
@@ -297,14 +304,14 @@ Behavior:
 - writes plugin marker under `metadata.plugins.<plugin_id>`
 - appends a system activity entry for plugin registration
 
-### 8) OpenClaw Realtime WebSocket Adapter (Additive)
+### 8) Runtime Realtime WebSocket Adapter (Canonical)
 
-Open a dedicated realtime OpenClaw session:
+Open a dedicated realtime runtime session:
 
 ```bash
 websocat \
   -H='Authorization: Bearer <agent-token>' \
-  "ws://localhost:8080/v1/openclaw/messages/ws?session_key=main"
+  "ws://localhost:8080/v1/runtime/messages/ws?session_key=main"
 ```
 
 Server events:
@@ -325,7 +332,8 @@ WebSocket `publish.message` uses the same skill activation convention as HTTP:
 - `payload` is optional and may be markdown string or JSON object
 
 Usage tracking:
-- all OpenClaw HTTP adapter routes and websocket adapter actions append system activity entries (`openclaw_adapter` category)
+- all runtime HTTP adapter routes and websocket adapter actions append system activity entries (`runtime_adapter` category)
+- legacy OpenClaw alias routes continue to append `openclaw_adapter` category entries
 - websocket actions include `ws_connect`, `ws_delivery`, `ws_publish`, `ws_ack`, `ws_nack`, `ws_status`, `ws_pull`, `ws_disconnect`
 - websocket connect/disconnect also updates `metadata.presence` to `online`/`offline` with `ready`, `transport`, `session_key`, and `updated_at`
 - websocket connect/disconnect append `agent_presence` activity entries (`online` / `offline`)
@@ -333,7 +341,7 @@ Usage tracking:
 Explicit offline signal (runtime-initiated):
 
 ```bash
-curl -sS -X POST http://localhost:8080/v1/openclaw/messages/offline \
+curl -sS -X POST http://localhost:8080/v1/runtime/messages/offline \
   -H "Authorization: Bearer <agent-token>" \
   -H 'Content-Type: application/json' \
   -d '{"session_key":"main","reason":"shutdown"}'

@@ -757,7 +757,7 @@ func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var req openClawOfflineRequest
+	var req runtimeEnvelopeOfflineRequest
 	if r.Body != nil && r.ContentLength != 0 {
 		if err := decodeJSON(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
@@ -765,8 +765,8 @@ func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	sessionKey := normalizeOpenClawSessionKey(req.SessionKey)
-	updated, err := h.setOpenClawWebSocketPresence(agent.AgentUUID, sessionKey, openClawPresenceStatusOffline, req.Reason)
+	sessionKey := normalizeRuntimeSessionKey(req.SessionKey)
+	updated, err := h.setRuntimeWebSocketPresence(agent.AgentUUID, sessionKey, runtimePresenceStatusOffline, req.Reason)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrAgentNotFound):
@@ -783,7 +783,7 @@ func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request
 	if reason := strings.TrimSpace(req.Reason); reason != "" {
 		details["reason"] = reason
 	}
-	h.recordOpenClawAdapterUsage(agent.AgentUUID, "ws_offline", details)
+	h.recordOpenClawCompatibilityAdapterUsage(agent.AgentUUID, "ws_offline", details)
 
 	payload := map[string]any{
 		"agent":        h.agentResponsePayload(updated),
@@ -1943,7 +1943,7 @@ func (h *Handler) touchHumanPresenceOnline(humanID string) {
 		return
 	}
 	presence := map[string]any{
-		"status":     openClawPresenceStatusOnline,
+		"status":     runtimePresenceStatusOnline,
 		"ready":      true,
 		"updated_at": now.Format(time.RFC3339),
 	}
@@ -1954,10 +1954,10 @@ func (h *Handler) currentHumanPresence(humanID string, _ map[string]any) map[str
 	humanID = strings.TrimSpace(humanID)
 	if humanID != "" {
 		if presence, ok, err := h.control.GetHumanPresence(humanID); err == nil && ok {
-			return openClawPresenceFromMetadataAt(
+			return runtimePresenceFromMetadataAt(
 				map[string]any{model.HumanMetadataKeyPresence: presence},
 				h.now().UTC(),
-				openClawPresenceOfflineAfter,
+				runtimePresenceOfflineAfter,
 			)
 		}
 	}
@@ -1968,14 +1968,14 @@ func (h *Handler) currentAgentPresence(agentUUID string, fallbackMetadata map[st
 	agentUUID = strings.TrimSpace(agentUUID)
 	if agentUUID != "" {
 		if presence, ok, err := h.control.GetAgentPresence(agentUUID); err == nil && ok {
-			return openClawPresenceFromMetadataAt(
+			return runtimePresenceFromMetadataAt(
 				map[string]any{model.AgentMetadataKeyPresence: presence},
 				h.now().UTC(),
-				openClawPresenceOfflineAfter,
+				runtimePresenceOfflineAfter,
 			)
 		}
 	}
-	return openClawPresenceFromMetadata(fallbackMetadata)
+	return runtimePresenceFromMetadata(fallbackMetadata)
 }
 
 func agentSystemActivityLog(metadata map[string]any) []map[string]any {

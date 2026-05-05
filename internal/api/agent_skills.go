@@ -199,7 +199,7 @@ func validateSkillActivationRequest(receiver model.Agent, contentType, payload s
 		return nil
 	}
 
-	if err := normalizeOpenClawSkillActivationEnvelope(envelope); err != nil {
+	if err := normalizeRuntimeSkillActivationEnvelope(envelope); err != nil {
 		return skillValidationRuntimeError([]string{err.Error()})
 	}
 	if !isSkillActivationEnvelope(envelope) {
