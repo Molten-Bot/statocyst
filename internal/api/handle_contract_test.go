@@ -32,7 +32,7 @@ func registerAgentWithDetails(t *testing.T, router http.Handler, humanID, email,
 
 func TestHandleContractValidationRejectsShortAndBlocked(t *testing.T) {
 	router := newTestRouter()
-	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
+	_ = currentHumanID(t, router, "alice", "alice@a.test")
 
 	shortHuman := doJSONRequest(t, router, http.MethodPatch, "/v1/me", map[string]any{
 		"handle": "a",
@@ -74,9 +74,8 @@ func TestHandleContractValidationRejectsShortAndBlocked(t *testing.T) {
 
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Valid Org")
 
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
-		"org_id":         orgID,
-		"owner_human_id": aliceHumanID,
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{
+		"org_id": orgID,
 	}, humanHeaders("alice", "alice@a.test"))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("expected bind token creation success, got %d %s", createResp.Code, createResp.Body.String())

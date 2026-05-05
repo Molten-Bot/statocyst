@@ -273,9 +273,7 @@ func (r *runner) createOrg(baseURL, humanID, email, handle, displayName string) 
 }
 
 func (r *runner) createAgent(baseURL, humanID, email, orgID, handle string) (string, string, string, error) {
-	status, payload, err := r.requestJSON(baseURL, http.MethodPost, "/v1/agents/bind-tokens", cmdutil.HumanHeaders(humanID, email), map[string]any{
-		"org_id": orgID,
-	})
+	status, payload, err := r.requestJSON(baseURL, http.MethodPost, "/v1/orgs/"+orgID+"/agents/bind-tokens", cmdutil.HumanHeaders(humanID, email), map[string]any{})
 	if err != nil {
 		return "", "", "", err
 	}

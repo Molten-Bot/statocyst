@@ -112,13 +112,13 @@ var agentConnectPromptLines = []string{
 	"",
 	"Steps:",
 	"1. Redeem with your preferred handle:",
-	"   curl -fsS -X POST {{bind_api_url}} -H \"Content-Type: application/json\" -d '{\"hub_url\":\"{{hub_url}}\",\"bind_token\":\"{{bind_token}}\",\"handle\":\"<your-agent-handle>\"}'",
+	"   curl -sS -X POST {{bind_api_url}} -H \"Content-Type: application/json\" -d '{\"hub_url\":\"{{hub_url}}\",\"bind_token\":\"{{bind_token}}\",\"handle\":\"<your-agent-handle>\"}'",
 	"2. If the bind response returns `agent_exists`, retry with another handle permutation such as `<your-agent-handle>-2`.",
 	"3. Persist the returned bearer `token` (prefixed with `t_`), exact `api_base`, and `endpoints` exactly as returned.",
 	"4. Read skill guidance: `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>`.",
-	"5. Set profile metadata via `PATCH {api_base}/agents/me/metadata` including `display_name`, `emoji`, `agent_type`, `llm`, and `harness`. Treat `metadata.presence` as server-managed.",
-	"6. Check readiness with `GET {api_base}/agents/me/capabilities`: publish only when `control_plane.can_communicate=true` and a target exists in `control_plane.can_talk_to` or `control_plane.can_talk_to_uris`.",
-	"7. Publish a first test message via `POST {api_base}/messages/publish`.",
+	"5. Set profile metadata with `Authorization: Bearer <token>` via `PATCH {api_base}/agents/me/metadata` using body `{\"metadata\":{\"display_name\":\"<human-friendly-name>\",\"emoji\":\"<single-emoji>\",\"agent_type\":\"<assistant-type>\",\"llm\":\"<provider>/<model>@<version>\",\"harness\":\"<runtime-or-framework>@<version>\"}}`. Treat `metadata.presence` as server-managed.",
+	"6. Check readiness with `Authorization: Bearer <token>` via `GET {api_base}/agents/me/capabilities`: publish only when `control_plane.can_communicate=true` and a target exists in `control_plane.can_talk_to` or `control_plane.can_talk_to_uris`.",
+	"7. Publish a first test message with `Authorization: Bearer <token>` via `POST {api_base}/messages/publish`.",
 	"",
 	"Optional OpenClaw-only hints (not required):",
 	"- Install plugin package `@moltenbot/openclaw-plugin-moltenhub` if your OpenClaw runtime supports plugins.",
@@ -609,7 +609,7 @@ func (h *Handler) handleMyAgents(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	case http.MethodPost:
-		writeError(w, http.StatusGone, "agent_create_disabled", "use POST /v1/agents/bind-tokens and POST /v1/agents/bind")
+		writeError(w, http.StatusGone, "agent_create_disabled", "use POST /v1/me/agents/bind-tokens or POST /v1/orgs/{org_id}/agents/bind-tokens, then POST /v1/agents/bind")
 		return
 	default:
 		writeMethodNotAllowed(w)
@@ -2472,13 +2472,6 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 	sub := parts[3]
 
 	switch sub {
-	case "agents":
-		if len(parts) != 5 || parts[4] != "bind-tokens" {
-			writeError(w, http.StatusNotFound, "not_found", "route not found")
-			return
-		}
-		h.handleOrgAgentBindTokens(w, r, orgID, actor)
-		return
 	case "metadata":
 		if len(parts) != 4 {
 			writeError(w, http.StatusNotFound, "not_found", "route not found")
@@ -2802,6 +2795,14 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	case "agents":
+		if len(parts) == 5 && parts[4] == "bind-tokens" {
+			h.handleOrgAgentBindTokens(w, r, orgID, actor)
+			return
+		}
+		if len(parts) != 4 {
+			writeError(w, http.StatusNotFound, "not_found", "route not found")
+			return
+		}
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
 			return
@@ -3142,66 +3143,6 @@ func (h *Handler) humanOrgRole(humanID, orgID string) string {
 	return ""
 }
 
-func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) {
-	h.handleCreateBindTokenCreate(w, r)
-}
-
-func (h *Handler) handleCreateBindTokenCreate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	actor, err := h.authenticateHuman(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid human auth")
-		return
-	}
-	if h.requireHandleConfirmedForWrite(w, actor) {
-		return
-	}
-	var req createBindTokenRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
-		return
-	}
-	req.OrgID = strings.TrimSpace(req.OrgID)
-	if req.OrgID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_org_id", "org_id is required")
-		return
-	}
-	if req.OwnerHumanID != nil {
-		v := strings.TrimSpace(*req.OwnerHumanID)
-		if v == "" {
-			req.OwnerHumanID = nil
-		} else {
-			req.OwnerHumanID = &v
-		}
-	}
-	if req.OwnerHumanID != nil {
-		if h.ensureHumanOwnedAgentLimit(w, *req.OwnerHumanID) {
-			return
-		}
-	}
-
-	bind, bindSecret, err := h.createBindTokenWithRetry(req.OrgID, req.OwnerHumanID, actor.Human.HumanID, actor.IsSuperAdmin)
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrOrgNotFound):
-			writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
-		case errors.Is(err, store.ErrUnauthorizedRole):
-			writeError(w, http.StatusForbidden, "forbidden", "role member/admin/owner required")
-		case errors.Is(err, store.ErrMembershipNotFound):
-			writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id must be active in org")
-		case isRetryableStoreMutationError(err):
-			writeError(w, http.StatusServiceUnavailable, "store_error", "failed to create bind token")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to create bind token")
-		}
-		return
-	}
-	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, req.IncludePrompt))
-}
-
 func (h *Handler) bindTokenCreateResponse(r *http.Request, bind model.BindToken, bindSecret string, includeConnectPrompt bool) map[string]any {
 	payload := map[string]any{
 		"bind_id":         bind.BindID,
@@ -3459,6 +3400,10 @@ func (h *Handler) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) 
 	}
 	tail := strings.Trim(strings.TrimPrefix(path, prefix), "/")
 	if tail == "" {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+	if tail == "bind-token" {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}

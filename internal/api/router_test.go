@@ -1179,13 +1179,17 @@ func bindAgentWithUUID(t *testing.T, router http.Handler, humanID, email, orgID,
 
 func bindAgentWithUUIDForOwner(t *testing.T, router http.Handler, humanID, email, orgID, agentID, ownerHumanID string) (string, string) {
 	t.Helper()
-	bindReq := map[string]any{
-		"org_id": orgID,
-	}
+	bindPath := "/v1/me/agents/bind-tokens"
+	bindReq := map[string]any{}
 	if strings.TrimSpace(ownerHumanID) != "" {
-		bindReq["owner_human_id"] = ownerHumanID
+		if ownerHumanID != currentHumanID(t, router, humanID, email) {
+			t.Fatalf("test helper can only create human-owned bind tokens for the calling human; caller=%s owner=%s", humanID, ownerHumanID)
+		}
+		bindReq["org_id"] = orgID
+	} else if strings.TrimSpace(orgID) != "" {
+		bindPath = "/v1/orgs/" + orgID + "/agents/bind-tokens"
 	}
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", bindReq, humanHeaders(humanID, email))
+	createResp := doJSONRequest(t, router, http.MethodPost, bindPath, bindReq, humanHeaders(humanID, email))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("create bind token failed: %d %s", createResp.Code, createResp.Body.String())
 	}
@@ -2219,7 +2223,9 @@ func TestMyAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
 
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{
+		"include_prompt": true,
+	}, humanHeaders("alice", "alice@a.test"))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("create my bind token failed: %d %s", createResp.Code, createResp.Body.String())
 	}
@@ -2286,7 +2292,7 @@ func TestMyAgentBindTokenCreateWithoutPromptOmitsConnectPrompt(t *testing.T) {
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
 
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-token", map[string]any{}, humanHeaders("alice", "alice@a.test"))
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("create my bind token failed: %d %s", createResp.Code, createResp.Body.String())
 	}
@@ -2303,9 +2309,7 @@ func TestCreateBindTokenWithoutPromptOmitsConnectPrompt(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Alpha Org")
 
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-token", map[string]any{
-		"org_id": orgID,
-	}, humanHeaders("alice", "alice@a.test"))
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgID+"/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("create bind token failed: %d %s", createResp.Code, createResp.Body.String())
 	}
@@ -2318,6 +2322,30 @@ func TestCreateBindTokenWithoutPromptOmitsConnectPrompt(t *testing.T) {
 	}
 	if _, ok := createPayload["connect_prompt"]; ok {
 		t.Fatalf("expected connect_prompt to be omitted, payload=%v", createPayload)
+	}
+}
+
+func TestOrgAgentBindTokenCreateIncludesConnectPrompt(t *testing.T) {
+	router := newTestRouter()
+	orgID := createOrg(t, router, "alice", "alice@a.test", "Prompt Org")
+
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgID+"/agents/bind-tokens", map[string]any{
+		"include_prompt": true,
+	}, humanHeaders("alice", "alice@a.test"))
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create org bind token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	createPayload := decodeJSONMap(t, createResp.Body.Bytes())
+	bindToken, _ := createPayload["bind_token"].(string)
+	connectPrompt, _ := createPayload["connect_prompt"].(string)
+	if strings.TrimSpace(bindToken) == "" {
+		t.Fatalf("bind_token missing")
+	}
+	if !strings.Contains(connectPrompt, bindToken) || !strings.Contains(connectPrompt, "Bind Scope: Organization "+orgID) {
+		t.Fatalf("expected org-scoped connect prompt with bind token, got %q", connectPrompt)
+	}
+	if owner, ok := createPayload["owner_human_id"]; ok && owner != nil && owner != "" {
+		t.Fatalf("expected org-owned bind token to omit owner_human_id, payload=%v", createPayload)
 	}
 }
 
@@ -2365,7 +2393,7 @@ func TestMyAgentBindTokenCreateUsesForwardedHostInConnectPrompt(t *testing.T) {
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/me/agents/bind-tokens", bytes.NewReader([]byte(`{}`)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/me/agents/bind-tokens", bytes.NewReader([]byte(`{"include_prompt":true}`)))
 	req.Host = "127.0.0.1:8081"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Human-Id", "alice")
@@ -2395,7 +2423,7 @@ func TestMyAgentBindTokenCreateFallsBackToCanonicalBaseWhenHostIsLoopback(t *tes
 	router := newTestRouter()
 	ensureHandleConfirmed(t, router, "alice", "alice@a.test")
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/me/agents/bind-tokens", bytes.NewReader([]byte(`{}`)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/me/agents/bind-tokens", bytes.NewReader([]byte(`{"include_prompt":true}`)))
 	req.Host = "127.0.0.1:8081"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Human-Id", "alice")
@@ -2951,11 +2979,9 @@ func TestExpiredLeaseRequeuesOnNextPull(t *testing.T) {
 func TestBindTokenRedeemSingleUse(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Org A")
-	aliceHumanID := currentHumanID(t, router, "alice", "alice@a.test")
 
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
-		"org_id":         orgID,
-		"owner_human_id": aliceHumanID,
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/me/agents/bind-tokens", map[string]any{
+		"org_id": orgID,
 	}, humanHeaders("alice", "alice@a.test"))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("create bind token failed: %d %s", createResp.Code, createResp.Body.String())
@@ -3191,9 +3217,7 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 	router := newTestRouter()
 
 	orgA := createOrg(t, router, "alice", "alice@a.test", "Org Agents Unique")
-	bindCreateA := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
-		"org_id": orgA,
-	}, humanHeaders("alice", "alice@a.test"))
+	bindCreateA := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgA+"/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
 	if bindCreateA.Code != http.StatusCreated {
 		t.Fatalf("expected bind token creation for duplicate org-bound test, got %d %s", bindCreateA.Code, bindCreateA.Body.String())
 	}
@@ -3226,9 +3250,7 @@ func TestOrgBoundAgentNameUniqueWithinOrg(t *testing.T) {
 		t.Fatalf("expected first org-bound finalize success, got %d %s", finalizeA.Code, finalizeA.Body.String())
 	}
 
-	bindCreateB := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
-		"org_id": orgA,
-	}, humanHeaders("alice", "alice@a.test"))
+	bindCreateB := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgA+"/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
 	if bindCreateB.Code != http.StatusCreated {
 		t.Fatalf("expected second bind token creation success, got %d %s", bindCreateB.Code, bindCreateB.Body.String())
 	}
@@ -3275,9 +3297,7 @@ func TestBindTokenExpires(t *testing.T) {
 	router := NewRouter(h)
 
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Org A")
-	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
-		"org_id": orgID,
-	}, humanHeaders("alice", "alice@a.test"))
+	createResp := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgID+"/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("create bind token failed: %d %s", createResp.Code, createResp.Body.String())
 	}
@@ -4653,7 +4673,7 @@ func TestOpenAPIMarkdownHeaders(t *testing.T) {
 	if !strings.Contains(body, "status=online") || !strings.Contains(body, "status=offline") {
 		t.Fatalf("expected presence status guidance in openapi markdown, got %q", body)
 	}
-	if !strings.Contains(body, "copy-ready self-signup prompt") {
+	if !strings.Contains(body, "include_prompt=true") || !strings.Contains(body, "/v1/orgs/{org_id}/agents/bind-tokens") {
 		t.Fatalf("expected self-signup prompt contract text in openapi markdown, got %q", body)
 	}
 	if link := resp.Header().Get("Link"); !strings.Contains(link, "/openapi.yaml") {

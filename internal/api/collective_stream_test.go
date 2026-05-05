@@ -148,7 +148,7 @@ func TestCollectiveStreamAgentScopeRequiresOwnerOrOrgOwner(t *testing.T) {
 	memberInviteID := createInvite(t, router, "alice", "alice@a.test", orgID, "charlie@c.test", "member")
 	acceptInvite(t, router, "charlie", "charlie@c.test", memberInviteID)
 
-	_, agentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "charlie-owned", charlieHumanID)
+	_, agentUUID := registerAgentWithUUID(t, router, "charlie", "charlie@c.test", orgID, "charlie-owned", charlieHumanID)
 	server := httptest.NewServer(router)
 	defer server.Close()
 
@@ -194,7 +194,7 @@ func TestCollectiveStreamHumanDefaultScopeFiltersByOwnerPermissions(t *testing.T
 	memberInviteID := createInvite(t, router, "alice", "alice@a.test", orgID, "charlie@c.test", "member")
 	acceptInvite(t, router, "charlie", "charlie@c.test", memberInviteID)
 
-	agentToken, agentUUID := registerAgentWithUUID(t, router, "alice", "alice@a.test", orgID, "charlie-default-owned", charlieHumanID)
+	agentToken, agentUUID := registerAgentWithUUID(t, router, "charlie", "charlie@c.test", orgID, "charlie-default-owned", charlieHumanID)
 	server := httptest.NewServer(router)
 	defer server.Close()
 
