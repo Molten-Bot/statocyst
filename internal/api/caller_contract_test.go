@@ -78,9 +78,7 @@ func TestCallerContract_BindRedeemBootstrapWorksWithoutAuth(t *testing.T) {
 	router := newTestRouter()
 	orgID := createOrg(t, router, "alice", "alice@a.test", "Bind Bootstrap")
 
-	createBindResp := doJSONRequest(t, router, http.MethodPost, "/v1/agents/bind-tokens", map[string]any{
-		"org_id": orgID,
-	}, humanHeaders("alice", "alice@a.test"))
+	createBindResp := doJSONRequest(t, router, http.MethodPost, "/v1/orgs/"+orgID+"/agents/bind-tokens", map[string]any{}, humanHeaders("alice", "alice@a.test"))
 	if createBindResp.Code != http.StatusCreated {
 		t.Fatalf("expected bind token creation to return 201, got %d %s", createBindResp.Code, createBindResp.Body.String())
 	}

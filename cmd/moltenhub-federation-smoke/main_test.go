@@ -104,7 +104,7 @@ func (h *fakeFedHub) handle(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 
-	case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/bind-tokens":
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/orgs/") && strings.HasSuffix(r.URL.Path, "/agents/bind-tokens"):
 		h.mu.Lock()
 		h.nextBindToken++
 		bindToken := fmt.Sprintf("%s-bind-%d", h.name, h.nextBindToken)

@@ -92,10 +92,12 @@ func registerFederatedAgentWithUUID(t *testing.T, router http.Handler, humanID, 
 	bindReq := map[string]any{}
 	bindPath := "/v1/me/agents/bind-tokens"
 	if orgID != "" {
-		bindPath = "/v1/agents/bind-tokens"
 		bindReq["org_id"] = orgID
 		if ownerHumanID != "" {
-			bindReq["owner_human_id"] = ownerHumanID
+			bindPath = "/v1/me/agents/bind-tokens"
+		} else {
+			bindPath = "/v1/orgs/" + orgID + "/agents/bind-tokens"
+			delete(bindReq, "org_id")
 		}
 	}
 	createResp := doJSONRequest(t, router, http.MethodPost, bindPath, bindReq, humanHeaders(humanID, email))

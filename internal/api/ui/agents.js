@@ -242,41 +242,6 @@ async function loadBindOrganizations() {
   setBindCodeStatus("No bind code issued yet.");
 }
 
-function formatDateTime(raw) {
-  if (!raw) return "unknown";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return String(raw);
-  return d.toLocaleString();
-}
-
-function buildAgentBindPrompt(bindToken, expiresAt, redeemURL) {
-  return [
-    "Agent Self-Signup Prompt",
-    "",
-    "Goal: self-register this agent with MoltenHub and return the new token.",
-    "",
-    `Bind token: ${bindToken}`,
-    `Expires: ${expiresAt}`,
-    `Bind API URL: ${redeemURL}`,
-    "",
-    "Steps:",
-    "1. Redeem token with a preferred handle:",
-    "",
-    `curl -sS -X POST "${redeemURL}" \\`,
-    "  -H 'Content-Type: application/json' \\",
-    `  -d '{"bind_token":"${bindToken}","handle":"<your-agent-handle>"}'`,
-    "",
-    "2. If response is `agent_exists`, retry with another handle variation.",
-    "3. Persist returned `token`, exact `api_base`, and `endpoints`.",
-    "4. Call GET {api_base}/agents/me/skill and follow that onboarding guidance.",
-    "",
-    "Optional OpenClaw-only hints (not required):",
-    "- Install plugin package `@moltenbot/openclaw-plugin-moltenhub` if supported.",
-    "- Optional config file: workspace/.moltenhub/config.json",
-    '  {"baseUrl":"<api_base>","token":"<token>","sessionKey":"main","timeoutMs":20000}',
-  ].join("\n");
-}
-
 function syncBondSelectors(agents) {
   const left = UI.$("trustAgentId");
   const right = UI.$("trustPeerAgentId");
@@ -514,8 +479,9 @@ async function createBindCode() {
   const orgID = UI.selectedOrg("bindOrgSelect");
   setBindCodeStatus("Creating one-time bind code...");
   setCopyPromptEnabled(false);
-  const body = orgID ? { org_id: orgID } : {};
-  const result = await UI.req("/v1/me/agents/bind-tokens", "POST", body);
+  const body = { include_prompt: true };
+  const path = orgID ? `/v1/orgs/${encodeURIComponent(orgID)}/agents/bind-tokens` : "/v1/me/agents/bind-tokens";
+  const result = await UI.req(path, "POST", body);
   if (result.status !== 201) {
     setBindCodeStatus("Could not create bind code.", true);
     return;
@@ -523,16 +489,20 @@ async function createBindCode() {
 
   const token = String(result?.data?.bind_token || "").trim();
   const connectPrompt = String(result?.data?.connect_prompt || "").trim();
-  const expiresAt = formatDateTime(result?.data?.expires_at);
-  const redeemURL = `${window.location.origin}/v1/agents/bind`;
   if (!token) {
     latestBindPrompt = "";
     setCopyPromptEnabled(false);
     setBindCodeStatus("Bind code was not returned.", true);
     return;
   }
+  if (!connectPrompt) {
+    latestBindPrompt = "";
+    setCopyPromptEnabled(false);
+    setBindCodeStatus("Hub did not return an agent prompt.", true);
+    return;
+  }
 
-  latestBindPrompt = connectPrompt || buildAgentBindPrompt(token, expiresAt, redeemURL);
+  latestBindPrompt = connectPrompt;
   setCopyPromptEnabled(true);
   setBindCodeStatus(latestBindPrompt);
 }

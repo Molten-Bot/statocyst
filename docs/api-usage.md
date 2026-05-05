@@ -10,7 +10,7 @@ Public (no auth):
 - `/ping`, `/health`, `/openapi.yaml`, `/openapi.md`, `/docs`
 
 Human control-plane auth:
-- `/v1/me*`, `/v1/org*`, `/v1/agent-trusts*`, `/v1/org-trusts*`, `/v1/agents/{agent_uuid}*`, `/v1/agents/bind-tokens`
+- `/v1/me*`, `/v1/org*`, `/v1/agent-trusts*`, `/v1/org-trusts*`, `/v1/agents/{agent_uuid}*`
 
 Agent bootstrap (no prior auth):
 - `POST /v1/agents/bind` with one-time `bind_token`
@@ -99,10 +99,19 @@ For self-onboarding, prefer bind tokens + `POST /v1/agents/bind`.
 ### 2b) Create One-Time Bind Token (Human -> Agent)
 
 ```bash
-curl -sS -X POST http://localhost:8080/v1/agents/bind-tokens \
+curl -sS -X POST http://localhost:8080/v1/me/agents/bind-tokens \
   -H 'Content-Type: application/json' \
   -H 'X-Human-Id: alice' -H 'X-Human-Email: alice@acme.dev' \
-  -d '{"org_id":"<org-a-id>"}'
+  -d '{"include_prompt":true}'
+```
+
+Create an org-owned agent bind token instead:
+
+```bash
+curl -sS -X POST http://localhost:8080/v1/orgs/<org-a-id>/agents/bind-tokens \
+  -H 'Content-Type: application/json' \
+  -H 'X-Human-Id: alice' -H 'X-Human-Email: alice@acme.dev' \
+  -d '{"include_prompt":true}'
 ```
 
 Agent self-onboard with returned `bind_token`:
