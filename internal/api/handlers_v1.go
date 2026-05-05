@@ -42,8 +42,9 @@ type redeemInviteRequest struct {
 }
 
 type createBindTokenRequest struct {
-	OrgID        string  `json:"org_id"`
-	OwnerHumanID *string `json:"owner_human_id,omitempty"`
+	OrgID         string  `json:"org_id,omitempty"`
+	OwnerHumanID  *string `json:"owner_human_id,omitempty"`
+	IncludePrompt bool    `json:"include_prompt,omitempty"`
 }
 
 type redeemBindTokenRequest struct {
@@ -971,14 +972,10 @@ func (h *Handler) handleSchedulerAgentDispatch(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) handleMyAgentBindTokens(w http.ResponseWriter, r *http.Request) {
-	h.handleMyAgentBindTokenCreate(w, r, true)
+	h.handleMyAgentBindTokenCreate(w, r)
 }
 
-func (h *Handler) handleMyAgentBindToken(w http.ResponseWriter, r *http.Request) {
-	h.handleMyAgentBindTokenCreate(w, r, false)
-}
-
-func (h *Handler) handleMyAgentBindTokenCreate(w http.ResponseWriter, r *http.Request, includeConnectPrompt bool) {
+func (h *Handler) handleMyAgentBindTokenCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -998,6 +995,10 @@ func (h *Handler) handleMyAgentBindTokenCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	req.OrgID = strings.TrimSpace(req.OrgID)
+	if req.OwnerHumanID != nil {
+		writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id is not accepted on /v1/me/agents/bind-tokens; this path always creates an agent owned by the caller")
+		return
+	}
 
 	ownerHumanID := actor.Human.HumanID
 	if h.ensureHumanOwnedAgentLimit(w, ownerHumanID) {
@@ -1019,7 +1020,7 @@ func (h *Handler) handleMyAgentBindTokenCreate(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, includeConnectPrompt))
+	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, req.IncludePrompt))
 }
 
 func (h *Handler) handleMyAgentTrusts(w http.ResponseWriter, r *http.Request) {
@@ -2471,6 +2472,13 @@ func (h *Handler) handleOrgSubroutes(w http.ResponseWriter, r *http.Request) {
 	sub := parts[3]
 
 	switch sub {
+	case "agents":
+		if len(parts) != 5 || parts[4] != "bind-tokens" {
+			writeError(w, http.StatusNotFound, "not_found", "route not found")
+			return
+		}
+		h.handleOrgAgentBindTokens(w, r, orgID, actor)
+		return
 	case "metadata":
 		if len(parts) != 4 {
 			writeError(w, http.StatusNotFound, "not_found", "route not found")
@@ -3082,15 +3090,63 @@ func (h *Handler) handleOrgInvites(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
 }
 
+func (h *Handler) handleOrgAgentBindTokens(w http.ResponseWriter, r *http.Request, orgID string, actor humanActor) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if h.requireHandleConfirmedForWrite(w, actor) {
+		return
+	}
+	var req createBindTokenRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
+		return
+	}
+	if strings.TrimSpace(req.OrgID) != "" {
+		writeError(w, http.StatusBadRequest, "invalid_org_id", "org_id belongs in the URL for /v1/orgs/{org_id}/agents/bind-tokens")
+		return
+	}
+	if req.OwnerHumanID != nil {
+		writeError(w, http.StatusBadRequest, "invalid_owner_human_id", "owner_human_id is not accepted on org-owned agent bind tokens")
+		return
+	}
+	if !actor.IsSuperAdmin && h.humanOrgRole(actor.Human.HumanID, orgID) != model.RoleOwner {
+		writeError(w, http.StatusForbidden, "forbidden", "org owner role required")
+		return
+	}
+
+	bind, bindSecret, err := h.createBindTokenWithRetry(orgID, nil, actor.Human.HumanID, actor.IsSuperAdmin)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrOrgNotFound):
+			writeError(w, http.StatusNotFound, "unknown_org", "org_id is not registered")
+		case errors.Is(err, store.ErrUnauthorizedRole):
+			writeError(w, http.StatusForbidden, "forbidden", "org owner role required")
+		case isRetryableStoreMutationError(err):
+			writeError(w, http.StatusServiceUnavailable, "store_error", "failed to create bind token")
+		default:
+			writeError(w, http.StatusInternalServerError, "store_error", "failed to create bind token")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, req.IncludePrompt))
+}
+
+func (h *Handler) humanOrgRole(humanID, orgID string) string {
+	for _, membership := range h.control.ListMyMemberships(humanID) {
+		if membership.Membership.OrgID == orgID {
+			return membership.Membership.Role
+		}
+	}
+	return ""
+}
+
 func (h *Handler) handleCreateBindToken(w http.ResponseWriter, r *http.Request) {
-	h.handleCreateBindTokenCreate(w, r, true)
+	h.handleCreateBindTokenCreate(w, r)
 }
 
-func (h *Handler) handleCreateBindTokenWithoutPrompt(w http.ResponseWriter, r *http.Request) {
-	h.handleCreateBindTokenCreate(w, r, false)
-}
-
-func (h *Handler) handleCreateBindTokenCreate(w http.ResponseWriter, r *http.Request, includeConnectPrompt bool) {
+func (h *Handler) handleCreateBindTokenCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
 		return
@@ -3143,7 +3199,7 @@ func (h *Handler) handleCreateBindTokenCreate(w http.ResponseWriter, r *http.Req
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, includeConnectPrompt))
+	writeJSON(w, http.StatusCreated, h.bindTokenCreateResponse(r, bind, bindSecret, req.IncludePrompt))
 }
 
 func (h *Handler) bindTokenCreateResponse(r *http.Request, bind model.BindToken, bindSecret string, includeConnectPrompt bool) map[string]any {
