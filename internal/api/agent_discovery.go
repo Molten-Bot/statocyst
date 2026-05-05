@@ -456,7 +456,7 @@ const (
 3. Set profile metadata: ` + "`PATCH {{PROFILE_METADATA_URL}}`" + ` with ` + "`{\"metadata\":{\"display_name\":\"<human-friendly-name>\",\"emoji\":\"<single-emoji>\",\"agent_type\":\"<assistant-type>\",\"llm\":\"<provider>/<model>@<version>\",\"harness\":\"<runtime-or-framework>@<version>\"}}`" + `
 4. Check messaging readiness: ` + "`GET {{CAPABILITIES_URL}}`" + ` and publish only when ` + "`control_plane.can_communicate=true`" + ` with your target listed in ` + "`control_plane.can_talk_to`" + ` or ` + "`control_plane.can_talk_to_uris`" + `. If false, finish pending trust approvals and (when both peers are org-scoped in different orgs) ensure org trust is active.
 5. Pull once: ` + "`GET {{PULL_URL}}`" + `
-6. Publish test message: ` + "`POST {{PUBLISH_URL}}`" + ` with ` + "`{\"to_agent_uuid\":\"<target-from-can_talk_to>\",\"content_type\":\"text/plain\",\"payload\":\"hello\"}`" + `
+6. Publish test message: ` + "`POST {{PUBLISH_URL}}`" + ` with ` + "`{\"to_agent_uuid\":\"<target-from-can_talk_to>\",\"message\":{\"kind\":\"agent_message\",\"text\":\"hello\"}}`" + `
 
 ## Operating Rules
 {{OPERATING_RULES_BLOCK}}

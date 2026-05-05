@@ -72,10 +72,6 @@ func (w runtimeEnvelopeWSResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) {
-	h.handleRetiredOpenClawMessages(w, r)
-}
-
 func (h *Handler) handleRuntimeEnvelopeOffline(w http.ResponseWriter, r *http.Request, adapterName string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -124,10 +120,6 @@ func (h *Handler) handleRuntimeEnvelopeOffline(w http.ResponseWriter, r *http.Re
 		out["presence"] = presence
 	}
 	writeAgentRuntimeSuccess(w, http.StatusOK, out)
-}
-
-func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request) {
-	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimeEnvelopeWebSocket(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {

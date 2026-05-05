@@ -52,8 +52,8 @@ func TestBuildAgentDiscoveryMarkdownRendersTemplateTokens(t *testing.T) {
 	if !strings.Contains(markdown, "- offline: `https://hub.example/v1/runtime/messages/offline`") {
 		t.Fatalf("expected offline endpoint in markdown, got markdown=%q", markdown)
 	}
-	if !strings.Contains(markdown, "### POST /v1/messages/publish") {
-		t.Fatalf("expected publish route contract in markdown, got markdown=%q", markdown)
+	if !strings.Contains(markdown, "### POST /v1/runtime/messages/publish") {
+		t.Fatalf("expected runtime publish route contract in markdown, got markdown=%q", markdown)
 	}
 	if !strings.Contains(markdown, "- Request Content Types:") {
 		t.Fatalf("expected request content types block in markdown, got markdown=%q", markdown)
@@ -124,8 +124,8 @@ func TestBuildAgentSkillMarkdownRendersTemplateTokens(t *testing.T) {
 	if !strings.Contains(markdown, "PATCH https://hub.example/v1/agents/me") {
 		t.Fatalf("expected profile patch guidance in skill markdown, got markdown=%q", markdown)
 	}
-	if !strings.Contains(markdown, "POST https://hub.example/v1/messages/publish") {
-		t.Fatalf("expected publish guidance in skill markdown, got markdown=%q", markdown)
+	if !strings.Contains(markdown, "POST https://hub.example/v1/runtime/messages/publish") {
+		t.Fatalf("expected runtime publish guidance in skill markdown, got markdown=%q", markdown)
 	}
 	if !strings.Contains(markdown, "control_plane.can_communicate=true") || !strings.Contains(markdown, "target-from-can_talk_to") {
 		t.Fatalf("expected messaging readiness and publish target guidance in skill markdown, got markdown=%q", markdown)
@@ -150,9 +150,6 @@ func TestBuildAgentSkillMarkdownRendersTemplateTokens(t *testing.T) {
 	}
 	if !strings.Contains(markdown, "## Skill Call Contract") || !strings.Contains(markdown, "\"type\": \"skill_result\"") {
 		t.Fatalf("expected skill call contract in skill markdown, got markdown=%q", markdown)
-	}
-	if !strings.Contains(markdown, "set `metadata.agent_type` to `openclaw` and read this skill again") {
-		t.Fatalf("expected OpenClaw opt-in onboarding guidance in skill markdown, got markdown=%q", markdown)
 	}
 	if strings.Contains(markdown, "## OpenClaw Node + Agent HTTP Path") {
 		t.Fatalf("did not expect OpenClaw-only section for non-OpenClaw agent, got markdown=%q", markdown)
@@ -184,7 +181,7 @@ func TestBuildAgentSkillMarkdownNoTalkPathsFallback(t *testing.T) {
 	}
 }
 
-func TestBuildAgentSkillMarkdownOpenClawSection(t *testing.T) {
+func TestBuildAgentSkillMarkdownOmitsOpenClawSurface(t *testing.T) {
 	agent := model.Agent{
 		AgentUUID: "11111111-1111-1111-1111-111111111111",
 		AgentID:   "alpha/alice/agent-a",
@@ -221,45 +218,13 @@ func TestBuildAgentSkillMarkdownOpenClawSection(t *testing.T) {
 		t.Fatalf("expected runtime offline endpoint, got %+v", runtimeEndpoints)
 	}
 
-	adapters, ok := manifest.ProtocolAdapters["openclaw_http_v1"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected openclaw_http_v1 protocol adapter in manifest, got %+v", manifest.ProtocolAdapters)
-	}
-	if protocol, _ := adapters["protocol"].(string); protocol != "openclaw.http.v1" {
-		t.Fatalf("expected openclaw adapter protocol openclaw.http.v1, got %q", protocol)
-	}
-	endpoints, ok := adapters["endpoints"].(map[string]string)
-	if !ok {
-		t.Fatalf("expected openclaw adapter endpoints map[string]string, got %+v", adapters["endpoints"])
-	}
-	if endpoints["publish"] != "https://hub.example/v1/openclaw/messages/publish" {
-		t.Fatalf("expected openclaw publish endpoint, got %+v", endpoints)
-	}
-	if endpoints["offline"] != "https://hub.example/v1/openclaw/messages/offline" {
-		t.Fatalf("expected openclaw offline endpoint, got %+v", endpoints)
+	if _, ok := manifest.ProtocolAdapters["openclaw_http_v1"]; ok {
+		t.Fatalf("did not expect openclaw_http_v1 adapter in manifest, got %+v", manifest.ProtocolAdapters)
 	}
 
 	markdown := buildAgentSkillMarkdown(agent, manifest)
-	if !strings.Contains(markdown, "## OpenClaw Node + Agent HTTP Path") {
-		t.Fatalf("expected OpenClaw section in skill markdown, got markdown=%q", markdown)
-	}
-	if !strings.Contains(markdown, "POST https://hub.example/v1/openclaw/messages/publish") {
-		t.Fatalf("expected OpenClaw publish endpoint in skill markdown, got markdown=%q", markdown)
-	}
-	if !strings.Contains(markdown, "openclaw devices list") || !strings.Contains(markdown, "openclaw nodes status") {
-		t.Fatalf("expected OpenClaw CLI hints in skill markdown, got markdown=%q", markdown)
-	}
-	if !strings.Contains(markdown, "do not publish hub agent-to-agent messages") {
-		t.Fatalf("expected OpenClaw CLI setup-only warning in skill markdown, got markdown=%q", markdown)
-	}
-	if !strings.Contains(markdown, "@moltenbot/openclaw-plugin-moltenhub") {
-		t.Fatalf("expected OpenClaw plugin package hint in skill markdown, got markdown=%q", markdown)
-	}
-	if !strings.Contains(markdown, "workspace/.moltenhub/config.json") || !strings.Contains(markdown, "\"sessionKey\": \"main\"") || !strings.Contains(markdown, "\"timeoutMs\": 20000") {
-		t.Fatalf("expected optional OpenClaw config hint in skill markdown, got markdown=%q", markdown)
-	}
-	if !strings.Contains(markdown, "If plugin/config is unavailable, continue") {
-		t.Fatalf("expected OpenClaw fallback guidance when plugin is unavailable, got markdown=%q", markdown)
+	if strings.Contains(markdown, "OpenClaw") || strings.Contains(markdown, "/v1/openclaw/messages") {
+		t.Fatalf("did not expect OpenClaw guidance in skill markdown, got markdown=%q", markdown)
 	}
 }
 

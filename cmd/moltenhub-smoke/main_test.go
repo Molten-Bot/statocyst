@@ -200,12 +200,11 @@ func TestRunnerLaunchSmokeFlow(t *testing.T) {
 		{name: "Agent invites a hosted agent and receives explicit failure details when child invites again", run: (*runner).stepAgentInvitesHostedAgent},
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "A2A send/get/list and legacy pull/ack succeeds between bound agents", run: (*runner).stepA2AStorageDelivery},
-		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
 		{name: "Runtime HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepRuntimeHTTPDelivery},
 		{name: "Runtime polling heartbeat marks runtime presence online", run: (*runner).stepRuntimePresenceHeartbeat},
 		{name: "Runtime queued offline message dispatches on websocket reconnect", run: (*runner).stepRuntimeQueuedOfflineWebSocketDelivery},
 		{name: "Runtime websocket delivery and ack succeeds", run: (*runner).stepRuntimeWebSocketDelivery},
-		{name: "OpenClaw compatibility publish/pull/ack aliases still work", run: (*runner).stepOpenClawCompatibilityAliases},
+		{name: "Retired OpenClaw compatibility endpoints return 410", run: (*runner).stepRetiredOpenClawCompatibilityEndpoints},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},
 	}

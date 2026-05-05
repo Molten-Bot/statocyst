@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	retiredOpenClawProtocol = "openclaw.http.v1"
-	runtimeEnvelopeProtocol = "runtime.envelope.v1"
+	retiredRuntimeProtocolOpenClaw = "openclaw.http.v1"
+	runtimeEnvelopeProtocol        = "runtime.envelope.v1"
 )
 
 const (
@@ -32,10 +32,6 @@ type runtimeEnvelopePublishRequest struct {
 	ToAgentURI  string         `json:"to_agent_uri,omitempty"`
 	ClientMsgID *string        `json:"client_msg_id,omitempty"`
 	Message     map[string]any `json:"message"`
-}
-
-func (h *Handler) handleOpenClawPublish(w http.ResponseWriter, r *http.Request) {
-	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimePublish(w http.ResponseWriter, r *http.Request) {
@@ -153,10 +149,6 @@ func parseRuntimeEnvelopePublishRequest(raw map[string]any) (runtimeEnvelopePubl
 	return req, nil
 }
 
-func (h *Handler) handleOpenClawPull(w http.ResponseWriter, r *http.Request) {
-	h.handleRetiredOpenClawMessages(w, r)
-}
-
 func (h *Handler) handleRuntimePull(w http.ResponseWriter, r *http.Request) {
 	h.handleRuntimeEnvelopePull(w, r, runtimeEnvelopeProtocol, runtimeEnvelopeAdapterRuntime)
 }
@@ -203,10 +195,6 @@ func (h *Handler) handleRuntimeEnvelopePull(w http.ResponseWriter, r *http.Reque
 	writeAgentRuntimeSuccess(w, status, out)
 }
 
-func (h *Handler) handleOpenClawMessageSubroutes(w http.ResponseWriter, r *http.Request) {
-	h.handleRetiredOpenClawMessages(w, r)
-}
-
 func (h *Handler) handleRuntimeMessageSubroutes(w http.ResponseWriter, r *http.Request) {
 	h.handleRuntimeEnvelopeMessageSubroutes(w, r, "/v1/runtime/messages/", runtimeEnvelopeProtocol, runtimeEnvelopeAdapterRuntime)
 }
@@ -246,10 +234,6 @@ func (h *Handler) handleRuntimeEnvelopeMessageSubroutes(w http.ResponseWriter, r
 		return
 	}
 	h.handleRuntimeEnvelopeMessageStatus(w, r, tail, defaultProtocol, adapterName)
-}
-
-func (h *Handler) handleOpenClawAckDelivery(w http.ResponseWriter, r *http.Request) {
-	h.handleRetiredOpenClawMessages(w, r)
 }
 
 func (h *Handler) handleRuntimeEnvelopeAckDelivery(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
@@ -295,10 +279,6 @@ func (h *Handler) handleRuntimeEnvelopeAckDelivery(w http.ResponseWriter, r *htt
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
 }
 
-func (h *Handler) handleOpenClawNackDelivery(w http.ResponseWriter, r *http.Request) {
-	h.handleRetiredOpenClawMessages(w, r)
-}
-
 func (h *Handler) handleRuntimeEnvelopeNackDelivery(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -342,12 +322,8 @@ func (h *Handler) handleRuntimeEnvelopeNackDelivery(w http.ResponseWriter, r *ht
 	writeAgentRuntimeSuccess(w, http.StatusOK, result)
 }
 
-func (h *Handler) handleOpenClawMessageStatus(w http.ResponseWriter, r *http.Request, messageID string) {
-	h.handleRetiredOpenClawMessages(w, r)
-}
-
-func (h *Handler) handleRetiredOpenClawMessages(w http.ResponseWriter, r *http.Request) {
-	retiredEndpoint, replacementEndpoint, hasReplacement := retiredOpenClawEndpointReplacement(r.URL.Path)
+func (h *Handler) handleRetiredRuntimeTransportAlias(w http.ResponseWriter, r *http.Request) {
+	retiredEndpoint, replacementEndpoint, hasReplacement := retiredRuntimeTransportAliasReplacement(r.URL.Path)
 	extras := map[string]any{
 		"retired_endpoint": retiredEndpoint,
 	}
@@ -364,7 +340,7 @@ func (h *Handler) handleRetiredOpenClawMessages(w http.ResponseWriter, r *http.R
 	}, extras)
 }
 
-func retiredOpenClawEndpointReplacement(path string) (string, string, bool) {
+func retiredRuntimeTransportAliasReplacement(path string) (string, string, bool) {
 	const prefix = "/v1/openclaw/messages/"
 	trimmed := strings.TrimSuffix(path, "/")
 	tail := strings.TrimPrefix(trimmed, prefix)
@@ -427,7 +403,7 @@ func normalizeRuntimeEnvelope(in map[string]any, now time.Time, defaultProtocol 
 	if strings.TrimSpace(asStringAny(out["protocol"])) == "" {
 		out["protocol"] = normalizeRuntimeEnvelopeProtocol(defaultProtocol)
 	}
-	if protocol := strings.TrimSpace(asStringAny(out["protocol"])); protocol == retiredOpenClawProtocol || protocol != runtimeEnvelopeProtocol {
+	if protocol := strings.TrimSpace(asStringAny(out["protocol"])); protocol == retiredRuntimeProtocolOpenClaw || protocol != runtimeEnvelopeProtocol {
 		return nil, errInvalidRuntimeEnvelopeProtocol
 	}
 	if strings.TrimSpace(asStringAny(out["kind"])) == "" {

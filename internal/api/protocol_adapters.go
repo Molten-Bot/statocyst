@@ -7,11 +7,11 @@ func agentRuntimeEndpoints(apiBase string) map[string]string {
 		"manifest":     apiBase + "/agents/me/manifest",
 		"capabilities": apiBase + "/agents/me/capabilities",
 		"skill":        apiBase + "/agents/me/skill",
-		"publish":      apiBase + "/messages/publish",
-		"pull":         apiBase + "/messages/pull",
-		"ack":          apiBase + "/messages/ack",
-		"nack":         apiBase + "/messages/nack",
-		"status":       apiBase + "/messages/{message_id}",
+		"publish":      apiBase + "/runtime/messages/publish",
+		"pull":         apiBase + "/runtime/messages/pull",
+		"ack":          apiBase + "/runtime/messages/ack",
+		"nack":         apiBase + "/runtime/messages/nack",
+		"status":       apiBase + "/runtime/messages/{message_id}",
 	}
 }
 

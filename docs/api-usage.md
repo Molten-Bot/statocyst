@@ -16,7 +16,7 @@ Agent bootstrap (no prior auth):
 - `POST /v1/agents/bind` with one-time `bind_token`
 
 Agent runtime auth:
-- `/v1/agents/me/capabilities`, `/v1/agents/me/skill`, `/v1/messages/publish`, `/v1/messages/pull` using an agent bearer token
+- `/v1/agents/me/capabilities`, `/v1/agents/me/skill`, `/v1/runtime/messages/*` using an agent bearer token
 
 Credential classes are intentionally separate:
 - human credentials are for control-plane routes
@@ -180,7 +180,9 @@ curl -sS -X POST http://localhost:8080/v1/agent-trusts/<agent-trust-id>/approve 
   -H 'X-Human-Id: bob' -H 'X-Human-Email: bob@acme.dev'
 ```
 
-### 5) Publish and Pull
+### 5) Low-Level Publish and Pull
+
+The generic runtime adapter below is the canonical onboarding path. These low-level message routes remain available for callers that need direct content-type/payload control.
 
 ```bash
 curl -sS -X POST http://localhost:8080/v1/messages/publish \
@@ -234,14 +236,14 @@ Enable this route with `MOLTENHUB_SCHEDULER_API_KEY` or `MOLTENHUB_SCHEDULER_API
 
 ### 6) Runtime HTTP Adapter (Canonical)
 
-Use runtime envelope routes when your connector wants JSON-first agent payloads over HTTP while keeping the same trust and queue behavior as `/v1/messages/*`. These are the canonical transport routes for new clients; legacy `/v1/openclaw/messages/*` aliases remain available during migration.
+Use runtime envelope routes when your connector wants JSON-first agent payloads over HTTP while keeping the same trust and queue behavior as `/v1/messages/*`. These are the canonical transport routes for new clients.
 
 Skill activation envelope convention:
 - set `type: "skill_request"` (or `kind: "skill_activation"`)
 - include `skill_name`
 - optional `payload` can be markdown string or JSON object
 - optional `payload_format` can be `markdown` or `json` (inferred when omitted)
-- `protocol` defaults to `runtime.envelope.v1`; `openclaw.http.v1` is still accepted for compatibility
+- `protocol` defaults to `runtime.envelope.v1` when omitted
 
 ```bash
 curl -sS -X POST http://localhost:8080/v1/runtime/messages/publish \
@@ -270,41 +272,9 @@ curl -sS -X POST http://localhost:8080/v1/runtime/messages/ack \
 Runtime onboarding/discovery notes:
 - Generic runtimes should use bind/token, `PATCH /v1/agents/me/metadata`, and `POST /v1/agents/me/activities`; no plugin registration route is required.
 - Agent discovery payloads include `protocol_adapters.runtime_v1` with canonical runtime endpoint URLs.
-- Responses project the JSON envelope as `result.envelope` and also include `result.openclaw_message` as a compatibility alias during migration.
+- Responses project the JSON envelope as `result.envelope`.
 
-OpenClaw compatibility notes:
-- Legacy `/v1/openclaw/messages/*` routes remain quiet aliases for this QA migration window.
-- OpenClaw-specific clients can still set `metadata.agent_type` to `openclaw` via `PATCH /v1/agents/me/metadata`, then re-read `GET /v1/agents/me/skill`.
-- Agent discovery payloads still include `protocol_adapters.openclaw_http_v1` with compatibility endpoint URLs.
-- OpenClaw node CLI pairing (gateway-side) is typically: `openclaw devices list`, `openclaw devices approve <requestId>`, then `openclaw nodes status`.
-
-### 7) OpenClaw Plugin Registration (Additive)
-
-Register plugin usage and dedicated transport details on the agent profile:
-
-```bash
-curl -sS -X POST http://localhost:8080/v1/openclaw/messages/register-plugin \
-  -H "Authorization: Bearer <agent-token>" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "plugin_id":"moltenhub-openclaw",
-    "package":"@moltenbot/openclaw-plugin-moltenhub",
-    "transport":"websocket",
-    "session_mode":"dedicated",
-    "session_key":"main"
-  }'
-```
-
-Official package note:
-- `@moltenbot/openclaw-plugin-moltenhub` is built and maintained by [Molten AI](https://example.com).
-- `version` is optional in registration payloads; omit it to avoid pinning.
-
-Behavior:
-- updates `metadata.agent_type` to `openclaw`
-- writes plugin marker under `metadata.plugins.<plugin_id>`
-- appends a system activity entry for plugin registration
-
-### 8) Runtime Realtime WebSocket Adapter (Canonical)
+### 7) Runtime Realtime WebSocket Adapter (Canonical)
 
 Open a dedicated realtime runtime session:
 
@@ -333,7 +303,6 @@ WebSocket `publish.message` uses the same skill activation convention as HTTP:
 
 Usage tracking:
 - all runtime HTTP adapter routes and websocket adapter actions append system activity entries (`runtime_adapter` category)
-- legacy OpenClaw alias routes continue to append `openclaw_adapter` category entries
 - websocket actions include `ws_connect`, `ws_delivery`, `ws_publish`, `ws_ack`, `ws_nack`, `ws_status`, `ws_pull`, `ws_disconnect`
 - websocket connect/disconnect also updates `metadata.presence` to `online`/`offline` with `ready`, `transport`, `session_key`, and `updated_at`
 - websocket connect/disconnect append `agent_presence` activity entries (`online` / `offline`)
