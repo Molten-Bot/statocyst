@@ -103,7 +103,7 @@ func TestRecordAgentSystemActivity_UsesServerTimestampAndTruncates(t *testing.T)
 func TestAgentCreationAudit_RegisterAddsCanonicalCreateEvent(t *testing.T) {
 	mem := NewMemoryStore()
 	ids := &idGen{}
-	now := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+	now := recentAuditTestTime()
 
 	_, _, agent := seedOrgAndAgent(t, mem, ids, now, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
 
@@ -127,10 +127,41 @@ func TestAgentCreationAudit_RegisterAddsCanonicalCreateEvent(t *testing.T) {
 	}
 }
 
+func TestAdminSnapshotActivityFeedIncludesOnlyPast31Days(t *testing.T) {
+	mem := NewMemoryStore()
+	ids := &idGen{}
+	old := time.Now().UTC().Add(-40 * 24 * time.Hour)
+	recent := time.Now().UTC().Add(-24 * time.Hour)
+
+	_, _, agent := seedOrgAndAgent(t, mem, ids, old, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
+	_, err := mem.RecordAgentSystemActivity(agent.AgentUUID, map[string]any{
+		"activity": "recent activity",
+		"category": "test",
+		"action":   "record",
+	}, recent)
+	if err != nil {
+		t.Fatalf("RecordAgentSystemActivity returned error: %v", err)
+	}
+
+	snapshot := mem.AdminSnapshot()
+	if _, ok := findAuditEvent(snapshot.ActivityFeed, "agent_activity", "record", agent.AgentUUID); !ok {
+		t.Fatalf("expected recent agent_activity event in activity_feed, got=%v", snapshot.ActivityFeed)
+	}
+	if _, ok := findAuditEvent(snapshot.ActivityFeed, "agent", "create", agent.AgentUUID); ok {
+		t.Fatalf("expected old agent/create event to be omitted from activity_feed, got=%v", snapshot.ActivityFeed)
+	}
+	cutoff := time.Now().UTC().Add(-adminSnapshotActivityFeedLimit)
+	for _, event := range snapshot.ActivityFeed {
+		if event.CreatedAt.Before(cutoff) {
+			t.Fatalf("expected activity_feed event within past 31 days, got event=%v cutoff=%s", event, cutoff.Format(time.RFC3339))
+		}
+	}
+}
+
 func TestAgentCreationAudit_BindRedeemAddsCanonicalCreateEventAndKeepsRedeem(t *testing.T) {
 	mem := NewMemoryStore()
 	ids := &idGen{}
-	now := time.Date(2026, 3, 27, 10, 15, 0, 0, time.UTC)
+	now := recentAuditTestTime()
 
 	alice, err := mem.UpsertHuman("dev", "alice", "alice@a.test", true, now, ids.Next)
 	if err != nil {
@@ -175,7 +206,7 @@ func TestAgentCreationAudit_BindRedeemAddsCanonicalCreateEventAndKeepsRedeem(t *
 func TestAgentCreationAudit_PersonalAgentUsesGlobalActivityFeed(t *testing.T) {
 	mem := NewMemoryStore()
 	ids := &idGen{}
-	now := time.Date(2026, 3, 27, 10, 30, 0, 0, time.UTC)
+	now := recentAuditTestTime()
 
 	alice, err := mem.UpsertHuman("dev", "alice", "alice@a.test", true, now, ids.Next)
 	if err != nil {
@@ -204,7 +235,7 @@ func TestAgentCreationAudit_PersonalAgentUsesGlobalActivityFeed(t *testing.T) {
 func TestDeleteAgentArchivesAgentForAdminSnapshot(t *testing.T) {
 	mem := NewMemoryStore()
 	ids := &idGen{}
-	now := time.Date(2026, 3, 27, 11, 0, 0, 0, time.UTC)
+	now := recentAuditTestTime()
 
 	alice, _, agent := seedOrgAndAgent(t, mem, ids, now, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
 	if err := mem.DeleteAgent(agent.AgentUUID, alice.HumanID, now.Add(time.Minute), false); err != nil {
@@ -233,7 +264,7 @@ func TestDeleteAgentArchivesAgentForAdminSnapshot(t *testing.T) {
 func TestDeleteOrgArchivesOrgAgentsAndKeepsActivityFeed(t *testing.T) {
 	mem := NewMemoryStore()
 	ids := &idGen{}
-	now := time.Date(2026, 3, 27, 11, 30, 0, 0, time.UTC)
+	now := recentAuditTestTime()
 
 	alice, org, agent := seedOrgAndAgent(t, mem, ids, now, "alice", "alice@a.test", "org-a", "Org A", "agent-a")
 	if err := mem.DeleteOrg(org.OrgID, alice.HumanID, false, now.Add(time.Minute)); err != nil {
@@ -255,6 +286,10 @@ func TestDeleteOrgArchivesOrgAgentsAndKeepsActivityFeed(t *testing.T) {
 	if _, ok := findAuditEvent(snapshot.ActivityFeed, "org", "delete", org.OrgID); !ok {
 		t.Fatalf("expected org/delete event to remain after delete, got=%v", snapshot.ActivityFeed)
 	}
+}
+
+func recentAuditTestTime() time.Time {
+	return time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 }
 
 func findAuditEvent(events []model.AuditEvent, category, action, subjectID string) (model.AuditEvent, bool) {

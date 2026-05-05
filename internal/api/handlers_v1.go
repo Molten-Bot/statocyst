@@ -155,10 +155,11 @@ var (
 )
 
 const (
-	defaultInviteExpiryDays = 7
-	maxInviteExpiryDays     = 365
-	defaultUIAppName        = "MoltenHub"
-	maxMetadataBytes        = 192 * 1024
+	defaultInviteExpiryDays    = 7
+	maxInviteExpiryDays        = 365
+	defaultUIAppName           = "MoltenHub"
+	maxMetadataBytes           = 192 * 1024
+	adminSnapshotActivityLimit = 31 * 24 * time.Hour
 )
 
 func configuredMetadataMaxBytes() int {

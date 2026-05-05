@@ -63,8 +63,9 @@ var (
 )
 
 const (
-	maxAgentActivityEntries = 512
-	maxAgentActivityChars   = 128
+	maxAgentActivityEntries        = 512
+	maxAgentActivityChars          = 128
+	adminSnapshotActivityFeedLimit = 31 * 24 * time.Hour
 )
 
 type MemoryStore struct {
@@ -3118,8 +3119,14 @@ func (s *MemoryStore) AdminSnapshot() model.AdminSnapshot {
 		snapshot.Stats = append(snapshot.Stats, v)
 	}
 	snapshot.MessageMetrics = s.buildAdminMessageMetricsLocked()
+	activityFeedCutoff := time.Now().UTC().Add(-adminSnapshotActivityFeedLimit)
 	for _, events := range s.auditByOrg {
-		snapshot.ActivityFeed = append(snapshot.ActivityFeed, events...)
+		for _, event := range events {
+			if event.CreatedAt.Before(activityFeedCutoff) {
+				continue
+			}
+			snapshot.ActivityFeed = append(snapshot.ActivityFeed, event)
+		}
 	}
 	sort.Slice(snapshot.ActivityFeed, func(i, j int) bool {
 		if snapshot.ActivityFeed[i].CreatedAt.Equal(snapshot.ActivityFeed[j].CreatedAt) {

@@ -4702,6 +4702,61 @@ func TestAdminSnapshotDoesNotLeakMessagePayloads(t *testing.T) {
 	}
 }
 
+func TestAdminSnapshotFiltersAgentActivityLogToPast31Days(t *testing.T) {
+	st := store.NewMemoryStore()
+	waiters := longpoll.NewWaiters()
+	h := NewHandler(st, st, waiters, auth.NewDevHumanAuthProvider(), "https://hub.example.com", "", "", "", "", "example.com", true, 15*time.Minute, false)
+	now := time.Now().UTC().Truncate(time.Second)
+	h.now = func() time.Time { return now }
+	nextID := 0
+	next := func() (string, error) {
+		nextID++
+		return fmt.Sprintf("id-%d", nextID), nil
+	}
+
+	human, err := st.UpsertHuman("dev", "alice", "alice@a.test", true, now, next)
+	if err != nil {
+		t.Fatalf("UpsertHuman failed: %v", err)
+	}
+	org, _, err := st.CreateOrg("org-a", "Org A", human.HumanID, "org-a-id", now)
+	if err != nil {
+		t.Fatalf("CreateOrg failed: %v", err)
+	}
+	ownerHumanID := human.HumanID
+	agent, err := st.RegisterAgent(org.OrgID, "agent-a", &ownerHumanID, "token-agent-a", human.HumanID, now, false)
+	if err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+	if _, err := st.RecordAgentSystemActivity(agent.AgentUUID, map[string]any{"activity": "old activity"}, now.Add(-40*24*time.Hour)); err != nil {
+		t.Fatalf("RecordAgentSystemActivity old failed: %v", err)
+	}
+	if _, err := st.RecordAgentSystemActivity(agent.AgentUUID, map[string]any{"activity": "recent activity"}, now.Add(-24*time.Hour)); err != nil {
+		t.Fatalf("RecordAgentSystemActivity recent failed: %v", err)
+	}
+
+	payload := h.adminSnapshotPayload(st.AdminSnapshot())
+	agents, _ := payload["agents"].([]map[string]any)
+	if len(agents) != 1 {
+		t.Fatalf("expected one agent in admin snapshot payload, got=%v", payload["agents"])
+	}
+	log, _ := agents[0]["activity_log"].([]map[string]any)
+	if !activityLogHas(log, "recent activity") {
+		t.Fatalf("expected recent activity in admin snapshot activity_log, got=%v", log)
+	}
+	if activityLogHas(log, "old activity") {
+		t.Fatalf("expected old activity to be omitted from admin snapshot activity_log, got=%v", log)
+	}
+}
+
+func activityLogHas(log []map[string]any, activity string) bool {
+	for _, entry := range log {
+		if entry["activity"] == activity {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAdminSnapshotDoesNotLeakHumanEmails(t *testing.T) {
 	router := newTestRouter()
 	_ = currentHumanID(t, router, "alice", "alice+private@a.test")
