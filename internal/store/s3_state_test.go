@@ -284,7 +284,7 @@ func TestS3StateStore_LoadFromS3HydratesAuditFeed(t *testing.T) {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
 	}
 
-	now := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
+	now := recentAuditTestTime()
 	id := &idGen{}
 
 	alice, err := store.UpsertHuman("dev", "alice-sub", "alice@a.test", true, now, id.Next)
@@ -341,7 +341,7 @@ func TestS3StateStore_LoadFromS3HydratesArchivedDeletedEntities(t *testing.T) {
 		t.Fatalf("loadFromS3 empty failed: %v", err)
 	}
 
-	now := time.Date(2026, 3, 6, 10, 0, 0, 0, time.UTC)
+	now := recentAuditTestTime()
 	id := &idGen{}
 
 	alice, err := store.UpsertHuman("dev", "alice-sub", "alice@a.test", true, now, id.Next)

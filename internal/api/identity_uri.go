@@ -3,6 +3,7 @@ package api
 import (
 	"net/url"
 	"strings"
+	"time"
 
 	"moltenhub/internal/model"
 )
@@ -179,6 +180,7 @@ func (h *Handler) orgHumanViewListPayload(items []model.OrgHumanView) []map[stri
 }
 
 func (h *Handler) adminSnapshotPayload(snapshot model.AdminSnapshot) map[string]any {
+	now := h.now().UTC()
 	organizations := make([]map[string]any, 0, len(snapshot.Organizations))
 	for _, org := range snapshot.Organizations {
 		organizations = append(organizations, h.organizationPayload(org))
@@ -191,7 +193,7 @@ func (h *Handler) adminSnapshotPayload(snapshot model.AdminSnapshot) map[string]
 
 	agents := make([]map[string]any, 0, len(snapshot.Agents))
 	for _, agent := range snapshot.Agents {
-		agents = append(agents, h.agentResponsePayload(agent))
+		agents = append(agents, h.adminSnapshotAgentPayload(agent, now))
 	}
 
 	archivedOrganizations := make([]map[string]any, 0, len(snapshot.ArchivedOrganizations))
@@ -206,7 +208,7 @@ func (h *Handler) adminSnapshotPayload(snapshot model.AdminSnapshot) map[string]
 
 	archivedAgents := make([]map[string]any, 0, len(snapshot.ArchivedAgents))
 	for _, agent := range snapshot.ArchivedAgents {
-		archivedAgents = append(archivedAgents, h.agentResponsePayload(agent))
+		archivedAgents = append(archivedAgents, h.adminSnapshotAgentPayload(agent, now))
 	}
 
 	return map[string]any{
@@ -223,4 +225,28 @@ func (h *Handler) adminSnapshotPayload(snapshot model.AdminSnapshot) map[string]
 		"message_metrics":        snapshot.MessageMetrics,
 		"activity_feed":          snapshot.ActivityFeed,
 	}
+}
+
+func (h *Handler) adminSnapshotAgentPayload(agent model.Agent, now time.Time) map[string]any {
+	payload := h.agentResponsePayload(agent)
+	rawLog, ok := payload["activity_log"].([]map[string]any)
+	if !ok || len(rawLog) == 0 {
+		return payload
+	}
+
+	cutoff := now.Add(-adminSnapshotActivityLimit)
+	filtered := make([]map[string]any, 0, len(rawLog))
+	for _, entry := range rawLog {
+		at, ok := parseActivityLogTime(entry)
+		if !ok || at.Before(cutoff) || at.After(now) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	if len(filtered) == 0 {
+		delete(payload, "activity_log")
+		return payload
+	}
+	payload["activity_log"] = filtered
+	return payload
 }
