@@ -472,6 +472,59 @@ func TestA2ARESTSendMessageRoutesWithMessageMetadata(t *testing.T) {
 	}
 }
 
+func TestA2ASendMessageRoutesWithAgentIDMetadata(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	meResp := doJSONRequest(t, router, http.MethodGet, "/v1/agents/me", nil, map[string]string{
+		"Authorization": "Bearer " + tokenB,
+	})
+	if meResp.Code != http.StatusOK {
+		t.Fatalf("expected agent me 200, got %d %s", meResp.Code, meResp.Body.String())
+	}
+	mePayload := decodeJSONMap(t, meResp.Body.Bytes())
+	agent, _ := mePayload["agent"].(map[string]any)
+	agentID, _ := agent["agent_id"].(string)
+	if agentID == "" {
+		t.Fatalf("expected agent_id, got %v", mePayload)
+	}
+
+	sendResp := doJSONRequest(t, router, http.MethodPost, "/v1/a2a/message:send", map[string]any{
+		"metadata": map[string]any{
+			"to_agent_id": agentID,
+		},
+		"message": map[string]any{
+			"messageId": "a2a-agent-id-route",
+			"role":      "ROLE_USER",
+			"parts": []map[string]any{{
+				"text": "hello via agent id",
+			}},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if sendResp.Code != http.StatusOK {
+		t.Fatalf("expected REST send 200, got %d %s", sendResp.Code, sendResp.Body.String())
+	}
+	sendPayload := decodeJSONMap(t, sendResp.Body.Bytes())
+	task, _ := sendPayload["task"].(map[string]any)
+	taskID, _ := task["id"].(string)
+	if taskID == "" {
+		t.Fatalf("expected task id, got %v", sendPayload)
+	}
+
+	pullResp := pull(t, router, tokenB, 0)
+	if pullResp.Code != http.StatusOK {
+		t.Fatalf("expected legacy pull 200, got %d %s", pullResp.Code, pullResp.Body.String())
+	}
+	pullPayload := decodeJSONMap(t, pullResp.Body.Bytes())
+	message, _ := pullPayload["message"].(map[string]any)
+	if message["message_id"] != taskID {
+		t.Fatalf("expected pulled message_id %q, got %v", taskID, message)
+	}
+	if got := readStringPath(task, "metadata", "moltenhub", "to_agent_uuid"); got != agentUUIDB {
+		t.Fatalf("expected routed task target %q, got %q task=%v", agentUUIDB, got, task)
+	}
+}
+
 func TestLegacyPublishVisibleAsA2ATask(t *testing.T) {
 	router := newTestRouter()
 	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
@@ -514,6 +567,80 @@ func TestLegacyPublishVisibleAsA2ATask(t *testing.T) {
 	tasks, _ := listPayload["tasks"].([]any)
 	if len(tasks) == 0 {
 		t.Fatalf("expected A2A list tasks to include legacy message, got %v", listPayload)
+	}
+}
+
+func TestA2ATaskFromStatusUpdateMessageUsesStatusPayload(t *testing.T) {
+	router := newTestRouter()
+	_, _, tokenA, tokenB, _, _, _, agentUUIDB := setupTrustedAgents(t, router)
+
+	sendResp := doJSONRequest(t, router, http.MethodPost, "/v1/a2a/agents/"+agentUUIDB+"/message:send", map[string]any{
+		"message": map[string]any{
+			"messageId": "code-status-1",
+			"contextId": "dispatch-context-1",
+			"taskId":    "hub-task-1",
+			"role":      "ROLE_AGENT",
+			"parts": []map[string]any{{
+				"mediaType": "application/json",
+				"data": map[string]any{
+					"protocol":       "a2a.v1",
+					"type":           "task_status_update",
+					"request_id":     "dispatch-1",
+					"status":         "working",
+					"a2a_state":      "TASK_STATE_WORKING",
+					"task_state":     "TASK_STATE_WORKING",
+					"message":        "Task running.",
+					"a2a_task_id":    "hub-task-1",
+					"a2a_context_id": "dispatch-context-1",
+					"statusUpdate": map[string]any{
+						"taskId":    "hub-task-1",
+						"contextId": "dispatch-context-1",
+						"status": map[string]any{
+							"state": "TASK_STATE_WORKING",
+							"message": map[string]any{
+								"messageId": "code-status-1",
+								"contextId": "dispatch-context-1",
+								"taskId":    "hub-task-1",
+								"role":      "ROLE_AGENT",
+								"parts": []map[string]any{{
+									"text": "Task running.",
+								}},
+							},
+						},
+					},
+				},
+			}},
+		},
+	}, map[string]string{"Authorization": "Bearer " + tokenA})
+	if sendResp.Code != http.StatusOK {
+		t.Fatalf("expected A2A send 200, got %d %s", sendResp.Code, sendResp.Body.String())
+	}
+	sendPayload := decodeJSONMap(t, sendResp.Body.Bytes())
+	task, _ := sendPayload["task"].(map[string]any)
+	taskID, _ := task["id"].(string)
+	if taskID == "" {
+		t.Fatalf("expected task id, got %v", sendPayload)
+	}
+
+	taskResp := doJSONRequest(t, router, http.MethodGet, "/v1/a2a/agents/"+agentUUIDB+"/tasks/"+taskID, nil, map[string]string{
+		"Authorization": "Bearer " + tokenB,
+	})
+	if taskResp.Code != http.StatusOK {
+		t.Fatalf("expected A2A get task 200, got %d %s", taskResp.Code, taskResp.Body.String())
+	}
+	task = decodeJSONMap(t, taskResp.Body.Bytes())
+	if got := readStringPath(task, "status", "state"); got != "TASK_STATE_WORKING" {
+		t.Fatalf("expected task state TASK_STATE_WORKING, got %q task=%v", got, task)
+	}
+	status, _ := task["status"].(map[string]any)
+	message, _ := status["message"].(map[string]any)
+	parts, _ := message["parts"].([]any)
+	if len(parts) != 1 {
+		t.Fatalf("expected status message part, got %v", task)
+	}
+	part, _ := parts[0].(map[string]any)
+	if got := part["text"]; got != "Task running." {
+		t.Fatalf("expected status text, got %v task=%v", got, task)
 	}
 }
 
