@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +20,6 @@ import (
 
 const (
 	runtimeEnvelopeWebSocketPullTimeoutDefault = 20 * time.Second
-	openClawPluginDefaultID                    = "moltenhub-openclaw"
 	runtimePresenceStatusOnline                = "online"
 	runtimePresenceStatusOffline               = "offline"
 	runtimePresenceOfflineAfter                = 2 * time.Hour
@@ -35,17 +33,7 @@ var (
 			return true
 		},
 	}
-	openClawPluginMetadataKeyPattern = regexp.MustCompile(`[^a-z0-9_.-]+`)
 )
-
-type openClawPluginRegisterRequest struct {
-	PluginID    string `json:"plugin_id,omitempty"`
-	Package     string `json:"package,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Transport   string `json:"transport,omitempty"`
-	SessionKey  string `json:"session_key,omitempty"`
-	SessionMode string `json:"session_mode,omitempty"`
-}
 
 type runtimeEnvelopeOfflineRequest struct {
 	SessionKey string `json:"session_key,omitempty"`
@@ -82,106 +70,6 @@ func (w runtimeEnvelopeWSResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, 
 
 func (w runtimeEnvelopeWSResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
-}
-
-func (h *Handler) handleOpenClawRegisterPlugin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if !requireJSONRequestContentType(w, r) {
-		return
-	}
-
-	agentUUID, err := h.authenticateAgent(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
-		return
-	}
-
-	var req openClawPluginRegisterRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request")
-		return
-	}
-
-	now := h.now().UTC()
-	pluginID := normalizeOpenClawPluginID(req.PluginID)
-	pluginKey := openClawPluginMetadataKey(pluginID)
-	sessionKey := normalizeRuntimeSessionKey(req.SessionKey)
-	transport := strings.ToLower(strings.TrimSpace(req.Transport))
-	if transport == "" {
-		transport = "websocket"
-	}
-	sessionMode := strings.ToLower(strings.TrimSpace(req.SessionMode))
-	if sessionMode == "" {
-		sessionMode = "dedicated"
-	}
-
-	marker := map[string]any{
-		"id":            pluginID,
-		"package":       strings.TrimSpace(req.Package),
-		"version":       strings.TrimSpace(req.Version),
-		"enabled":       true,
-		"transport":     transport,
-		"session_mode":  sessionMode,
-		"session_key":   sessionKey,
-		"registered_at": now.Format(time.RFC3339),
-		"last_seen_at":  now.Format(time.RFC3339),
-	}
-
-	patch := map[string]any{
-		model.AgentMetadataKeyType: "openclaw",
-		"plugins": map[string]any{
-			pluginKey: marker,
-		},
-	}
-	agent, err := h.updateAgentMetadataSelfWithRuntimeFallback(agentUUID, patch, now)
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrAgentNotFound):
-			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
-		case errors.Is(err, store.ErrInvalidAgentType):
-			writeError(w, http.StatusBadRequest, "invalid_agent_type", "metadata.agent_type must be 2-64 chars: a-z, 0-9, ., _, -")
-		default:
-			writeError(w, http.StatusInternalServerError, "store_error", "failed to register plugin metadata")
-		}
-		return
-	}
-
-	activityEntry := map[string]any{
-		"activity":   "registered OpenClaw plugin " + pluginID,
-		"category":   "openclaw_plugin",
-		"action":     "register",
-		"subject_id": pluginID,
-		"event_id":   "openclaw-plugin-register:" + pluginID + ":" + strconv.FormatInt(now.UnixNano(), 10),
-	}
-	agent, err = h.control.RecordAgentSystemActivity(agentUUID, activityEntry, now)
-	if err != nil {
-		if errors.Is(err, store.ErrAgentNotFound) {
-			writeError(w, http.StatusNotFound, "unknown_agent", "agent_uuid is not registered")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "store_error", "failed to register plugin activity")
-		return
-	}
-	h.publishCollectiveEvent(collectiveStreamEvent{
-		At:        now,
-		Category:  "openclaw_plugin",
-		Action:    "register",
-		AgentUUID: agent.AgentUUID,
-		OrgID:     agent.OrgID,
-		Details:   map[string]any{"plugin_id": pluginID, "session_key": sessionKey, "transport": transport},
-	})
-
-	writeAgentRuntimeSuccess(w, http.StatusOK, map[string]any{
-		"agent":  h.agentResponsePayload(agent),
-		"plugin": marker,
-	})
-}
-
-func (h *Handler) handleOpenClawOffline(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeOffline(w, r, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimeEnvelopeOffline(w http.ResponseWriter, r *http.Request, adapterName string) {
@@ -232,10 +120,6 @@ func (h *Handler) handleRuntimeEnvelopeOffline(w http.ResponseWriter, r *http.Re
 		out["presence"] = presence
 	}
 	writeAgentRuntimeSuccess(w, http.StatusOK, out)
-}
-
-func (h *Handler) handleOpenClawWebSocket(w http.ResponseWriter, r *http.Request) {
-	h.handleRuntimeEnvelopeWebSocket(w, r, openClawCompatibilityProtocol, runtimeEnvelopeAdapterOpenClaw)
 }
 
 func (h *Handler) handleRuntimeEnvelopeWebSocket(w http.ResponseWriter, r *http.Request, defaultProtocol, adapterName string) {
@@ -387,6 +271,9 @@ func (h *Handler) handleRuntimeEnvelopeWSCommand(
 		}
 		envelope, err := normalizeRuntimeEnvelope(req.Message, h.now().UTC(), defaultProtocol)
 		if err != nil {
+			if errors.Is(err, errInvalidRuntimeEnvelopeProtocol) {
+				return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_protocol", err.Error()))
+			}
 			return writeEvent(runtimeEnvelopeWSError(requestID, http.StatusBadRequest, "invalid_request", err.Error()))
 		}
 		payload, err := json.Marshal(envelope)
@@ -406,7 +293,6 @@ func (h *Handler) handleRuntimeEnvelopeWSCommand(
 		out := cloneStringAnyMap(result)
 		out["transport"] = runtimeEnvelopeTransportMetadata(defaultProtocol, "websocket")
 		out["envelope"] = envelope
-		out["openclaw_message"] = envelope
 		h.recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, "ws_publish", map[string]any{
 			"message_id":  runtimeEnvelopeMessageIDFromResult(out),
 			"session_key": sessionKey,
@@ -622,30 +508,6 @@ func normalizeRuntimeSessionKey(raw string) string {
 	return candidate
 }
 
-func normalizeOpenClawPluginID(raw string) string {
-	candidate := strings.TrimSpace(raw)
-	if candidate == "" {
-		return openClawPluginDefaultID
-	}
-	if len(candidate) > 120 {
-		candidate = candidate[:120]
-	}
-	return candidate
-}
-
-func openClawPluginMetadataKey(pluginID string) string {
-	key := strings.ToLower(strings.TrimSpace(pluginID))
-	if key == "" {
-		key = openClawPluginDefaultID
-	}
-	key = openClawPluginMetadataKeyPattern.ReplaceAllString(key, "_")
-	key = strings.Trim(key, "_")
-	if key == "" {
-		return "moltenhub_openclaw"
-	}
-	return key
-}
-
 func runtimeEnvelopeMessageIDFromResult(result map[string]any) string {
 	if result == nil {
 		return ""
@@ -660,10 +522,6 @@ func runtimeEnvelopeMessageIDFromResult(result map[string]any) string {
 	return strings.TrimSpace(message.MessageID)
 }
 
-func (h *Handler) recordOpenClawCompatibilityAdapterUsage(agentUUID, action string, details map[string]any) {
-	h.recordRuntimeEnvelopeAdapterUsage(agentUUID, runtimeEnvelopeAdapterOpenClaw, action, details)
-}
-
 func (h *Handler) recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, action string, details map[string]any) {
 	agentUUID = strings.TrimSpace(agentUUID)
 	adapterName = strings.ToLower(strings.TrimSpace(adapterName))
@@ -673,10 +531,6 @@ func (h *Handler) recordRuntimeEnvelopeAdapterUsage(agentUUID, adapterName, acti
 	}
 	category := "runtime_adapter"
 	activityPrefix := "runtime adapter "
-	if adapterName == runtimeEnvelopeAdapterOpenClaw {
-		category = "openclaw_adapter"
-		activityPrefix = "openclaw adapter "
-	}
 	entry := map[string]any{
 		"activity": activityPrefix + action,
 		"category": category,

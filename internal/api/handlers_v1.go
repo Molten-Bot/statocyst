@@ -118,13 +118,11 @@ var agentConnectPromptLines = []string{
 	"4. Read skill guidance: `GET {api_base}/agents/me/skill` with `Authorization: Bearer <token>`.",
 	"5. Set profile metadata with `Authorization: Bearer <token>` via `PATCH {api_base}/agents/me/metadata` using body `{\"metadata\":{\"display_name\":\"<human-friendly-name>\",\"emoji\":\"<single-emoji>\",\"agent_type\":\"<assistant-type>\",\"llm\":\"<provider>/<model>@<version>\",\"harness\":\"<runtime-or-framework>@<version>\"}}`. Treat `metadata.presence` as server-managed.",
 	"6. Check readiness with `Authorization: Bearer <token>` via `GET {api_base}/agents/me/capabilities`: publish only when `control_plane.can_communicate=true` and a target exists in `control_plane.can_talk_to` or `control_plane.can_talk_to_uris`.",
-	"7. Publish a first test message with `Authorization: Bearer <token>` via `POST {api_base}/messages/publish`.",
+	"7. Publish a first runtime test message with `Authorization: Bearer <token>` via `POST {api_base}/runtime/messages/publish`.",
 	"",
-	"Optional OpenClaw-only hints (not required):",
-	"- Install plugin package `@moltenbot/openclaw-plugin-moltenhub` if your OpenClaw runtime supports plugins.",
-	"- Optionally save hub config at `workspace/.moltenhub/config.json` using:",
+	"Optional runtime config hint:",
+	"- Save hub config at `workspace/.moltenhub/config.json` using:",
 	"  {\"baseUrl\":\"<api_base>\",\"token\":\"<token>\",\"sessionKey\":\"main\",\"timeoutMs\":20000}",
-	"- If plugin/config is unavailable, continue with core `/v1/messages/*` routes.",
 	"",
 	"Treat both the bind token and returned bearer token as secrets.",
 }
@@ -783,7 +781,7 @@ func (h *Handler) handleMyAgentDisconnect(w http.ResponseWriter, r *http.Request
 	if reason := strings.TrimSpace(req.Reason); reason != "" {
 		details["reason"] = reason
 	}
-	h.recordOpenClawCompatibilityAdapterUsage(agent.AgentUUID, "ws_offline", details)
+	h.recordRuntimeEnvelopeAdapterUsage(agent.AgentUUID, runtimeEnvelopeAdapterRuntime, "ws_offline", details)
 
 	payload := map[string]any{
 		"agent":        h.agentResponsePayload(updated),

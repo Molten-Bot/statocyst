@@ -7,11 +7,11 @@ func agentRuntimeEndpoints(apiBase string) map[string]string {
 		"manifest":     apiBase + "/agents/me/manifest",
 		"capabilities": apiBase + "/agents/me/capabilities",
 		"skill":        apiBase + "/agents/me/skill",
-		"publish":      apiBase + "/messages/publish",
-		"pull":         apiBase + "/messages/pull",
-		"ack":          apiBase + "/messages/ack",
-		"nack":         apiBase + "/messages/nack",
-		"status":       apiBase + "/messages/{message_id}",
+		"publish":      apiBase + "/runtime/messages/publish",
+		"pull":         apiBase + "/runtime/messages/pull",
+		"ack":          apiBase + "/runtime/messages/ack",
+		"nack":         apiBase + "/runtime/messages/nack",
+		"status":       apiBase + "/runtime/messages/{message_id}",
 	}
 }
 
@@ -36,12 +36,6 @@ func protocolAdaptersPayload(apiBase string) map[string]any {
 			"description": "Generic agent-runtime JSON envelope adapter over HTTP and websocket; core /v1/messages/* routes remain available.",
 			"endpoints":   runtimeEnvelopeAdapterEndpoints(apiBase),
 		},
-		"openclaw_http_v1": map[string]any{
-			"protocol":    openClawCompatibilityProtocol,
-			"mode":        "compatibility_alias",
-			"description": "Legacy OpenClaw JSON envelope adapter over HTTP; prefer protocol_adapters.runtime_v1 for new clients.",
-			"endpoints":   openClawAdapterEndpoints(apiBase),
-		},
 	}
 }
 
@@ -54,17 +48,6 @@ func runtimeEnvelopeAdapterEndpoints(apiBase string) map[string]string {
 		"status":    apiBase + "/runtime/messages/{message_id}",
 		"websocket": apiBase + "/runtime/messages/ws",
 		"offline":   apiBase + "/runtime/messages/offline",
-	}
-}
-
-func openClawAdapterEndpoints(apiBase string) map[string]string {
-	return map[string]string{
-		"publish": apiBase + "/openclaw/messages/publish",
-		"pull":    apiBase + "/openclaw/messages/pull",
-		"ack":     apiBase + "/openclaw/messages/ack",
-		"nack":    apiBase + "/openclaw/messages/nack",
-		"status":  apiBase + "/openclaw/messages/{message_id}",
-		"offline": apiBase + "/openclaw/messages/offline",
 	}
 }
 

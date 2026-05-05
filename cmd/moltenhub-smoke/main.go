@@ -69,12 +69,11 @@ func main() {
 		{name: "Agent invites a hosted agent and receives explicit failure details when child invites again", run: (*runner).stepAgentInvitesHostedAgent},
 		{name: "Alice creates trust between both bound agents", run: (*runner).stepAliceCreatesAgentTrust},
 		{name: "A2A send/get/list and legacy pull/ack succeeds between bound agents", run: (*runner).stepA2AStorageDelivery},
-		{name: "OpenClaw plugin registration succeeds for both agents", run: (*runner).stepOpenClawRegisterPlugin},
 		{name: "Runtime HTTP publish/pull/ack succeeds between bound agents", run: (*runner).stepRuntimeHTTPDelivery},
 		{name: "Runtime polling heartbeat marks runtime presence online", run: (*runner).stepRuntimePresenceHeartbeat},
 		{name: "Runtime queued offline message dispatches on websocket reconnect", run: (*runner).stepRuntimeQueuedOfflineWebSocketDelivery},
 		{name: "Runtime websocket delivery and ack succeeds", run: (*runner).stepRuntimeWebSocketDelivery},
-		{name: "OpenClaw compatibility publish/pull/ack aliases still work", run: (*runner).stepOpenClawCompatibilityAliases},
+		{name: "Retired OpenClaw compatibility endpoints return 410", run: (*runner).stepRetiredOpenClawCompatibilityEndpoints},
 		{name: "Alice binds an agent and revokes it", run: (*runner).stepAliceRevokesFirstAgent},
 		{name: "Alice binds two agents and revokes both agents", run: (*runner).stepAliceRevokesBothAgents},
 	}
@@ -730,53 +729,6 @@ func (r *runner) stepAliceRevokesBothAgents() error {
 	return requireAgentStatus(agents, r.agentUUIDB, "revoked")
 }
 
-func (r *runner) stepOpenClawRegisterPlugin() error {
-	for _, target := range []struct {
-		label string
-		token string
-	}{
-		{label: "a", token: r.tokenA},
-		{label: "b", token: r.tokenB},
-	} {
-		pluginID := "moltenhub-openclaw-smoke-" + target.label
-		status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/register-plugin", cmdutil.AgentHeaders(target.token), map[string]any{
-			"plugin_id":    pluginID,
-			"package":      "@moltenbot/openclaw-plugin-moltenhub",
-			"transport":    "websocket",
-			"session_mode": "dedicated",
-			"session_key":  "smoke-main",
-		})
-		if err != nil {
-			return err
-		}
-		if status != http.StatusOK {
-			return fmt.Errorf("expected register-plugin 200, got %d payload=%v", status, payload)
-		}
-
-		result := runtimeResult(payload)
-		plugin, err := cmdutil.RequireObject(result, "plugin")
-		if err != nil {
-			return err
-		}
-		if got := cmdutil.AsString(plugin, "transport"); got != "websocket" {
-			return fmt.Errorf("expected plugin transport websocket, got %q payload=%v", got, payload)
-		}
-		agent, err := cmdutil.RequireObject(result, "agent")
-		if err != nil {
-			return err
-		}
-		metadata, _ := agent["metadata"].(map[string]any)
-		if got := readStringPath(metadata, "agent_type"); got != "openclaw" {
-			return fmt.Errorf("expected metadata.agent_type openclaw, got %q payload=%v", got, payload)
-		}
-		plugins, _ := metadata["plugins"].(map[string]any)
-		if _, ok := plugins[pluginID].(map[string]any); !ok {
-			return fmt.Errorf("expected metadata.plugins.%s object, got %T payload=%v", pluginID, plugins[pluginID], payload)
-		}
-	}
-	return nil
-}
-
 func (r *runner) stepRuntimeHTTPDelivery() error {
 	if err := r.drainRuntimeEnvelopeQueue(r.tokenB); err != nil {
 		return err
@@ -798,68 +750,67 @@ func (r *runner) stepRuntimeHTTPDelivery() error {
 	return r.ackRuntimeEnvelopeDeliveryHTTP(r.tokenB, deliveryID)
 }
 
-func (r *runner) stepOpenClawCompatibilityAliases() error {
-	messageText := fmt.Sprintf("smoke-openclaw-compat-%d", time.Now().UnixNano())
-	status, payload, err := r.requestJSON(http.MethodPost, "/v1/openclaw/messages/publish", cmdutil.AgentHeaders(r.tokenA), map[string]any{
-		"to_agent_uuid": r.agentUUIDB,
-		"message": map[string]any{
-			"kind": "text_message",
-			"text": messageText,
+func (r *runner) stepRetiredOpenClawCompatibilityEndpoints() error {
+	checks := []struct {
+		name        string
+		method      string
+		path        string
+		body        map[string]any
+		replacement string
+	}{
+		{
+			name:   "publish",
+			method: http.MethodPost,
+			path:   "/v1/openclaw/messages/publish",
+			body: map[string]any{
+				"to_agent_uuid": r.agentUUIDB,
+				"message": map[string]any{
+					"kind": "text_message",
+					"text": "retired openclaw smoke",
+				},
+			},
+			replacement: "/v1/runtime/messages/publish",
 		},
-	})
-	if err != nil {
-		return err
-	}
-	if status != http.StatusAccepted {
-		return fmt.Errorf("expected openclaw compatibility publish 202, got %d payload=%v", status, payload)
-	}
-	result := runtimeResult(payload)
-	messageID := readStringPath(result, "message_id")
-	if messageID == "" {
-		return fmt.Errorf("expected openclaw compatibility publish message_id payload=%v", payload)
+		{
+			name:   "register-plugin",
+			method: http.MethodPost,
+			path:   "/v1/openclaw/messages/register-plugin",
+			body: map[string]any{
+				"plugin_id": "moltenhub-openclaw-smoke",
+				"transport": "websocket",
+			},
+		},
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
-	for time.Now().Before(deadline) {
-		status, payload, err = r.requestJSON(http.MethodGet, "/v1/openclaw/messages/pull?timeout_ms=1000", cmdutil.AgentHeaders(r.tokenB), nil)
+	for _, check := range checks {
+		status, payload, err := r.requestJSON(check.method, check.path, cmdutil.AgentHeaders(r.tokenA), check.body)
 		if err != nil {
 			return err
 		}
-		if status == http.StatusNoContent {
+		if status != http.StatusGone {
+			return fmt.Errorf("expected retired %s endpoint 410, got %d payload=%v", check.name, status, payload)
+		}
+		if err := requireErrorCode(payload, "endpoint_retired"); err != nil {
+			return fmt.Errorf("%s: %w", check.name, err)
+		}
+		errorDetails, ok := payload["error_detail"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("expected retired %s endpoint error_detail payload=%v", check.name, payload)
+		}
+		if got := cmdutil.AsString(errorDetails, "retired_endpoint"); got == "" {
+			return fmt.Errorf("expected retired %s endpoint to name retired_endpoint payload=%v", check.name, payload)
+		}
+		if check.replacement == "" {
+			if _, ok := errorDetails["replacement_endpoint"]; ok {
+				return fmt.Errorf("did not expect retired %s endpoint replacement payload=%v", check.name, payload)
+			}
 			continue
 		}
-		if status != http.StatusOK {
-			return fmt.Errorf("expected openclaw compatibility pull 200/204, got %d payload=%v", status, payload)
-		}
-		result = runtimeResult(payload)
-		deliveryID := readStringPath(result, "delivery", "delivery_id")
-		if deliveryID == "" {
-			return fmt.Errorf("expected openclaw compatibility delivery_id payload=%v", payload)
-		}
-		if readStringPath(result, "message", "message_id") == messageID || readStringPath(result, "message_id") == messageID {
-			envelope, err := cmdutil.RequireObject(result, "openclaw_message")
-			if err != nil {
-				return err
-			}
-			if got := cmdutil.AsString(envelope, "text"); got != messageText {
-				return fmt.Errorf("expected openclaw compatibility text %q, got %q payload=%v", messageText, got, payload)
-			}
-			status, payload, err = r.requestJSON(http.MethodPost, "/v1/openclaw/messages/ack", cmdutil.AgentHeaders(r.tokenB), map[string]any{
-				"delivery_id": deliveryID,
-			})
-			if err != nil {
-				return err
-			}
-			if status != http.StatusOK {
-				return fmt.Errorf("expected openclaw compatibility ack 200, got %d payload=%v", status, payload)
-			}
-			return nil
-		}
-		if err := r.ackRuntimeEnvelopeDeliveryHTTP(r.tokenB, deliveryID); err != nil {
-			return err
+		if got := cmdutil.AsString(errorDetails, "replacement_endpoint"); got != check.replacement {
+			return fmt.Errorf("expected retired %s endpoint replacement %q, got %q payload=%v", check.name, check.replacement, got, payload)
 		}
 	}
-	return fmt.Errorf("timed out waiting for openclaw compatibility message_id=%q", messageID)
+	return nil
 }
 
 func (r *runner) stepRuntimeWebSocketDelivery() error {

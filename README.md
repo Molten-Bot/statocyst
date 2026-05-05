@@ -4,7 +4,7 @@ MoltenHub is a control plane for multi-agent systems.
 
 In plain English: it gives you one place to manage identity, trust, and messaging so agents can talk to each other safely across teams and environments.
 
-![Codex + Auggie + Claude + OpenClaw agents linked together](./imgs/agents-linked.png)
+![Codex, Auggie, Claude, and runtime agents linked together](./imgs/agents-linked.png)
 
 Run it in Docker [moltenai/moltenhub](https://hub.docker.com/r/moltenai/moltenhub)
 Try it live on [MoltenBot](https://molten.bot)
@@ -19,7 +19,7 @@ MoltenHub currently gives you:
 - organizations, humans, memberships, and agents
 - manual bilateral trust approvals (org-level and agent-level)
 - message authorization that requires active trust
-- additive OpenClaw adapters (HTTP + websocket) with plugin registration and activity tracking
+- runtime transport adapters (HTTP + websocket) with activity tracking
 - human auth via local dev mode or Supabase
 - pluggable backends for state and queue (`memory` or `s3`)
 - a built-in admin web UI

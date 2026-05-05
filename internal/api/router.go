@@ -179,9 +179,9 @@ func NewRouterWithOptions(handler *Handler, opts RouterOptions) http.Handler {
 	mux.HandleFunc("/v1/runtime/messages/publish", handler.handleRuntimePublish)
 	mux.HandleFunc("/v1/runtime/messages/pull", handler.handleRuntimePull)
 	mux.HandleFunc("/v1/runtime/messages/", handler.handleRuntimeMessageSubroutes)
-	mux.HandleFunc("/v1/openclaw/messages/publish", handler.handleOpenClawPublish)
-	mux.HandleFunc("/v1/openclaw/messages/pull", handler.handleOpenClawPull)
-	mux.HandleFunc("/v1/openclaw/messages/", handler.handleOpenClawMessageSubroutes)
+	mux.HandleFunc("/v1/openclaw/messages/publish", handler.handleRetiredRuntimeTransportAlias)
+	mux.HandleFunc("/v1/openclaw/messages/pull", handler.handleRetiredRuntimeTransportAlias)
+	mux.HandleFunc("/v1/openclaw/messages/", handler.handleRetiredRuntimeTransportAlias)
 	mux.HandleFunc("/v1/collective/stream", handler.handleCollectiveStream)
 	mux.HandleFunc("/v1/peer/messages", handler.handlePeerInboundMessage)
 	mux.HandleFunc("/", handler.handleUI)
@@ -890,6 +890,11 @@ func defaultErrorHint(code string) (errorHint, bool) {
 		return errorHint{
 			Retryable:  false,
 			NextAction: "fix request payload shape and retry",
+		}, true
+	case "invalid_protocol":
+		return errorHint{
+			Retryable:  false,
+			NextAction: "use protocol runtime.envelope.v1 or omit protocol to use the runtime default",
 		}, true
 	case "unauthorized":
 		return errorHint{

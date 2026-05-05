@@ -235,6 +235,9 @@ func TestOpenAPISpecCoversRegisteredAPIRoutes(t *testing.T) {
 
 	missing := make([]string, 0)
 	for _, rp := range routerPaths {
+		if isRetiredOpenClawRouterPath(rp) {
+			continue
+		}
 		if strings.HasSuffix(rp, "/") {
 			matched := false
 			for _, sp := range specPaths {
@@ -256,6 +259,12 @@ func TestOpenAPISpecCoversRegisteredAPIRoutes(t *testing.T) {
 	if len(missing) > 0 {
 		t.Fatalf("openapi.yaml missing coverage for registered API routes: %v", missing)
 	}
+}
+
+func isRetiredOpenClawRouterPath(path string) bool {
+	return path == "/v1/openclaw/messages/publish" ||
+		path == "/v1/openclaw/messages/pull" ||
+		path == "/v1/openclaw/messages/"
 }
 
 func TestOpenAPIOperationsReachImplementedHandlers(t *testing.T) {
