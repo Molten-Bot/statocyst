@@ -22,6 +22,7 @@ Hosted environment deployment is managed in the separate infra repository (`molt
 - `.github/workflows/deploy-vnext.yml`
   - Auto-publishes the VNext image on pushes to `main`.
   - Runs Go tests before build and container smoke checks after publish.
+  - Publishes BuildKit provenance and SBOM attestations with the image.
   - Builds and pushes:
     - `docker.io/<dockerhub-username>/moltenhub:vnext`
     - `docker.io/<dockerhub-username>/moltenhub:vnext-<yyyymmdd>`
